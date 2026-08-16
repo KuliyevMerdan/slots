@@ -1,0 +1,8 @@
+dist/
+coverage/
+.turbo/
+pnpm-lock.yaml
+
+# The docs are hand-wrapped canon (CLAUDE.md, ROADMAP.md, docs/**). Prettier would reflow the
+# tables and prose into a diff nobody asked for, so formatting there stays a human decision.
+*.md

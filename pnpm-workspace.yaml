@@ -1,0 +1,11 @@
+packages:
+  - 'packages/*'
+  - 'apps/*'
+  - 'tools/*'
+
+# One version per tool, referenced from every package as `"catalog:"`.
+# A single edit here moves the whole workspace — and drift becomes impossible.
+catalog:
+  typescript: ^5
+  vitest: ^3
+  zod: ^4
