@@ -4,6 +4,8 @@ import type {
   ErrorCode,
   FeatureSpinReq,
   FeatureSpinRes,
+  HistoryReq,
+  HistoryRes,
   SettleReq,
   SettleRes,
   SpinReq,
@@ -172,6 +174,10 @@ export class ResilientTransport implements RgsTransport {
 
   settle(request: SettleReq): Promise<SettleRes> {
     return this.#call('settle', (options) => this.#inner.settle(request, options));
+  }
+
+  history(request: HistoryReq): Promise<HistoryRes> {
+    return this.#call('history', (options) => this.#inner.history(request, options));
   }
 
   /**

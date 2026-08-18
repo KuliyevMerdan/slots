@@ -5,6 +5,8 @@ import type {
   CallResponse,
   FeatureSpinReq,
   FeatureSpinRes,
+  HistoryReq,
+  HistoryRes,
   SettleReq,
   SettleRes,
   SpinReq,
@@ -59,6 +61,10 @@ export class MockTransport implements RgsTransport {
 
   settle(request: SettleReq): Promise<SettleRes> {
     return this.#call('settle', request);
+  }
+
+  history(request: HistoryReq): Promise<HistoryRes> {
+    return this.#call('history', request);
   }
 
   async #call<N extends CallName>(call: N, request: unknown): Promise<CallResponse<N>> {

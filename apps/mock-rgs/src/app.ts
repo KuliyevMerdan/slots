@@ -62,6 +62,13 @@ export function buildApp({
    * Fastify to stop managing a reply it will never send. The sockets are tracked so shutdown can
    * destroy them; otherwise `close()` waits for connections that are, by construction, waiting
    * forever. See docs/adr/ADR-0004-http-binding.md.
+   *
+   * **Which hook does the destroying is load-bearing, and it was wrong until the HTTP soak found
+   * it.** `onClose` runs *after* Fastify has stopped the server and begun waiting for open
+   * connections to end — by which point destroying the sockets is too late and `close()` never
+   * returns. `preClose` runs before that wait starts. The tracking was there and correct; the moment
+   * it fired was not, and nothing noticed until a test tried to shut a server down with a hundred
+   * abandoned responses in flight.
    */
   const hung = new Set<{ destroy?: () => void }>();
 
@@ -70,7 +77,7 @@ export function buildApp({
     done();
   });
 
-  app.addHook('onClose', (_instance, done) => {
+  app.addHook('preClose', (done) => {
     // `destroy` is optional because `app.inject()` runs the same route stack over a fake socket that
     // has no connection to end — the test double for a hung request is simply a reply nobody sends.
     for (const socket of hung) socket.destroy?.();

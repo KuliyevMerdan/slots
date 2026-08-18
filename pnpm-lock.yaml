@@ -38,6 +38,9 @@ importers:
       '@slot/engine':
         specifier: workspace:*
         version: link:packages/engine
+      '@slot/game-math':
+        specifier: workspace:*
+        version: link:packages/game-math
       '@slot/mock-rgs':
         specifier: workspace:*
         version: link:apps/mock-rgs

@@ -7,18 +7,21 @@ import type {
   FeatureSpinRes,
   ForceOutcome,
   GameConfig,
+  HistoryReq,
+  HistoryRes,
   Minor,
   NextAction,
   PendingRound,
   RoundId,
   RoundResult,
   RoundState,
+  RoundSummary,
   SettleReq,
   SettleRes,
   SpinReq,
   SpinRes,
 } from '@slot/protocol';
-import { ZERO, add, min, subtract } from '@slot/money';
+import { ZERO, add, min, multiply, subtract } from '@slot/money';
 import { deriveSpinSeed } from './prng.js';
 import { errorPayload } from './errors.js';
 import {
@@ -30,7 +33,7 @@ import {
 } from './outcome.js';
 import { scenarioStops } from './scenarios.js';
 import type { SimOutcome, SimRound, SimState } from './state.js';
-import { findOpenRound, findRound, withRound } from './state.js';
+import { MAX_ROUND_HISTORY, findOpenRound, findRound, withRound } from './state.js';
 
 /**
  * The four calls, as pure functions.
@@ -70,6 +73,29 @@ const canonical = (value: unknown): string => {
 };
 
 const bump = (state: SimState): SimState => ({ ...state, seq: state.seq + 1 });
+
+/**
+ * The round's payout ceiling, and the accrual that respects it.
+ *
+ * The cap is `stake × maxWinMultiplier` and it is applied **on the way in**, so `roundWin` is the
+ * payable figure in every response and `settle` credits exactly the number the client last showed.
+ * Capping only at `settle` is how a win presentation ends up counting to an amount the player is not
+ * paid, and the client cannot fix that itself — it is not allowed to compute money (D7).
+ *
+ * `result.totalWin` is deliberately left uncapped: it is what the math paid for that grid, which is
+ * what the dev-build assertion and the contract suite re-evaluate. The outcome and the money are
+ * different facts.
+ */
+const accrue = (
+  config: GameConfig,
+  stake: Minor,
+  soFar: Minor,
+  won: Minor,
+): { roundWin: Minor; capped: boolean } => {
+  const ceiling = multiply(stake, config.limits.maxWinMultiplier);
+  const raw = add(soFar, won);
+  return { roundWin: min(raw, ceiling), capped: raw > ceiling };
+};
 
 const rejected = <T>(
   state: SimState,
@@ -138,6 +164,8 @@ const pendingRoundOf = (round: SimRound): PendingRound => ({
   roundId: round.roundId,
   state: round.state === 'OPEN' ? 'OPEN' : 'RESOLVED',
   stake: round.stake,
+  roundWin: round.cumulativeWin,
+  capped: round.capped,
   result: latestResult(round),
   ...(round.feature === undefined ? {} : { feature: round.feature }),
   next: round.state === 'OPEN' ? 'FEATURE_SPIN' : 'SETTLE',
@@ -244,6 +272,7 @@ export function spin(state: SimState, request: SpinReq, context: SimContext): Si
   const features = baseFeatures(outcome.scatters);
   const awarded = features[0]?.awarded ?? 0;
   const balance = subtract(next.balance, request.stake);
+  const { roundWin, capped } = accrue(config, request.stake, ZERO, outcome.totalWin);
 
   const feature: FeatureProgress | undefined =
     awarded === 0
@@ -253,7 +282,6 @@ export function spin(state: SimState, request: SpinReq, context: SimContext): Si
           total: awarded,
           remaining: awarded,
           step: 0,
-          cumulativeWin: outcome.totalWin,
           stakeRef: request.stake,
         };
 
@@ -261,13 +289,15 @@ export function spin(state: SimState, request: SpinReq, context: SimContext): Si
   // has nothing to credit and nothing to present — every round that *does* move money ends with an
   // explicit `settle`, which is what keeps the client from ever computing a balance.
   const roundState: RoundState =
-    feature !== undefined ? 'OPEN' : outcome.totalWin > ZERO ? 'RESOLVED' : 'SETTLED';
+    feature !== undefined ? 'OPEN' : roundWin > ZERO ? 'RESOLVED' : 'SETTLED';
   const nextAction: NextAction =
-    feature !== undefined ? 'FEATURE_SPIN' : outcome.totalWin > ZERO ? 'SETTLE' : 'IDLE';
+    feature !== undefined ? 'FEATURE_SPIN' : roundWin > ZERO ? 'SETTLE' : 'IDLE';
 
   const response: SpinRes = {
     roundId: request.roundId,
     balance,
+    roundWin,
+    capped,
     result: toRoundResult(outcome, features),
     ...(feature === undefined ? {} : { feature }),
     next: nextAction,
@@ -279,7 +309,8 @@ export function spin(state: SimState, request: SpinReq, context: SimContext): Si
     stake: request.stake,
     ...(request.clientSeed === undefined ? {} : { clientSeed: request.clientSeed }),
     fingerprint,
-    cumulativeWin: outcome.totalWin,
+    cumulativeWin: roundWin,
+    capped,
     openedAt: context.now,
     spin: response,
     steps: [],
@@ -292,7 +323,7 @@ export function spin(state: SimState, request: SpinReq, context: SimContext): Si
             roundId: request.roundId,
             balance,
             totalWin: ZERO,
-            capped: false,
+            capped,
             next: 'IDLE' as const,
           },
         }
@@ -400,9 +431,18 @@ export function featureSpin(
     total: feature.total + retrigger,
     remaining: feature.remaining - 1 + retrigger,
     step: request.step,
-    cumulativeWin: add(round.cumulativeWin, outcome.totalWin),
     stakeRef: feature.stakeRef,
   };
+
+  // The ceiling is the round's, so it is measured against the stake that bought the feature — a
+  // free spin has none of its own. Once it bites, further free spins add nothing, and `capped`
+  // stays true so the client can say why the counter stopped moving.
+  const { roundWin, capped } = accrue(
+    config,
+    feature.stakeRef,
+    round.cumulativeWin,
+    outcome.totalWin,
+  );
 
   const done = progress.remaining === 0;
 
@@ -411,6 +451,8 @@ export function featureSpin(
     step: request.step,
     // Unchanged: a free spin neither debits nor credits. Sent so the HUD never has to remember.
     balance: next.balance,
+    roundWin,
+    capped: round.capped || capped,
     result: toRoundResult(outcome, features),
     feature: progress,
     next: done ? 'SETTLE' : 'FEATURE_SPIN',
@@ -419,7 +461,8 @@ export function featureSpin(
   const updated: SimRound = {
     ...round,
     state: done ? 'RESOLVED' : 'OPEN',
-    cumulativeWin: progress.cumulativeWin,
+    cumulativeWin: roundWin,
+    capped: response.capped,
     steps: [...round.steps, { fingerprint, response }],
     feature: progress,
   };
@@ -432,7 +475,10 @@ export function featureSpin(
 export function settle(
   state: SimState,
   request: SettleReq,
-  context: SimContext,
+  // Unused, and that is the news: with the ceiling applied on the way in, settling is a credit and
+  // a state change, with nothing left to compute. The parameter stays so the four handlers keep one
+  // shape — the dispatcher in server.ts calls them uniformly.
+  _context: SimContext,
 ): SimOutcome<SettleRes> {
   const next = bump(state);
 
@@ -456,7 +502,9 @@ export function settle(
     );
   }
 
-  const credited = min(round.cumulativeWin, context.config.limits.maxWin);
+  // Nothing to decide: the ceiling was applied as the round accrued, so the credit is exactly the
+  // number the client was last sent and last counted up to.
+  const credited = round.cumulativeWin;
   const balance = add(next.balance, credited);
 
   const response: SettleRes = {
@@ -465,11 +513,53 @@ export function settle(
     totalWin: credited,
     // The player has to be told when the cap clipped their win — in most regulated markets that is
     // a requirement rather than a courtesy.
-    capped: credited < round.cumulativeWin,
+    capped: round.capped,
     next: 'IDLE',
   };
 
   const updated: SimRound = { ...round, state: 'SETTLED', settle: response };
 
   return { ok: true, state: withRound({ ...next, balance }, updated), response };
+}
+
+/* ── history ──────────────────────────────────────────────────────────────────────────────── */
+
+/** The default page. Enough to fill a "last rounds" panel without paging on the first open. */
+const DEFAULT_HISTORY_LIMIT = 20;
+
+const summaryOf = (round: SimRound): RoundSummary => ({
+  roundId: round.roundId,
+  at: round.openedAt,
+  stake: round.stake,
+  // What was credited, which for a settled round is exactly what `settle` answered.
+  totalWin: round.settle?.totalWin ?? ZERO,
+  capped: round.capped,
+  freeSpins: round.steps.length,
+});
+
+/**
+ * The last rounds this player finished — read-only, and settled rounds only.
+ *
+ * A round still in flight is `pendingRound`; mixing the two would invite a client to present an
+ * unfinished round as a result. `retention` is answered rather than assumed because the honest
+ * number here is small: this server keeps its history in a browser store, and R1 replaces it with
+ * months of rows in Postgres without the client changing.
+ */
+export function history(
+  state: SimState,
+  request: HistoryReq,
+  _context: SimContext,
+): SimOutcome<HistoryRes> {
+  const next = bump(state);
+  const limit = request.limit ?? DEFAULT_HISTORY_LIMIT;
+
+  const rounds = next.rounds
+    .filter((round) => round.state === 'SETTLED')
+    .slice(-limit)
+    // Stored oldest first, because that is the order they are evicted in; read newest first,
+    // because that is the order a player reads them in.
+    .reverse()
+    .map(summaryOf);
+
+  return { ok: true, state: next, response: { rounds, retention: MAX_ROUND_HISTORY } };
 }

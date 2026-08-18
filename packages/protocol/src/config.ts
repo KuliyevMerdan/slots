@@ -35,8 +35,16 @@ export type PaytableEntry = z.infer<typeof PaytableEntrySchema>;
 export const LimitsSchema = z.object({
   minStake: PositiveMinorSchema,
   maxStake: PositiveMinorSchema,
-  /** A payout is capped here. `SettleRes.capped` says when that happened. */
-  maxWin: PositiveMinorSchema,
+  /**
+   * The payout ceiling, as a multiple of **the stake actually played** — the round's cap is
+   * `stake × maxWinMultiplier`.
+   *
+   * A multiplier rather than an amount, because an absolute ceiling is a different game at every bet
+   * level: unreachable at the minimum stake and a formality at the maximum. The server applies it as
+   * the round accrues, so `roundWin` is always the payable figure and `SettleRes.capped` says
+   * whether it bit (docs/protocol.md §3, D7).
+   */
+  maxWinMultiplier: z.int().min(1),
 });
 
 export type Limits = z.infer<typeof LimitsSchema>;

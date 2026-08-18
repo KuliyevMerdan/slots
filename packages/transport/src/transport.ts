@@ -5,6 +5,8 @@ import type {
   CallResponse,
   FeatureSpinReq,
   FeatureSpinRes,
+  HistoryReq,
+  HistoryRes,
   SettleReq,
   SettleRes,
   SpinReq,
@@ -18,7 +20,7 @@ import type {
  * Swapping the in-process simulator for a real RGS is a change of which object is constructed at
  * boot, which is what makes "swap the transport URL" a credible claim rather than a slogan.
  *
- * Four methods, matching the four calls. Everything else a transport does — timeout, exponential
+ * One method per call in `@slot/protocol`'s `CALLS` table. Everything else a transport does — timeout, exponential
  * backoff retrying the same `roundId`, mapping network noise onto the error taxonomy — happens
  * *behind* this interface, so the engine only ever sees a classified `SlotError`. That policy layer
  * is `withRetry` in retry.ts.
@@ -32,6 +34,8 @@ export interface RgsTransport {
   spin(request: SpinReq, options?: CallOptions): Promise<SpinRes>;
   featureSpin(request: FeatureSpinReq, options?: CallOptions): Promise<FeatureSpinRes>;
   settle(request: SettleReq, options?: CallOptions): Promise<SettleRes>;
+  /** Read-only, and outside the round lifecycle — which is why the engine's port does not have it. */
+  history(request: HistoryReq, options?: CallOptions): Promise<HistoryRes>;
 }
 
 /**

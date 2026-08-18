@@ -43,8 +43,10 @@ const SimRoundSchema = z.object({
   clientSeed: z.string().optional(),
   /** Canonical form of the originating `spin` request — a differing duplicate is `ROUND_CONFLICT`. */
   fingerprint: z.string(),
-  /** Base win plus every free spin so far. Uncredited until `settle`. */
+  /** Base win plus every free spin so far, **already capped**. Uncredited until `settle`. */
   cumulativeWin: NonNegativeMinorSchema,
+  /** Whether `stake × maxWinMultiplier` has clipped this round. Sticky once true. */
+  capped: z.boolean(),
   openedAt: TimestampSchema,
   spin: SpinResSchema,
   /** Free-spin responses in step order: index `n` is step `n + 1`. */

@@ -384,3 +384,43 @@ export function scaleCurve(curve: SpinCurve, factor: number): SpinCurve {
 
 /** How much faster turbo is. One number, so the debug panel and the compliance layer share it. */
 export const TURBO_FACTOR = 0.4;
+
+/**
+ * How much of a presentation's duration survives `prefers-reduced-motion`.
+ *
+ * Not zero: a timeline still has to run its steps in order and hand the engine the input that ends
+ * it, so the screens appear and are replaced within a frame rather than being skipped. What the
+ * player loses is the *travel*, which is the thing the preference is about.
+ */
+export const REDUCED_MOTION_FACTOR = 0.02;
+
+/**
+ * The same curve with the theatre removed — `prefers-reduced-motion`, honoured properly.
+ *
+ * Reduced motion is not turbo with a smaller number. Turbo shortens a spin and keeps every stage of
+ * it; this removes the stages themselves: no backwards dip before the launch, no overshoot and
+ * spring-back, no staggered stops, no scatter anticipation hold, and no motion-blurred texture. The
+ * reel goes to the outcome the server sent and stops there.
+ *
+ * Durations are 1 ms rather than 0 on purpose. Three of the five stages divide by their own
+ * duration, and a zero-length stage with a zero-length frame is `0 / 0` — a reel position of `NaN`
+ * is a considerably worse accessibility outcome than a fast one.
+ */
+export function reducedMotionCurve(curve: SpinCurve): SpinCurve {
+  return {
+    ...curve,
+    anticipationMs: 1,
+    dipSymbols: 0,
+    accelerateMs: 1,
+    minCruiseMs: 0,
+    decelerateMs: 1,
+    overshoot: 0,
+    settleMs: 1,
+    minDecelerateSymbols: 0,
+    staggerMs: 0,
+    anticipationHoldMs: 0,
+    slamDecelerateMs: 1,
+    // Nothing ever exceeds it, so the smeared texture is never swapped in.
+    blurAboveSpeed: Number.POSITIVE_INFINITY,
+  };
+}

@@ -4,31 +4,36 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-> ⚠️ **The game is a game, and its math is now a designed 96% rather than an accident.** As of
-> **2026-08-18**, **C0, C1, S0, S1, C2, S2, C3, C4, C5 and S4 have landed** — the workspace, the
-> contracts (`protocol`, `money`, `game-math`), `rgs-sim`, the `RgsTransport` seam with
-> `MockTransport`, `HttpTransport` and the retry policy, `engine`, `apps/mock-rgs`, `renderer`, `ui`
-> and `apps/game-client`, and `tools/math-sim` — the RTP report that tuned the strips. 572 tests,
-> `pnpm check` green. Three `packages/*` remain scaffolded and empty — `platform`, `compliance`,
-> `dev-tools` — and each `src/index.ts` names the block that fills it.
+> ⚠️ **The game is a game, its math is a designed 96%, and a server now passes or fails one suite.**
+> As of **2026-08-18**, **C0, C1, S0, S1, C2, S2, C3, C4, C5, S4 and S3 have landed** — the
+> workspace, the contracts (`protocol`, `money`, `game-math`), `rgs-sim`, the `RgsTransport` seam
+> with `MockTransport`, `HttpTransport` and the retry policy, `engine`, `apps/mock-rgs`, `renderer`,
+> `ui` and `apps/game-client`, `tools/math-sim` — the RTP report that tuned the strips — and
+> `tests/contract/`, the switch-over gate. 683 tests, `pnpm check` green. Three `packages/*` remain
+> scaffolded and empty — `platform`, `compliance`, `dev-tools` — and each `src/index.ts` names the
+> block that fills it.
 >
 > **`pnpm dev:client` opens a playable slot.** It authenticates, spins, lands on the server's
 > `stops[]`, lights the paylines it was told won, counts the win up, runs the feature and settles.
 > Point it at `apps/mock-rgs` with one environment variable and the same client plays the same game
 > over HTTP.
 >
-> **Three properties are tested rather than claimed.**
+> **Four properties are tested rather than claimed.**
 > [`tests/mash.test.ts`](tests/mash.test.ts) plays 120 rounds through the real engine, transport,
 > simulator and renderer while pressing at random, asserting the client's balance equals the
 > server's after every round. [`tests/resume.test.ts`](tests/resume.test.ts) throws the client away
 > at five points mid-feature and rebuilds it, asserting the round finishes and is credited exactly
 > once. And `pnpm math-sim` plays twenty million rounds through the game's own evaluator and prints
 > the RTP, the hit frequency, the volatility and the win distribution — **96.107%**, measured, on the
-> strips that ship.
+> strips that ship. And `pnpm test:contract` plays the whole of
+> [`docs/protocol.md`](docs/protocol.md) — lifecycle, idempotent replay, `pendingRound` recovery,
+> every error class — against **every registered target**, naming in its own output the one target
+> it could not run.
 >
 > **What is deliberately not there yet:** audio, i18n and the compliance layer (**C6**), the debug
 > panel and the performance pass (**C7**), packaging, the README and the E2E suite (**C8**). The next
-> block is **C6**, with **S3** (the contract suite) available in parallel.
+> block is **C6**; **R0** — the `apps/rgs` skeleton — is available in parallel and is what fills the
+> contract suite's third target.
 >
 > The canon is four documents: `CLAUDE.md` (this file), [`ROADMAP.md`](ROADMAP.md) (the task map),
 > [`RECOMMENDATIONS.md`](RECOMMENDATIONS.md) (the strategic registry) and
@@ -114,8 +119,9 @@ carry an idempotency key.
 | --- | --- | --- |
 | `authenticate` | — | Token → session, balance, `GameConfig` (paytable, strips, bet levels, limits, jurisdiction), **and `pendingRound` if a round was left open — the entire reconnect story** |
 | `spin` | `roundId` | `{ roundId, stake, clientSeed?, forceOutcome? }` → `{ balance, result, feature?, next }` — debits the stake |
-| `featureSpin` | `(roundId, step)` | One free spin inside an already-open round. No debit; wins accrue to `feature.cumulativeWin` |
+| `featureSpin` | `(roundId, step)` | One free spin inside an already-open round. No debit; wins accrue to the response's `roundWin` |
 | `settle` | `roundId` | Credits the round's total win, `RESOLVED → SETTLED`. Required whenever there is money to credit; a zero-win base round settles atomically |
+| `history` | — | Read-only. The last settled rounds, newest first, plus the `retention` this server keeps — the server half of the player-visible round history regulated markets require |
 
 ```ts
 export type Minor   = number & { readonly __brand: 'Minor' };  // integer minor units
@@ -125,7 +131,7 @@ export interface RoundResult {
   stops:    number[];           // strip index per reel — the authoritative outcome
   view:     SymbolId[][];       // derived grid, sent for convenience + dev-build assertion
   wins:     Win[];
-  totalWin: Minor;
+  totalWin: Minor;              // what the math paid for this grid — uncapped, and never the credit
   features: Feature[];
 }
 ```
@@ -139,6 +145,12 @@ Six design points, all of them now load-bearing in `rgs-sim`:
 - **`pendingRound` on authenticate is the whole recovery path.** No separate recovery endpoint.
 - **Money is integer minor units everywhere**, behind a branded type, so `stake + 0.1` is a compile
   error rather than a rounding incident.
+- **The ceiling is a multiple of the stake played, applied as the round accrues.**
+  `limits.maxWinMultiplier` rather than an amount, because an absolute cap is a different game at
+  every bet level. Every mutating response carries `roundWin` — the round's payable total, already
+  capped — so the presentation counts to the number the balance will receive, and `settle.totalWin`
+  equals the last `roundWin` the client was sent. `result.totalWin` stays uncapped because it is the
+  math, not the money (ADR/protocol D7).
 - **The client never computes a balance.** Every response carries the authoritative balance after the
   operation it describes — post-debit on `spin`, post-credit on `settle`. The HUD displays server
   numbers; it never adds or subtracts them. This is why `settle` is an explicit call.
@@ -159,7 +171,7 @@ pnpm check
 
 | Command                | What it does                                                                        |
 | ---------------------- | ----------------------------------------------------------------------------------- |
-| `pnpm check`           | lint → build → typecheck → test → root suites → format check. **What CI runs.**      |
+| `pnpm check`           | lint → build → typecheck → test → root suites → contract suite → format check. **What CI runs.** |
 | `pnpm lint`            | ESLint (incl. the purity rules) **and** the dependency-boundary rules                |
 | `pnpm lint:boundaries` | `dependency-cruiser` over `packages/` — the dependency table, enforced               |
 | `pnpm typecheck`       | Root suites + `turbo run typecheck` across every package                             |
@@ -170,7 +182,7 @@ pnpm check
 | `pnpm dev`             | Client + `mock-rgs` in watch mode — the one dev command _(C3 · S2)_                  |
 | `pnpm dev:client`      | Client only, `MockTransport` in-process, zero latency _(C3)_                         |
 | `pnpm dev:rgs`         | `apps/mock-rgs` only (Fastify) — for driving the HTTP path _(S2)_                    |
-| `pnpm test:contract`   | The contract suite against every target (see **Testing layers**) _(S3)_              |
+| `pnpm test:contract`   | The contract suite against every registered target — the switch-over gate            |
 | `pnpm e2e`             | Playwright, fixed seed + forced outcomes _(C8)_                                      |
 | `pnpm math-sim`        | RTP report — `pnpm math-sim --spins 50000000` _(S4)_                                 |
 | `pnpm perf`            | Scripted fps/memory capture via `tools/perf-harness` _(C7)_                          |
@@ -436,6 +448,21 @@ that skipping and completing produce an identical state.
 retry structurally cannot mint a new one. `PLAYER` → `DISMISS` back to `IDLE`, no retry offered.
 `FATAL` → `FROZEN`, with no input that leaves it.
 
+**The math versions meet on the authenticate path, and disagreeing freezes the game.**
+`GameConfig.mathVersion` says what the server pays on; `@slot/game-math`'s `MATH_VERSION` says what
+this build's evaluator implements — and the client ships real math in code, not just config: the
+payline evaluator's substitution rules and the symbol the reels anticipate on. `authenticated()`
+compares them **before everything else, including a round already in flight**, because continuing a
+resumed round means presenting an outcome immediately. Three choices are deliberate: **exact
+equality** (a version that moved for a cosmetic reason is a versioning mistake to fix at the source,
+not a reason to loosen a gate), **`MATH_VERSION_MISMATCH` → `FATAL` → `FROZEN`** (there is no safe
+way to present an outcome you cannot reproduce, and no input leaves that state), and **imported
+rather than injected** — an injected version is a gate the wiring site can forget to connect, and a
+safety check nobody notices is missing is worse than none. Every unit test in the workspace builds
+both halves from the same package, so they agree by construction; that is why the gate is *also*
+proved at a wiring site, in [`tests/wiring.test.ts`](tests/wiring.test.ts), against a simulator
+serving a different version.
+
 **Resume is the same machine, entered halfway.** `AUTHENTICATED` reads `pendingRound` and drops into
 the phase that continues it — re-sending the spin for a round debited but never resolved, or landing
 the reels on a decided outcome and letting the ordinary transitions carry it to the settle. There is
@@ -523,9 +550,9 @@ Three details worth knowing:
 **The feature is the same machinery again** ([`feature.ts`](packages/renderer/src/feature.ts)): an
 intro timeline, an outro that counts the feature's total up, a counter above the reels and a warm
 border that says the rules have changed. Two rules it lives by. **It displays arithmetic the server
-already did** — `FeatureProgress` arrives with `total`, `remaining` and `cumulativeWin` already
-folded, retriggers included, so a retrigger is simply a `total` that grew and the client's whole
-contribution is noticing and announcing it. And **every screen is built from the event that carries
+already did** — `FeatureProgress` arrives with `total` and `remaining` already folded and the
+response carries the round's payable `roundWin`, retriggers included, so a retrigger is simply a
+`total` that grew and the client's whole contribution is noticing and announcing it. And **every screen is built from the event that carries
 its data**, never from the phase change: the engine emits `PHASE_CHANGED` *first*, so a banner built
 on the phase announces "0 SPINS" — which is precisely what it did until it was fixed. A phase that
 owes the engine an input and has nothing to show recovers on the next frame with an empty timeline,
@@ -535,6 +562,18 @@ because the one unacceptable outcome is a round that waits forever.
 scales the presentation. Speed, overshoot and the blur threshold are untouched, because turbo should
 shorten a spin rather than hand the player a different game; and when the compliance layer (C6)
 forbids turbo in a jurisdiction there is exactly one thing for it to refuse.
+
+**`prefers-reduced-motion` is a different switch, and it wins.** Turbo is a preference about pace and
+keeps every stage of the spin; `reducedMotionCurve` removes the stages — no backwards dip, no
+overshoot, no stagger, no scatter anticipation hold, no motion-blurred texture — and the same factor
+collapses every timed screen to the frame it needs to hand the engine its input. The game underneath
+is untouched: the same stops, the same wins, the same money. Two details are load-bearing and both
+are tested. **The reel still lands exactly on the server's stop** at any frame rate, because an
+accessibility mode that quietly lands on the wrong symbol is worse than none. And the durations are
+1 ms rather than 0, because three of the five stages divide by their own duration and a zero-length
+stage in a zero-length frame is `0 / 0` — a reel position of `NaN` is a considerably worse
+accessibility outcome than a fast one. `GameStage` resolves the two preferences in one place, so the
+precedence is a fact rather than an ordering convention.
 
 `@slot/ui` is the control surface: spin button, bet selector, turbo toggle, balance/win HUD. It takes
 a **view model, not an engine** — `ui → protocol, money` is the whole dependency list — so the client
@@ -577,6 +616,20 @@ take, and maps engine phases onto a button label.
   stake that is no longer on the server's bet ladder is dropped too, because the alternative is a
   reload that turns into `STAKE_NOT_ALLOWED` on the first spin. Everything else — the balance, the
   round, the feature — is the server's, and `authenticate` returns it.
+- **Failures are reported through a seam, not to the console directly.**
+  [`telemetry.ts`](apps/game-client/src/telemetry.ts) is an interface, a console adapter and a guard;
+  wiring Sentry or an operator's collector later means constructing a different object at boot. Four
+  sites report: the boot failure (which happens before anything is subscribed, and is the shape a
+  math-version mismatch takes), every `ERROR_RAISED`, both `__ASSERT_MATH__` mismatches, and the
+  outermost catch in `main.ts`. Every call goes through `guarded`, because a reporter that throws
+  while reporting an error would turn a frozen reel set into a blank page.
+- **The screen-reader story is one live region.** A canvas is a rectangle with nothing in the
+  accessibility tree, so the HTML shell carries a polite `role="status"` region and
+  [`announce.ts`](apps/game-client/src/announce.ts) turns the panel's own view model into the
+  sentence that goes in it — the same view model the panel renders, so what is heard and what is seen
+  cannot describe different states. It announces *state* rather than events (the region is
+  `aria-atomic`, so each update replaces the last) and **only when something changed**, because a
+  slot renders every frame and re-writing an identical sentence re-announces it in some readers.
 - The loading state is DOM rather than canvas, because it has to be visible before Pixi, the atlas or
   the session exist — and if the boot fails it says why, in words, instead of leaving a black
   rectangle. The 18+/demo notice sits under the canvas on every screen.
@@ -598,7 +651,7 @@ else, so the in-process backend is an injected structural interface (`InProcessB
 `SimServer` happens to satisfy — the same reasoning as [ADR-0003](docs/adr/ADR-0003-injected-persistence-port.md),
 and the reason `mock.test.ts` can drive the whole thing with a twenty-line fake. Neither package can
 test that the two actually meet, so [`tests/wiring.test.ts`](tests/wiring.test.ts) does it at the
-root — standing in for `apps/game-client`, and the seed of the contract suite (S3).
+root — standing in for `apps/game-client`, and the seed the contract suite grew from.
 
 `withRetry` is the policy, as a decorator so both implementations share one copy of the rules. Three
 of them, and they are the whole point: **only `RECOVERABLE` errors are retried** (a `PLAYER` error
@@ -667,8 +720,10 @@ What it does today (**S0**):
   never be mistaken for a conflict.
 - **Recovery through `pendingRound` alone**, exactly as docs/protocol.md §5 specifies. A reload
   mid-feature resumes at the next step.
-- **Stake validation and max-win capping** — `STAKE_NOT_ALLOWED`, `INSUFFICIENT_FUNDS` and
+- **Stake validation and the max-win ceiling** — `STAKE_NOT_ALLOWED`, `INSUFFICIENT_FUNDS` and
   `SettleRes.capped` all have real producers, so the `PLAYER` error class is testable end to end.
+  The ceiling is `stake × maxWinMultiplier` and is applied **as the round accrues**, which is what
+  makes `settle` a credit with nothing left to compute — it no longer even takes a clock.
 - **Retrigger arithmetic**, folded server-side. `remaining = total - step` holds through every free
   spin; the client displays it and never computes it.
 - **A persistence port** with two implementations, in-memory and web-storage. Round history is
@@ -708,7 +763,7 @@ reimplemented here; this app parses a request, hands it to `SimServer.deliver`, 
 back. If it had its own copy of the rules, the parity test would only prove that two implementations
 currently agree.
 
-The binding is pinned in [docs/protocol.md §2.6](docs/protocol.md) and argued in
+The binding is pinned in [docs/protocol.md §2.7](docs/protocol.md) and argued in
 [ADR-0004](docs/adr/ADR-0004-http-binding.md). Four points are worth knowing without opening either:
 
 - **Routes come from the `CALLS` table**, via `routeFor()` — `POST /rgs/spin` and friends. A fifth
@@ -720,13 +775,17 @@ The binding is pinned in [docs/protocol.md §2.6](docs/protocol.md) and argued i
 - **A dropped response is a hijacked reply** — the connection is held open and says nothing, because
   that is what the fault *is*: the round happened and the answer was lost. The client's own timeout
   ends the wait, exactly as in-process. Hijacked sockets are tracked so shutdown destroys them
-  instead of waiting on a connection that waits forever.
+  instead of waiting on a connection that waits forever — **in `preClose`, not `onClose`**, and that
+  distinction was a bug until `tests/http-soak.test.ts` went looking: `onClose` runs after Fastify
+  has already begun waiting for open connections, so destroying the sockets there is too late and
+  `close()` never returns. The tracking was right; the moment it fired was not, and `app.inject()`
+  cannot reproduce it because its socket is a fake with no connection to end.
 - **`x-correlation-id` in both directions.** The client mints one and the server echoes it; the
   simulator's own `sim-000042` ids (replayable, not unique across sessions) go to the log line beside
   it.
 
 `/dev/*` — fault injection, session reset, a state summary — is what the debug panel (C7) drives and
-what lets the contract suite (S3) *demand* a failure rather than wait for one; it is mounted only
+what lets the contract suite *demand* a failure rather than wait for one; it is mounted only
 when `devRoutes` is on, and `apps/rgs` will not have it. `POST /demo/session` is not gated, because a
 server you cannot obtain a token for is not a server (docs/protocol.md §7). Configuration is
 environment, validated with a schema like anything else that crosses a boundary — a mistyped server
@@ -780,12 +839,44 @@ shape.
 | **Resume** | `tests/resume.test.ts` | The client is destroyed and rebuilt at five points mid-feature over a surviving store — the round finishes once, and is credited once |
 | **Engine soak** | `tests/soak.test.ts` | 1,000 seeded rounds incl. features, retries and disconnects, with **no state violations** |
 | **Transport parity** | `tests/http.test.ts` | One round through `MockTransport` and through `HttpTransport`, against identically seeded simulators, **equal field for field** |
-| **Contract** | one suite, three targets | `rgs-sim` in-process · sim over HTTP · `apps/rgs` — the switch-over gate |
+| **Network soak** | `tests/http-soak.test.ts` | 300 rounds over a real socket, a faulty-line run, and a shutdown with a hundred abandoned responses in flight — the failures that only exist on a connection |
+| **Contract** | `tests/contract/`, one suite per target | `rgs-sim` in-process · sim over HTTP · `apps/rgs` (registered, unavailable until R0) — the switch-over gate |
 | **E2E** | Playwright, in CI | Fixed seed + forced outcomes: spin, win, feature, resume after reload |
 | **Perf** | `tools/perf-harness` | fps/memory on a throttled mobile profile — numbers, not adjectives |
 
 The contract suite is the load-bearing one: it is the only reason "swap the transport URL" is a
 credible claim.
+
+#### The contract suite — `tests/contract/`
+
+Three files, and the split is the whole design. [`targets.ts`](tests/contract/targets.ts) says what
+a target *is* — an `RgsTransport` plus a control plane that can hand back a known starting point and
+the server's own account of what happened — and registers the three.
+[`suite.ts`](tests/contract/suite.ts) is the contract, parameterised over one target and naming no
+server implementation anywhere in it. [`contract.test.ts`](tests/contract/contract.test.ts) is a
+`for` loop.
+
+Three rules make it a gate rather than a second copy of the unit tests:
+
+- **It reaches a state by playing, not by forcing it.** `spinUntil` spins fresh rounds until one has
+  the shape a test needs, finishing every round that does not — because `forceOutcome` is refused by
+  every production server, and a suite built on it would be unrunnable against the one target that
+  matters. Only the feature cases use it, and they are marked as needing the capability.
+- **A capability a target lacks turns the case into a *named skip*, never an omission.** `apps/rgs`
+  is registered today with `unavailable` set, so the run prints `contract · apps/rgs — not run` and
+  the claim "one suite, three targets" is something the output either supports or visibly does not.
+  Same mechanism carries the case the simulator structurally cannot produce: a round debited and
+  never resolved (docs/protocol.md §5) is declared as `unresolvedRounds`, skipped by name, and comes
+  with the `strand()` hook the target that *can* produce it must implement.
+- **The control plane is a port, not a back door.** The HTTP target resets and inspects through
+  `apps/mock-rgs`'s `/dev/*` routes rather than the `SimServer` object it happens to hold, so the
+  same target definition works against a server in another process.
+
+What it does **not** prove, said here so nobody reads more into a green run: against both simulator
+targets the paytable re-evaluation is a function agreeing with itself, because `rgs-sim` derives its
+wins with the same `@slot/game-math` the suite checks them with. That assertion is aimed at a target
+that ships its own math — `apps/rgs` (R1+), or an operator's server — which is exactly when a
+paytable can drift.
 
 ### Environment & build flags
 
@@ -820,33 +911,14 @@ made visible:_
   engine now makes the consequence concrete: `SESSION_EXPIRED` is `PLAYER`, so `DISMISS` returns to
   `IDLE` and a debited round is simply abandoned. Nothing re-authenticates. Decide before C6, when
   the compliance layer starts ending sessions on purpose.
-- **`limits.maxWin` is an absolute amount, not a multiple of the stake — and S4 measured what that
-  costs.** The cap is 5,000× the *largest* bet level, while the largest win in twenty million rounds
-  was 304× the stake played. At the maximum stake the ceiling is therefore roughly sixteen times
-  further away than the game ever reaches; at the minimum stake it is two hundred times further than
-  that again. So the cap is unreachable at every stake, which means `SettleRes.capped` has no
-  producer outside `forceOutcome` and the player-facing "maximum win" is decoration. Real caps are
-  N× the stake actually played. Changing it is a wire change, so it belongs in `docs/protocol.md`
-  first.
-- **Nothing compares the two math versions — and S4 just moved one.** `MATH_VERSION` went to 2.0.0
-  when the strips and paytable were tuned, which is precisely the event this check exists for: a
-  client built before the tuning would draw 1.0.0's reels against a 2.0.0 server and pay out
-  differently. `GameConfig.mathVersion` is on the wire, `game-math` exports `MATH_VERSION`,
-  `apps/mock-rgs` publishes the server's on `GET /ready` — and nothing puts the two side by side. The comparison belongs on the authenticate path and raises
-  `MATH_VERSION_MISMATCH`; it is still scheduled in no block. Until it exists, a strip edit ships a
-  client drawing reels the server is not playing, and neither `tests/soak.test.ts` nor
-  `tests/http.test.ts` would notice, because both halves come from the same workspace. The HTTP path
-  makes this worse rather than better: a deployed `apps/mock-rgs` can now be a different build from
-  the client talking to it.
 
 **Workspace & tooling**
 
-- **Two targets, two hand-written suites — not the one suite S3 promises.**
-  `tests/wiring.test.ts` and `tests/http.test.ts` prove the in-process and HTTP paths agree, but they
-  are two files that happen to assert similar things, not *one* suite parameterised over three
-  targets. The HTTP one also plays a single round where the soak plays a thousand: the network path
-  has no equivalent of `tests/soak.test.ts`, so a fault that only manifests under sustained load over
-  a socket has nothing looking for it. S3 is where both are fixed.
+- **The network soak is a test, not a load test.** `tests/http-soak.test.ts` plays 300 rounds over a
+  real socket, including a faulty-line run and a shutdown with a hundred abandoned responses in
+  flight — which is what found the `preClose` bug. What it is not is *load*: one client, no
+  concurrency, no memory measurement over time. Sustained multi-client load and a heap trend belong
+  to R7, and the nightly run `RECOMMENDATIONS.md` asks for.
 - **Three packages still have no boundary rule.** The dependency table covers `protocol`, `money`,
   `game-math`, `engine`, `rgs-sim`, `transport`, `renderer`, `ui` and `apps/mock-rgs` — so
   `platform`, `compliance` and `dev-tools` are unconstrained: today nothing stops `compliance`
@@ -866,12 +938,13 @@ made visible:_
 
 **Simulator (`packages/rgs-sim`) — behaviour the real RGS will have to earn**
 
-- **The sim cannot produce an `OPEN` round with no feature.** docs/protocol.md §5 defines that
-  recovery case — "the spin was debited but never resolved" — and the in-process sim has no window
-  in which it can happen: a handler is synchronous, so debit and resolve land in the same call.
-  Only a real RGS that crashes between the two can produce it (R1). The client will implement that
-  branch of recovery against no producer, and the contract suite (S3) has to decide whether to fake
-  one or to mark the case untestable against this target.
+- **The sim cannot produce an `OPEN` round with no feature, and the contract suite says so out
+  loud.** docs/protocol.md §5 defines that recovery case — "the spin was debited but never resolved"
+  — and neither simulator target has a window in which it can happen: a handler is synchronous, so
+  debit and resolve land in the same call. S3 chose to declare rather than fake it: the case is a
+  target capability (`unresolvedRounds`), it is skipped **by name** in every run, and a target that
+  can produce it must implement `TargetHandle.strand()`. So the client still implements that branch
+  of recovery against no producer, and the first real evidence arrives with R1.
 - **Jurisdiction is declared but not enforced.** `GameConfig.jurisdiction` now comes *from* the
   server, which is the right direction, but enforcement still lives entirely in the client's
   `compliance` package (C6). A real regulator requires the *server* to enforce minimum spin duration
@@ -880,9 +953,12 @@ made visible:_
 
 **Real RGS (`apps/rgs`) — the whole surface**
 
-- **Every endpoint is unimplemented, by design (R0).** The contract suite is expected to fail against
-  this target until R1+ lands, and that expectation is documented, not silent. Replace this bullet
-  with specific gaps as the R-blocks land and the failures become real ones.
+- **`apps/rgs` does not exist, so the third target is registered and unavailable.** It is in
+  `CONTRACT_TARGETS` with an `unavailable` reason, which prints as a named skip on every run rather
+  than a target quietly missing from a green suite. R0 builds the skeleton and replaces that entry
+  with a real one, after which the suite is expected to fail against it with `NotImplemented` **and
+  nothing else** until R1+ lands. Replace this bullet with specific gaps as the R-blocks land and
+  the failures become real ones.
 
 **Client — implied by the domain, built by no block**
 
@@ -890,26 +966,18 @@ made visible:_
   compliance work (C6) assumes it, and no block builds it — including the loss/win-limit stop
   conditions regulators actually care about. Either schedule it or state in the README that it is out
   of scope; the current position is an inconsistency.
-- **No game history / "last rounds" surface.** Regulated markets require a player-visible round
-  history, and `roundId` + the persisted round state already make it nearly free.
-- **A capped max win counts up to a number the player is not paid.** The presentation rolls to
-  `result.totalWin`, and `settle` may credit less because `limits.maxWin` clipped it — after which the
-  status line reads `MAXIMUM WIN REACHED` and the balance moves by the smaller figure. The counter,
-  the banner and the credit should agree; today the first two are the round's win and the third is
-  the capped one. The fix needs the cap on the way *in* (the server knows at spin time whether the
-  round will clip) or a presentation that counts to the credited amount, and it is a wire question
-  before it is a rendering one.
-- **Accessibility is unaddressed, and every block makes it more concrete.** There is no
-  `prefers-reduced-motion` path: the reels spin, the winning symbols pulse and a big win flashes a
-  banner, none of which has a reduced variant — and the timings are all data, so one would be cheap.
-  Win highlighting is a ring plus a dim, which happens to survive colour blindness, but nothing
-  verifies that. And a canvas game still has no screen-reader story at all: the balance, the win and
-  the phase are pixels, not an announced region, though the HTML shell is right there to hold one.
-  All of it is unscheduled.
-- **A `FATAL` error is reported to nobody.** The debug panel exports an event log *locally*; there is
-  no telemetry seam, so a schema mismatch in a deployed build is invisible. The fix is a `Telemetry`
-  port with a console adapter, called from the error boundary and the FSM's illegal-transition path —
-  an hour's work, and the seam a real reporter slots into later.
+- **Round history has a server but no screen.** `history` is on the wire, the simulator serves it and
+  the contract suite holds every target to it — and nothing in `apps/game-client` shows it to a
+  player. It wants the debug panel's frame (C7) or a panel of its own (C8). The other half is
+  retention: this server keeps `MAX_ROUND_HISTORY` rounds in a browser store, which is not what a
+  regulator means by a round history, and `retention` is on the wire so the client can say so
+  honestly until R1 puts months of rows behind it.
+- **Accessibility is started, not finished.** `prefers-reduced-motion` is honoured (the reels go to
+  the outcome without the travel) and the HTML shell carries a polite live region the client keeps in
+  step with the panel. What is still missing: the region announces state but nothing is *operable*
+  from the keyboard — the spin button is a Pixi sprite, so a player who cannot use a pointer cannot
+  play. Win highlighting is a ring plus a dim, which happens to survive colour blindness, and nothing
+  verifies that. Both want C6, alongside i18n.
 
 **Assets & content**
 

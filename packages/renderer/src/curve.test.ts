@@ -5,6 +5,7 @@ import {
   isBlurred,
   isStopped,
   parked,
+  reducedMotionCurve,
   slam,
   startSpin,
   target,
@@ -221,5 +222,106 @@ describe('the machine is total', () => {
         expect(motion.position % STRIP).toBeCloseTo(stop, 9);
       }
     }
+  });
+});
+
+/* ── prefers-reduced-motion ───────────────────────────────────────────────────────────────── */
+
+/**
+ * The preference removes the *travel*, not the outcome.
+ *
+ * Which is why it is tested here rather than looked at: a reduced-motion reel still has to land on
+ * the stop the server committed to, exactly, at any frame rate — an accessibility mode that quietly
+ * lands on the wrong symbol would be worse than not having one.
+ */
+describe('reduced motion', () => {
+  const REDUCED = reducedMotionCurve(DEFAULT_CURVE);
+
+  it.each([0, 1, 7, 17, 39])('still lands exactly on stop %i', (stop) => {
+    const { motion } = run(
+      target(
+        startSpin(parked(0), { reel: 2, slam: false, anticipated: true }, REDUCED),
+        stop,
+        false,
+      ),
+      { curve: REDUCED },
+    );
+
+    expect(motion.phase).toBe('STOPPED');
+    expect(motion.position % 40).toBeCloseTo(stop, 10);
+  });
+
+  it('lands within a couple of frames instead of a couple of seconds', () => {
+    const ordinary = run(spinning(11));
+    const reduced = run(
+      target(
+        startSpin(parked(0), { reel: 4, slam: false, anticipated: false }, REDUCED),
+        11,
+        false,
+      ),
+      { curve: REDUCED },
+    );
+
+    expect(reduced.elapsedMs).toBeLessThan(100);
+    expect(reduced.elapsedMs).toBeLessThan(ordinary.elapsedMs);
+  });
+
+  it('never dips backwards, and never overshoots', () => {
+    let motion = target(
+      startSpin(parked(0), { reel: 0, slam: false, anticipated: false }, REDUCED),
+      6,
+      false,
+    );
+    let highest = motion.position;
+
+    while (!isStopped(motion)) {
+      const next = advance(motion, 16.67, { stripLength: 40, curve: REDUCED });
+      // Monotonic: no backwards dip on the way out, no spring back on the way in.
+      expect(next.position).toBeGreaterThanOrEqual(motion.position);
+      highest = Math.max(highest, next.position);
+      motion = next;
+    }
+
+    expect(motion.position).toBe(highest);
+  });
+
+  it('never blurs a symbol', () => {
+    let motion = target(
+      startSpin(parked(0), { reel: 0, slam: false, anticipated: false }, REDUCED),
+      19,
+      false,
+    );
+
+    while (!isStopped(motion)) {
+      expect(isBlurred(motion, REDUCED)).toBe(false);
+      motion = advance(motion, 16.67, { stripLength: 40, curve: REDUCED });
+    }
+  });
+
+  it('stops every reel together — no stagger to watch', () => {
+    const elapsed = [0, 1, 2, 3, 4].map(
+      (reel) =>
+        run(
+          target(
+            startSpin(parked(0), { reel, slam: false, anticipated: false }, REDUCED),
+            5,
+            false,
+          ),
+          { curve: REDUCED },
+        ).elapsedMs,
+    );
+
+    expect(new Set(elapsed).size).toBe(1);
+  });
+
+  it('survives a zero-length frame, which a 1 ms stage makes newly possible', () => {
+    const motion = advance(
+      target(startSpin(parked(0), { reel: 0, slam: false, anticipated: false }, REDUCED), 4, false),
+      0,
+      { stripLength: 40, curve: REDUCED },
+    );
+
+    expect(Number.isFinite(motion.position)).toBe(true);
+    expect(Number.isFinite(motion.velocity)).toBe(true);
   });
 });

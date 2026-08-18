@@ -31,7 +31,7 @@ export const CONFIG: GameConfig = {
   paytable: MATH_CONFIG.paytable.map((entry) => ({ ...entry, pays: [...entry.pays] })),
   paylines: MATH_CONFIG.paylines.map((line) => [...line]),
   betLevels: [...BET_LEVELS],
-  limits: { minStake: minor(20), maxStake: minor(4_000), maxWin: minor(20_000_000) },
+  limits: { minStake: minor(20), maxStake: minor(4_000), maxWinMultiplier: 5_000 },
   jurisdiction: 'DEFAULT',
   devMode: false,
 };
@@ -78,16 +78,25 @@ export const feature = (over: Partial<FeatureProgress> = {}): FeatureProgress =>
   total: 10,
   remaining: 10,
   step: 0,
-  cumulativeWin: minor(0),
   stakeRef: STAKE,
   ...over,
 });
 
 export const spinRes = (
-  over: { totalWin?: number; feature?: FeatureProgress; next?: NextAction; balance?: number } = {},
+  over: {
+    totalWin?: number;
+    roundWin?: number;
+    capped?: boolean;
+    feature?: FeatureProgress;
+    next?: NextAction;
+    balance?: number;
+  } = {},
 ): SpinRes => ({
   roundId: ROUND_ID,
   balance: minor(over.balance ?? BALANCE - STAKE),
+  // Uncapped by default, so `roundWin` follows the win unless a test is about the ceiling.
+  roundWin: minor(over.roundWin ?? over.totalWin ?? 0),
+  capped: over.capped ?? false,
   result: result(over.totalWin ?? 0),
   ...(over.feature === undefined ? {} : { feature: over.feature }),
   next: over.next ?? 'IDLE',
@@ -95,11 +104,19 @@ export const spinRes = (
 
 export const featureSpinRes = (
   step: number,
-  over: { totalWin?: number; feature?: FeatureProgress; next?: NextAction } = {},
+  over: {
+    totalWin?: number;
+    roundWin?: number;
+    capped?: boolean;
+    feature?: FeatureProgress;
+    next?: NextAction;
+  } = {},
 ): FeatureSpinRes => ({
   roundId: ROUND_ID,
   step,
   balance: minor(BALANCE - STAKE),
+  roundWin: minor(over.roundWin ?? over.totalWin ?? 0),
+  capped: over.capped ?? false,
   result: result(over.totalWin ?? 0),
   feature: over.feature ?? feature({ step, remaining: 10 - step }),
   next: over.next ?? 'FEATURE_SPIN',
@@ -121,7 +138,13 @@ export const authRes = (pendingRound?: PendingRound): AuthenticateRes => ({
 });
 
 const session = { config: CONFIG, balance: BALANCE, stake: STAKE };
-const round = { roundId: ROUND_ID, result: result(500), feature: undefined };
+const round = {
+  roundId: ROUND_ID,
+  result: result(500),
+  roundWin: minor(500),
+  capped: false,
+  feature: undefined,
+};
 
 /** One representative state per phase — the raw material for the exhaustiveness table. */
 export const STATES: Record<Phase, EngineState> = {

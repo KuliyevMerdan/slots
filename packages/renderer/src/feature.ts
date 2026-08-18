@@ -170,12 +170,14 @@ export class FeatureScreens {
    * The counter, straight from the server's numbers.
    *
    * `remaining` is `total - step`, computed by the server; the client displays it. A retrigger is
-   * simply a `total` that grew, and the caller says so by passing `added`.
+   * simply a `total` that grew, and the caller says so by passing `added`. `roundWin` is the round's
+   * **payable** total — already capped by the server, so the counter cannot climb past what the
+   * balance will actually receive.
    */
-  progress(feature: FeatureProgress): void {
+  progress(feature: FeatureProgress, roundWin: Minor): void {
     this.setActive(true);
     this.#counterText.text = `FREE SPIN ${String(Math.min(feature.step + 1, feature.total))} / ${String(feature.total)}`;
-    this.#counterWin.text = this.#money(feature.cumulativeWin);
+    this.#counterWin.text = this.#money(roundWin);
   }
 
   /** "+5 FREE SPINS", riding whatever else is on screen. */

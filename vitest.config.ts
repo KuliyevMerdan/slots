@@ -4,6 +4,8 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     include: ['tests/**/*.test.ts'],
+    // The contract suite is its own project — vitest.contract.config.ts, `pnpm test:contract`.
+    exclude: ['tests/contract/**'],
     testTimeout: 30_000, // the boundary suite shells out to dependency-cruiser
     // `tests/mash.test.ts` drives the real renderer, and Pixi reads a couple of browser globals when
     // it is imported. Nothing in these suites draws — see config/pixi-headless.ts.

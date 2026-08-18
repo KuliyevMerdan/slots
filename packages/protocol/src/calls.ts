@@ -64,6 +64,15 @@ export const SpinResSchema = z.object({
   roundId: RoundIdSchema,
   /** After the debit, before any credit. The client never computes this. */
   balance: NonNegativeMinorSchema,
+  /**
+   * What this round will pay, **already capped** — the number the presentation counts up to.
+   *
+   * Not `result.totalWin`: that is what the math paid for this grid, uncapped, and is what the dev
+   * assertion re-evaluates. This is the money (docs/protocol.md §3, D7).
+   */
+  roundWin: NonNegativeMinorSchema,
+  /** True once `stake × limits.maxWinMultiplier` has clipped the round. */
+  capped: z.boolean(),
   result: RoundResultSchema,
   feature: FeatureProgressSchema.optional(),
   next: NextActionSchema,
@@ -90,6 +99,9 @@ export const FeatureSpinResSchema = z.object({
   step: z.int().min(1),
   /** Unchanged — a free spin neither debits nor credits. Sent so the HUD never has to remember. */
   balance: NonNegativeMinorSchema,
+  /** The round's payable total after this free spin, already capped. */
+  roundWin: NonNegativeMinorSchema,
+  capped: z.boolean(),
   result: RoundResultSchema,
   feature: FeatureProgressSchema,
   next: NextActionSchema,
@@ -112,18 +124,61 @@ export const SettleResSchema = z.object({
   roundId: RoundIdSchema,
   /** After the credit. */
   balance: NonNegativeMinorSchema,
-  /** The amount actually credited, after max-win capping. */
+  /** The amount credited — equal to the last `roundWin` the client was sent. */
   totalWin: NonNegativeMinorSchema,
-  /** True iff `limits.maxWin` clipped the payout. The player has to be told. */
+  /** True iff the ceiling clipped this round. The player has to be told. */
   capped: z.boolean(),
   next: z.literal('IDLE'),
 });
 
 export type SettleRes = z.infer<typeof SettleResSchema>;
 
+/* ── history ──────────────────────────────────────────────────────────────────────────────────
+ * Read-only, and settled rounds only. Most regulated markets require a player-visible round
+ * history; this is the server half of it, keyed on the `roundId` everything else is already logged
+ * under.
+ */
+
+export const HistoryReqSchema = z.object({
+  /** Newest first. Defaults to 20 server-side. */
+  limit: z.int().min(1).max(100).optional(),
+});
+
+export type HistoryReq = z.infer<typeof HistoryReqSchema>;
+
+export const RoundSummarySchema = z.object({
+  roundId: RoundIdSchema,
+  /** Epoch ms, when the round was opened. */
+  at: TimestampSchema,
+  stake: PositiveMinorSchema,
+  /** What was credited, after the ceiling. */
+  totalWin: NonNegativeMinorSchema,
+  capped: z.boolean(),
+  /** How many free spins the round contained. Zero for a base-only round. */
+  freeSpins: z.int().min(0),
+});
+
+export type RoundSummary = z.infer<typeof RoundSummarySchema>;
+
+export const HistoryResSchema = z.object({
+  /** Newest first. A round still in flight is `pendingRound`, never this. */
+  rounds: z.array(RoundSummarySchema),
+  /**
+   * How many rounds this server keeps at all.
+   *
+   * On the wire because it is a real limit rather than an implementation detail: the simulator keeps
+   * a few dozen in a browser store and a real RGS keeps months of them, and a client that says "your
+   * last N rounds" has to be told which N.
+   */
+  retention: z.int().min(0),
+});
+
+export type HistoryRes = z.infer<typeof HistoryResSchema>;
+
 /* ── the call table ───────────────────────────────────────────────────────────────────────────
  * One place that says what the wire is, so HTTP routing (S2), the contract suite (S3) and the
- * transport (C2) enumerate the same four calls instead of three hand-written lists.
+ * transport (C2) enumerate the same calls instead of three hand-written lists. Adding `history` to
+ * this object is what routed it, validated it and typed it — which was the argument for the table.
  */
 
 export const CALLS = {
@@ -131,6 +186,7 @@ export const CALLS = {
   spin: { req: SpinReqSchema, res: SpinResSchema, mutating: true },
   featureSpin: { req: FeatureSpinReqSchema, res: FeatureSpinResSchema, mutating: true },
   settle: { req: SettleReqSchema, res: SettleResSchema, mutating: true },
+  history: { req: HistoryReqSchema, res: HistoryResSchema, mutating: false },
 } as const;
 
 export type CallName = keyof typeof CALLS;

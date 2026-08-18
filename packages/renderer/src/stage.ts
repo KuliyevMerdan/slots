@@ -2,7 +2,13 @@ import { Container, Graphics } from 'pixi.js';
 import type { GameConfig, Minor } from '@slot/protocol';
 import type { EngineEvent, EngineInput, EngineState } from '@slot/engine';
 import type { SymbolAtlas } from './atlas.js';
-import { DEFAULT_CURVE, TURBO_FACTOR, scaleCurve } from './curve.js';
+import {
+  DEFAULT_CURVE,
+  REDUCED_MOTION_FACTOR,
+  TURBO_FACTOR,
+  reducedMotionCurve,
+  scaleCurve,
+} from './curve.js';
 import type { SpinCurve } from './curve.js';
 import { ReelSet } from './reels.js';
 import { FeatureScreens } from './feature.js';
@@ -71,6 +77,9 @@ export class GameStage {
   /** The phase the engine is in, so the stage can tell when it owes an input and has not built one. */
   #phase: EngineState['phase'] = 'BOOTING';
   #speed = 1;
+  #turbo = false;
+  /** `prefers-reduced-motion`. Wins over turbo, because it is a need rather than a preference. */
+  #reducedMotion = false;
   /**
    * The feature's awarded total, kept for one job only: noticing that it grew, which is a retrigger.
    * Every other number the feature screens show arrives with the event that needs it.
@@ -170,7 +179,7 @@ export class GameStage {
   attach(state: EngineState): void {
     if ('feature' in state && state.feature !== undefined) {
       this.#featureTotal = state.feature.total;
-      this.feature.progress(state.feature);
+      this.feature.progress(state.feature, state.roundWin);
     }
 
     if (state.phase === 'SPINNING') {
@@ -194,12 +203,46 @@ export class GameStage {
    * turbo in a jurisdiction, there is exactly one thing for it to refuse.
    */
   setTurbo(on: boolean): void {
-    this.#speed = on ? TURBO_FACTOR : 1;
-    this.reels.setCurve(on ? scaleCurve(this.#baseCurve, TURBO_FACTOR) : this.#baseCurve);
+    this.#turbo = on;
+    this.#applyMotion();
   }
 
   get turbo(): boolean {
-    return this.#speed !== 1;
+    return this.#turbo;
+  }
+
+  /**
+   * `prefers-reduced-motion`, honoured for real: the outcome without the travel.
+   *
+   * Distinct from turbo, and it wins over it. Turbo is a preference about *pace* and keeps every
+   * stage of the spin; this removes the stages — no dip, no overshoot, no stagger, no scatter hold,
+   * no motion blur — and collapses every timed screen to the frame it needs to hand the engine its
+   * input. Nothing about the game changes: the same stops, the same wins, the same money.
+   */
+  setReducedMotion(on: boolean): void {
+    this.#reducedMotion = on;
+    this.#applyMotion();
+  }
+
+  get reducedMotion(): boolean {
+    return this.#reducedMotion;
+  }
+
+  /**
+   * The one place the two preferences are resolved into a curve and a speed.
+   *
+   * Resolving them here rather than at each setter is what makes the precedence a fact rather than
+   * an ordering convention: whichever switch moved last, reduced motion still wins.
+   */
+  #applyMotion(): void {
+    if (this.#reducedMotion) {
+      this.#speed = REDUCED_MOTION_FACTOR;
+      this.reels.setCurve(reducedMotionCurve(this.#baseCurve));
+      return;
+    }
+
+    this.#speed = this.#turbo ? TURBO_FACTOR : 1;
+    this.reels.setCurve(this.#turbo ? scaleCurve(this.#baseCurve, TURBO_FACTOR) : this.#baseCurve);
   }
 
   /** One frame, delta-time driven throughout. Called from the client's single ticker. */
@@ -321,7 +364,7 @@ export class GameStage {
         // presentation, and this is the only place the client is allowed to compare the two.
         const added = event.feature.total - this.#featureTotal;
         this.#featureTotal = event.feature.total;
-        this.feature.progress(event.feature);
+        this.feature.progress(event.feature, event.roundWin);
         if (added > 0 && this.#featureTotal > added) this.feature.retrigger(added);
         return;
       }
@@ -329,7 +372,7 @@ export class GameStage {
       case 'FEATURE_ENDED':
         this.#sequence = {
           input: { type: 'OUTRO_COMPLETE' },
-          timeline: this.feature.outro(event.cumulativeWin, this.#speed),
+          timeline: this.feature.outro(event.roundWin, this.#speed),
         };
         return;
 

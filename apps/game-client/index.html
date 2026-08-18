@@ -102,6 +102,21 @@
         text-transform: none;
         letter-spacing: 0;
       }
+
+      /* Present to assistive technology, absent from the layout. Not `display: none` and not
+         `visibility: hidden` — either of those removes the element from the accessibility tree,
+         which is the one thing this element exists to be in. */
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        margin: -1px;
+        padding: 0;
+        border: 0;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
+      }
     </style>
   </head>
   <body>
@@ -112,6 +127,15 @@
       <p id="boot-status">Connecting</p>
       <p id="boot-error"></p>
     </div>
+
+    <!--
+      The game is a canvas, which is a rectangle of pixels with nothing in the accessibility tree.
+      This region is the whole screen-reader story: the client writes the balance, the stake, the win
+      and what the machine is doing into it, and `aria-live="polite"` means those are announced
+      between actions rather than interrupting one. `role="status"` rather than `alert`, because a
+      slot narrating itself at alert priority would be unusable.
+    -->
+    <p id="a11y-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
 
     <!-- Play money only. No real money, no payments, no crypto — stated where a player sees it. -->
     <p class="notice">18+ · Demo · Play money only — no real money and no payments</p>

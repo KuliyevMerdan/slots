@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import type { ErrorCode, FeatureSpinRes, Minor, SpinRes } from '@slot/protocol';
+import type { ErrorCode, FeatureSpinRes, SpinRes } from '@slot/protocol';
 import { minor } from '@slot/money';
 import { viewMatchesStops } from '@slot/game-math';
-import { authenticate, featureSpin, settle, spin } from './sim.js';
+import { authenticate, featureSpin, history, settle, spin } from './sim.js';
 import type { SimContext } from './sim.js';
 import type { SimOutcome, SimState } from './state.js';
-import { findRound } from './state.js';
+import { MAX_ROUND_HISTORY, findRound } from './state.js';
 import {
   EXPIRES_AT,
   START_BALANCE,
@@ -13,6 +13,7 @@ import {
   deadSpin,
   payingSpin,
   roundId,
+  spinWinningOver,
   stopsForScatters,
   testConfig,
   testContext,
@@ -459,7 +460,7 @@ describe('featureSpin', () => {
       opened.response.result.totalWin +
       steps.reduce((total, step) => total + step.result.totalWin, 0);
 
-    expect(last.feature.cumulativeWin).toBe(expected);
+    expect(last.roundWin).toBe(expected);
     expect(findRound(state, opened.roundId)?.cumulativeWin).toBe(expected);
     // Still not in the balance. That is what makes `settle` an explicit call.
     expect(state.balance).toBe(START_BALANCE - STAKE);
@@ -599,8 +600,8 @@ describe('settle', () => {
 
     const { response } = ok(settle(played.state, { roundId: opened.roundId }, context));
 
-    expect(response.totalWin).toBe(played.last.feature.cumulativeWin);
-    expect(response.balance).toBe(START_BALANCE - STAKE + played.last.feature.cumulativeWin);
+    expect(response.totalWin).toBe(played.last.roundWin);
+    expect(response.balance).toBe(START_BALANCE - STAKE + played.last.roundWin);
   });
 
   it('replays rather than crediting twice', () => {
@@ -643,30 +644,65 @@ describe('settle', () => {
     expect(error.class).toBe('FATAL');
   });
 
-  describe('max-win capping', () => {
-    const cap: Minor = minor(1);
+  /**
+   * The ceiling is `stake × maxWinMultiplier` and it is applied as the round accrues, so the number
+   * the client counts up to and the number that reaches the balance are the same number by
+   * construction rather than by agreement (docs/protocol.md D7).
+   */
+  describe('the max-win ceiling', () => {
+    /** One stake exactly, so any real win clips. */
+    const tiny = { maxWinMultiplier: 1 };
 
-    it('clips the payout and says so', () => {
-      const capped = testConfig({ maxWin: cap });
+    it('states the payable total on the way in, not the raw one', () => {
+      const capped = testConfig(tiny);
       const context = testContext(capped);
-      const { roundId: id } = payingSpin(capped);
+      const { roundId: id } = spinWinningOver(capped, 1);
+
+      const spun = ok(spin(testState(), { roundId: id, stake: STAKE }, context));
+
+      expect(spun.response.result.totalWin).toBeGreaterThan(STAKE);
+      // The outcome is what the math paid; the money is what the round will pay.
+      expect(spun.response.roundWin).toBe(STAKE);
+      expect(spun.response.capped).toBe(true);
+    });
+
+    it('credits exactly what it last showed', () => {
+      const capped = testConfig(tiny);
+      const context = testContext(capped);
+      const { roundId: id } = spinWinningOver(capped, 1);
       const spun = ok(spin(testState(), { roundId: id, stake: STAKE }, context));
 
       const { response, state } = ok(settle(spun.state, { roundId: id }, context));
 
-      expect(spun.response.result.totalWin).toBeGreaterThan(cap);
-      expect(response.totalWin).toBe(cap);
+      expect(response.totalWin).toBe(spun.response.roundWin);
       expect(response.capped).toBe(true);
-      expect(state.balance).toBe(START_BALANCE - STAKE + cap);
+      expect(state.balance).toBe(START_BALANCE - STAKE + STAKE);
     });
 
-    it('leaves an uncapped payout alone', () => {
+    it('stops a feature accruing past the ceiling, and stays capped', () => {
+      const capped = testConfig({ ...tiny, devMode: true });
+      const context = testContext(capped);
+      const opened = openFeature(context);
+      const played = playFeatureOut(opened.state, opened.roundId, context);
+      const ceiling = STAKE * 1;
+
+      for (const step of played.steps) {
+        expect(step.roundWin).toBeLessThanOrEqual(ceiling);
+      }
+      expect(played.last.capped).toBe(true);
+
+      const { response } = ok(settle(played.state, { roundId: opened.roundId }, context));
+      expect(response.totalWin).toBe(played.last.roundWin);
+    });
+
+    it('leaves a win under the ceiling alone', () => {
       const context = testContext(config);
       const { roundId: id } = payingSpin(config);
       const spun = ok(spin(testState(), { roundId: id, stake: STAKE }, context));
 
-      const { response } = ok(settle(spun.state, { roundId: id }, context));
-      expect(response.capped).toBe(false);
+      expect(spun.response.roundWin).toBe(spun.response.result.totalWin);
+      expect(spun.response.capped).toBe(false);
+      expect(ok(settle(spun.state, { roundId: id }, context)).response.capped).toBe(false);
     });
   });
 });
@@ -718,5 +754,95 @@ describe('the round lifecycle (docs/protocol.md §3)', () => {
 
   it.each(cases)('%s → next is %s', (_label, run, _state, expectedNext) => {
     expect(run().next).toBe(expectedNext);
+  });
+});
+
+/* ── history ──────────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The server half of a player-visible round history — required in most regulated markets, and
+ * nearly free here because the idempotency store already keeps the responses.
+ */
+describe('history', () => {
+  const config = testConfig();
+
+  /** Play `count` base rounds through the real handlers, returning the state they left behind. */
+  const playRounds = (count: number): SimState => {
+    const context = testContext(config);
+    let state = testState();
+
+    for (let index = 0; index < count; index += 1) {
+      const id = roundId(500 + index);
+      const spun = ok(spin(state, { roundId: id, stake: STAKE }, context));
+      state = spun.state;
+      if (spun.response.next === 'SETTLE') {
+        state = ok(settle(state, { roundId: id }, context)).state;
+      }
+    }
+
+    return state;
+  };
+
+  it('is empty for a session that has played nothing', () => {
+    const { response } = ok(history(testState(), {}, testContext(config)));
+
+    expect(response.rounds).toEqual([]);
+    expect(response.retention).toBe(MAX_ROUND_HISTORY);
+  });
+
+  it('lists settled rounds newest first', () => {
+    const { response } = ok(history(playRounds(4), {}, testContext(config)));
+
+    expect(response.rounds).toHaveLength(4);
+    const ids = response.rounds.map((round) => round.roundId);
+    expect(ids).toEqual([...ids].sort().reverse());
+  });
+
+  it('summarises the round in the terms a player reads', () => {
+    const context = testContext(config);
+    const { roundId: id } = payingSpin(config);
+    const spun = ok(spin(testState(), { roundId: id, stake: STAKE }, context));
+    const settled = ok(settle(spun.state, { roundId: id }, context));
+
+    const [summary] = ok(history(settled.state, {}, context)).response.rounds;
+
+    expect(summary).toMatchObject({
+      roundId: id,
+      stake: STAKE,
+      totalWin: settled.response.totalWin,
+      capped: false,
+      freeSpins: 0,
+    });
+  });
+
+  it('counts the free spins a round contained', () => {
+    const context = testContext(devConfig);
+    const opened = openFeature(context);
+    const played = playFeatureOut(opened.state, opened.roundId, context);
+    const settled = ok(settle(played.state, { roundId: opened.roundId }, context));
+
+    const [summary] = ok(history(settled.state, {}, context)).response.rounds;
+
+    expect(summary?.freeSpins).toBe(played.steps.length);
+    expect(summary?.totalWin).toBe(settled.response.totalWin);
+  });
+
+  /** A round in flight is `pendingRound`. Listing it here would invite a client to present it. */
+  it('leaves an unfinished round out', () => {
+    const context = testContext(config);
+    const { roundId: id } = payingSpin(config);
+    const spun = ok(spin(testState(), { roundId: id, stake: STAKE }, context));
+
+    expect(ok(history(spun.state, {}, context)).response.rounds).toEqual([]);
+  });
+
+  it('honours a limit, and takes the newest', () => {
+    const state = playRounds(6);
+
+    const { response } = ok(history(state, { limit: 2 }, testContext(config)));
+    const all = ok(history(state, {}, testContext(config))).response;
+
+    expect(response.rounds).toHaveLength(2);
+    expect(response.rounds).toEqual(all.rounds.slice(0, 2));
   });
 });

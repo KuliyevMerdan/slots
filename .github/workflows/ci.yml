@@ -42,5 +42,10 @@ jobs:
       - name: Root suites (boundary rules fire, purity rules fire, the seam is wired)
         run: pnpm run test:root
 
+      # The switch-over gate: one suite, every registered target. A target that cannot run says so
+      # by name in the output rather than being quietly left out.
+      - name: Contract suite
+        run: pnpm run test:contract
+
       - name: Formatting
         run: pnpm run format:check

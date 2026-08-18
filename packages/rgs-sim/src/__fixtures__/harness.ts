@@ -75,6 +75,15 @@ export const payingSpin = (config: GameConfig) =>
 export const triggeringSpin = (config: GameConfig) =>
   findRoundWhere(config, (outcome) => outcome.scatters >= 3);
 
+/**
+ * A base spin paying more than `multiple × STAKE` — the raw material for max-win ceiling tests.
+ *
+ * Searched on the real strips rather than forced, so a re-tune moves which round it finds instead of
+ * leaving the test pointing at a screen that no longer pays what it used to.
+ */
+export const spinWinningOver = (config: GameConfig, multiple: number) =>
+  findRoundWhere(config, (outcome) => outcome.totalWin > multiple * STAKE && outcome.scatters < 3);
+
 const windowAt = (strip: readonly SymbolId[], stop: number, rows: number): SymbolId[] =>
   Array.from({ length: rows }, (_unused, row) => strip[(stop + row) % strip.length] ?? '');
 

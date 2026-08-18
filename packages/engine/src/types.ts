@@ -56,6 +56,15 @@ interface Round {
   roundId: RoundId;
   /** The most recent spin's outcome — base or free spin. */
   result: RoundResult;
+  /**
+   * What this round will pay, as the server last stated it — already capped.
+   *
+   * Distinct from `result.totalWin`, which is what the math paid for the latest grid: the ceiling is
+   * a fact about the round, and the presentation must count to the payable figure rather than the
+   * raw one (docs/protocol.md D7). Copied from the response like every other number here.
+   */
+  roundWin: Minor;
+  capped: boolean;
   feature: FeatureProgress | undefined;
 }
 
@@ -183,8 +192,13 @@ export type EngineEvent =
       readonly totalWin: Minor;
     }
   | { readonly type: 'FEATURE_AWARDED'; readonly total: number }
-  | { readonly type: 'FEATURE_PROGRESS'; readonly feature: FeatureProgress }
-  | { readonly type: 'FEATURE_ENDED'; readonly cumulativeWin: Minor }
+  | {
+      readonly type: 'FEATURE_PROGRESS';
+      readonly feature: FeatureProgress;
+      /** What the round will pay so far, already capped — the counter above the reels shows it. */
+      readonly roundWin: Minor;
+    }
+  | { readonly type: 'FEATURE_ENDED'; readonly roundWin: Minor }
   | {
       readonly type: 'ROUND_SETTLED';
       readonly totalWin: Minor;

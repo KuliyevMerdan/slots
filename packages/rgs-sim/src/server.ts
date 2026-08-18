@@ -6,6 +6,8 @@ import type {
   FeatureSpinReq,
   FeatureSpinRes,
   GameConfig,
+  HistoryReq,
+  HistoryRes,
   SettleReq,
   SettleRes,
   SpinReq,
@@ -16,7 +18,7 @@ import { createSimConfig } from './config.js';
 import { correlationIdFor, errorPayload } from './errors.js';
 import { NO_FAULTS, decideFault, retryAdvice } from './faults.js';
 import type { FaultConfig } from './faults.js';
-import { authenticate, featureSpin, settle, spin } from './sim.js';
+import { authenticate, featureSpin, history, settle, spin } from './sim.js';
 import { InMemoryStore, SIM_STORE_KEY } from './store.js';
 import type { SimStore } from './store.js';
 import { loadState, saveState } from './state.js';
@@ -129,6 +131,10 @@ export class SimServer {
     return this.#direct('settle', request);
   }
 
+  history(request: unknown): HistoryRes {
+    return this.#direct('history', request);
+  }
+
   /** Forget the session. The store key is cleared too, so a reload does not resurrect it. */
   reset(state: SimState): void {
     this.#state = state;
@@ -208,7 +214,9 @@ export class SimServer {
           ? spin(state, parsed.data as SpinReq, context)
           : call === 'featureSpin'
             ? featureSpin(state, parsed.data as FeatureSpinReq, context)
-            : settle(state, parsed.data as SettleReq, context);
+            : call === 'settle'
+              ? settle(state, parsed.data as SettleReq, context)
+              : history(state, parsed.data as HistoryReq, context);
 
     this.#state = outcome.state;
     this.#persist();

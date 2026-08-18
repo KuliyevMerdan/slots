@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { SlotError } from '@slot/protocol';
+import { MATH_VERSION } from '@slot/game-math';
 import { NO_FAULTS, SimServer, createSimConfig, createSimState } from '@slot/rgs-sim';
+import { SlotEngine } from '@slot/engine';
 import { MockTransport } from '@slot/transport';
 import type { InProcessBackend } from '@slot/transport';
 
@@ -12,8 +14,8 @@ import type { InProcessBackend } from '@slot/transport';
  * The two meet structurally, at a wiring site — which is exactly what `apps/game-client` will be —
  * and this suite stands in for that site until it exists.
  *
- * It is also the seed of the contract suite (S3): the same round, played through the seam, is what
- * will later run against `apps/mock-rgs` over HTTP and against `apps/rgs`.
+ * It is also the seed the contract suite grew from: the same round, played through the seam, now
+ * runs against every registered target in `tests/contract/`.
  */
 
 const NOW = 1_700_000_000_000;
@@ -162,5 +164,55 @@ describe('faults, end to end', () => {
     expect(retried.roundId).toBe(id);
     expect(sim.state.balance).toBe(START_BALANCE - STAKE);
     expect(sim.state.rounds).toHaveLength(1);
+  });
+});
+
+/**
+ * The versions meet here, and nowhere else.
+ *
+ * `GameConfig.mathVersion` says what the server pays on; `@slot/game-math`'s `MATH_VERSION` says
+ * what this build's evaluator implements. Every unit test in the workspace builds both from the same
+ * package, so the two agree by construction — which is exactly why the check has to be proved at a
+ * wiring site: a deployed server and a deployed client are two builds, and this is the only thing
+ * that puts their versions side by side. S4 already moved the version once.
+ */
+describe('a server paying on different math', () => {
+  const engineAgainst = (mathVersion: string) => {
+    const sim = new SimServer({
+      initialState: createSimState({
+        serverSeed: 'math-version-seed',
+        balance: START_BALANCE as never,
+        expiresAt: 4_102_444_800_000,
+      }),
+      config: { ...createSimConfig(), mathVersion },
+      now: () => NOW,
+    });
+
+    return {
+      sim,
+      engine: new SlotEngine({
+        port: new MockTransport({ backend: sim }),
+        newRoundId: () => roundId(90),
+      }),
+    };
+  };
+
+  it('boots normally when the two agree', async () => {
+    const { sim, engine } = engineAgainst(MATH_VERSION);
+
+    await engine.start(sim.state.token);
+
+    expect(engine.state.phase).toBe('IDLE');
+  });
+
+  it('freezes instead of presenting a game it cannot reproduce', async () => {
+    const { sim, engine } = engineAgainst('1.0.0');
+
+    await engine.start(sim.state.token);
+
+    expect(engine.state).toMatchObject({ phase: 'ERROR', recovery: 'FROZEN' });
+    expect(engine.state.phase === 'ERROR' && engine.state.error.code).toBe('MATH_VERSION_MISMATCH');
+    // Nothing was spun, so nothing has to be unwound: the gate is on the way in.
+    expect(sim.state.rounds).toHaveLength(0);
   });
 });

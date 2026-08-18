@@ -6,6 +6,8 @@ import type {
   ErrorCode,
   FeatureSpinReq,
   FeatureSpinRes,
+  HistoryReq,
+  HistoryRes,
   ProtocolErrorPayload,
   SettleReq,
   SettleRes,
@@ -157,6 +159,10 @@ export class HttpTransport implements RgsTransport {
 
   settle(request: SettleReq, options?: CallOptions): Promise<SettleRes> {
     return this.#call('settle', request, options);
+  }
+
+  history(request: HistoryReq, options?: CallOptions): Promise<HistoryRes> {
+    return this.#call('history', request, options);
   }
 
   async #call<N extends CallName>(

@@ -54,6 +54,10 @@ class StubTransport implements RgsTransport {
   settle(request: unknown): Promise<never> {
     return this.#next(request);
   }
+
+  history(request: unknown): Promise<never> {
+    return this.#next(request);
+  }
 }
 
 const fails =
@@ -278,6 +282,7 @@ describe('the timeout', () => {
       },
       featureSpin: () => Promise.reject(new Error('unused')),
       settle: () => Promise.reject(new Error('unused')),
+      history: () => Promise.reject(new Error('unused')),
     };
 
     const transport = wrap(inner, { policy: { timeoutMs: 5, maxRetries: 1 } });

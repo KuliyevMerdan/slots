@@ -18,7 +18,7 @@ const gameConfig = {
   paytable: [{ symbol: 'A', kind: 'LINE', pays: [{ count: 3, multiplier: 10 }] }],
   paylines: [[1, 1, 1]],
   betLevels: [50, 100],
-  limits: { minStake: 50, maxStake: 10_000, maxWin: 1_000_000 },
+  limits: { minStake: 50, maxStake: 10_000, maxWinMultiplier: 5_000 },
   jurisdiction: 'DEFAULT',
   devMode: false,
 };
@@ -45,6 +45,8 @@ describe('spin', () => {
     const result = SpinResSchema.safeParse({
       roundId: ROUND_ID,
       balance: 99.5,
+      roundWin: 0,
+      capped: false,
       result: {
         stops: [0, 0, 0],
         view: [['A'], ['A'], ['A']],
@@ -91,7 +93,6 @@ describe('feature progress', () => {
     total: 10,
     remaining: 4,
     step: 6,
-    cumulativeWin: 2_500,
     stakeRef: 100,
   };
 
@@ -118,8 +119,12 @@ describe('game config', () => {
     ['a payline that skips a reel', { ...gameConfig, paylines: [[1, 1]] }],
     ['a payline outside the visible window', { ...gameConfig, paylines: [[0, 0, 9]] }],
     [
+      'a max-win multiplier of zero — a game nobody can win',
+      { ...gameConfig, limits: { minStake: 50, maxStake: 10_000, maxWinMultiplier: 0 } },
+    ],
+    [
       'minStake above maxStake',
-      { ...gameConfig, limits: { minStake: 999, maxStake: 100, maxWin: 1 } },
+      { ...gameConfig, limits: { minStake: 999, maxStake: 100, maxWinMultiplier: 5_000 } },
     ],
   ])('rejects %s', (_label, config) => {
     expect(GameConfigSchema.safeParse(config).success).toBe(false);
@@ -127,8 +132,14 @@ describe('game config', () => {
 });
 
 describe('the call table', () => {
-  it('names exactly the four calls, and marks the three that mutate', () => {
-    expect(Object.keys(CALLS)).toEqual(['authenticate', 'spin', 'featureSpin', 'settle']);
+  it('names every call, and marks the three that mutate', () => {
+    expect(Object.keys(CALLS)).toEqual([
+      'authenticate',
+      'spin',
+      'featureSpin',
+      'settle',
+      'history',
+    ]);
     expect(
       Object.entries(CALLS)
         .filter(([, call]) => call.mutating)

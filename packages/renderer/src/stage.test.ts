@@ -320,19 +320,59 @@ describe('the win presentation', () => {
   });
 
   it('is shorter in turbo', () => {
-    const framesFor = (turbo: boolean): number => {
-      const { engine, stage } = build();
-      stage.setTurbo(turbo);
-      present(engine, 6_000);
-      let frames = 0;
-      while (!engine.types.includes('PRESENTATION_COMPLETE') && frames < 2_000) {
-        stage.update(16.67);
-        frames += 1;
-      }
-      return frames;
-    };
+    expect(framesToPresent({ turbo: true })).toBeLessThan(framesToPresent({}));
+  });
+});
 
-    expect(framesFor(true)).toBeLessThan(framesFor(false));
+const framesToPresent = ({ turbo = false, reduced = false }): number => {
+  const { engine, stage } = build();
+  stage.setTurbo(turbo);
+  stage.setReducedMotion(reduced);
+  present(engine, 6_000);
+
+  let frames = 0;
+  while (!engine.types.includes('PRESENTATION_COMPLETE') && frames < 2_000) {
+    stage.update(16.67);
+    frames += 1;
+  }
+  return frames;
+};
+
+/**
+ * The preference is a need, not a taste — so it wins over turbo, and it still finishes the round.
+ *
+ * The second point is the one worth a test: a reduced-motion timeline that skipped its steps instead
+ * of running them fast would never send `PRESENTATION_COMPLETE`, and the engine would wait forever
+ * for an input the renderer owes it. An accessibility mode that hangs the game is not one.
+ */
+describe('reduced motion', () => {
+  it('collapses the presentation but still completes it', () => {
+    const frames = framesToPresent({ reduced: true });
+
+    expect(frames).toBeGreaterThan(0);
+    expect(frames).toBeLessThan(framesToPresent({ turbo: true }));
+  });
+
+  it('wins over turbo, whichever switch moved last', () => {
+    const { stage } = build();
+
+    stage.setReducedMotion(true);
+    stage.setTurbo(true);
+    expect(stage.reducedMotion).toBe(true);
+    expect(framesToPresent({ turbo: true, reduced: true })).toBe(
+      framesToPresent({ reduced: true }),
+    );
+  });
+
+  it('gives turbo back when the preference is turned off', () => {
+    const { stage } = build();
+
+    stage.setTurbo(true);
+    stage.setReducedMotion(true);
+    stage.setReducedMotion(false);
+
+    expect(stage.turbo).toBe(true);
+    expect(stage.reducedMotion).toBe(false);
   });
 });
 
@@ -364,12 +404,13 @@ describe('attaching to a round already in motion', () => {
     stage.attach({
       phase: 'STOPPING',
       result: { stops: [0, 0, 0, 0, 0], view: viewFor([0, 0, 0, 0, 0]) },
+      roundWin: 900,
+      capped: false,
       feature: {
         kind: 'FREE_SPINS',
         total: 10,
         remaining: 4,
         step: 6,
-        cumulativeWin: 900,
         stakeRef: 100,
       },
     } as unknown as EngineState);
@@ -403,10 +444,13 @@ describe('the feature', () => {
       total: 10,
       remaining: 7,
       step: 3,
-      cumulativeWin: 1_200,
       stakeRef: 100,
       ...over,
     }) as never;
+
+  /** The round's payable total rides on the event, not on the feature — docs/protocol.md D7. */
+  const featureProgress = (over: Partial<Record<string, number>> = {}, roundWin = 1_200) =>
+    ({ type: 'FEATURE_PROGRESS', feature: progress(over), roundWin }) as never;
 
   it('plays an intro, and reports it complete', () => {
     const { engine, stage } = build();
@@ -428,7 +472,7 @@ describe('the feature', () => {
   it('shows the server’s counter, and never computes one', () => {
     const { engine, stage } = build();
 
-    engine.emit({ type: 'FEATURE_PROGRESS', feature: progress() });
+    engine.emit(featureProgress());
 
     expect(stage.feature.counter).toBe('FREE SPIN 4 / 10');
     // A progress event alone is enough: this is exactly what a mid-feature resume delivers.
@@ -440,10 +484,10 @@ describe('the feature', () => {
     const { engine, stage } = build();
 
     engine.emit({ type: 'FEATURE_AWARDED', total: 10 });
-    engine.emit({ type: 'FEATURE_PROGRESS', feature: progress({ total: 10 }) });
+    engine.emit(featureProgress({ total: 10 }));
     expect(stage.feature.announcement).toBeNull();
 
-    engine.emit({ type: 'FEATURE_PROGRESS', feature: progress({ total: 15, remaining: 11 }) });
+    engine.emit(featureProgress({ total: 15, remaining: 11 }));
 
     expect(stage.feature.announcement).toBe('+5 FREE SPINS');
     // It rides the spin rather than blocking it, and it does not outlive the round.
@@ -455,7 +499,7 @@ describe('the feature', () => {
     const { engine, stage } = build();
 
     engine.emit({ type: 'FEATURE_AWARDED', total: 10 });
-    engine.emit({ type: 'FEATURE_PROGRESS', feature: progress({ total: 10, step: 0 }) });
+    engine.emit(featureProgress({ total: 10, step: 0 }));
 
     expect(stage.feature.announcement).toBeNull();
   });
@@ -464,7 +508,7 @@ describe('the feature', () => {
     const { engine, stage } = build();
 
     engine.emit({ type: 'PHASE_CHANGED', from: 'FEATURE_SPINNING', to: 'FEATURE_OUTRO' });
-    engine.emit({ type: 'FEATURE_ENDED', cumulativeWin: 4_500 as never });
+    engine.emit({ type: 'FEATURE_ENDED', roundWin: 4_500 as never });
     stage.update(5_000);
 
     expect(engine.types).toContain('OUTRO_COMPLETE');
@@ -474,7 +518,7 @@ describe('the feature', () => {
   it('leaves nothing behind when the next round starts', () => {
     const { engine, stage } = build();
 
-    engine.emit({ type: 'FEATURE_PROGRESS', feature: progress() });
+    engine.emit(featureProgress());
     engine.emit({ type: 'PHASE_CHANGED', from: 'SETTLING', to: 'IDLE' });
 
     expect(stage.feature.active).toBe(false);

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ErrorCode, PendingRound } from '@slot/protocol';
 import { SlotError } from '@slot/protocol';
 import { minor } from '@slot/money';
+import { MATH_VERSION } from '@slot/game-math';
 import { initialState, reduce, sessionOf } from './reduce.js';
 import type { EngineEvent, EngineInput, EngineState, InputType, Phase } from './types.js';
 import { PHASES } from './types.js';
@@ -271,22 +272,25 @@ describe('a feature round', () => {
       response: featureSpinRes(1, { feature: retriggered }),
     });
 
-    expect(events).toContainEqual({ type: 'FEATURE_PROGRESS', feature: retriggered });
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: 'FEATURE_PROGRESS', feature: retriggered }),
+    );
   });
 
   it('runs the outro after the last free spin, then settles', () => {
     const spinning = step(triggered.state, { type: 'INTRO_COMPLETE' }).state;
-    const last = feature({ total: 10, remaining: 0, step: 10, cumulativeWin: minor(750) });
+    const last = feature({ total: 10, remaining: 0, step: 10 });
     const stopped = step(spinning, {
       type: 'FEATURE_SPIN_RESOLVED',
-      response: featureSpinRes(10, { feature: last, next: 'SETTLE' }),
+      response: featureSpinRes(10, { roundWin: 750, feature: last, next: 'SETTLE' }),
     }).state;
 
     // This last free spin paid nothing, so there is no presentation to sit through — the reels
     // landing is enough to end the feature.
     const outro = step(stopped, { type: 'REELS_STOPPED' });
     expect(outro.state.phase).toBe('FEATURE_OUTRO');
-    expect(outro.events).toContainEqual({ type: 'FEATURE_ENDED', cumulativeWin: minor(750) });
+    // The outro counts to the round's **payable** total, not to the last spin's win.
+    expect(outro.events).toContainEqual({ type: 'FEATURE_ENDED', roundWin: minor(750) });
 
     const settling = step(outro.state, { type: 'OUTRO_COMPLETE' });
     expect(settling.state.phase).toBe('SETTLING');
@@ -295,12 +299,17 @@ describe('a feature round', () => {
 
   it('runs the outro after a *winning* last free spin too, once its presentation is done', () => {
     const spinning = step(triggered.state, { type: 'INTRO_COMPLETE' }).state;
-    const last = feature({ total: 10, remaining: 0, step: 10, cumulativeWin: minor(900) });
+    const last = feature({ total: 10, remaining: 0, step: 10 });
     const presenting = drive(
       spinning,
       {
         type: 'FEATURE_SPIN_RESOLVED',
-        response: featureSpinRes(10, { totalWin: 150, feature: last, next: 'SETTLE' }),
+        response: featureSpinRes(10, {
+          totalWin: 150,
+          roundWin: 900,
+          feature: last,
+          next: 'SETTLE',
+        }),
       },
       { type: 'REELS_STOPPED' },
     );
@@ -397,6 +406,8 @@ describe('resuming from pendingRound', () => {
     roundId: ROUND_ID,
     state: 'RESOLVED',
     stake: STAKE,
+    roundWin: minor(500),
+    capped: false,
     result: result(500),
     next: 'SETTLE',
     ...over,
@@ -468,6 +479,161 @@ describe('resuming from pendingRound', () => {
     });
 
     expect(sessionOf(state)?.stake).toBe(stake);
+  });
+});
+
+/* ── the max-win ceiling ──────────────────────────────────────────────────────────────────── */
+
+/**
+ * The counter, the banner and the credit have to agree.
+ *
+ * The server states the payable total on the way in (`roundWin`); the engine's only job is never to
+ * present more than it. It was the presentation counting up to `result.totalWin` — the raw math —
+ * while `settle` credited the capped figure that made those three numbers disagree.
+ */
+describe('a capped round', () => {
+  const capped = drive(
+    IDLE,
+    { type: 'PRESS' },
+    {
+      type: 'SPIN_RESOLVED',
+      // The grid paid 50,000; the ceiling lets 5,000 of it through.
+      response: spinRes({ totalWin: 50_000, roundWin: 5_000, capped: true, next: 'SETTLE' }),
+    },
+    { type: 'REELS_STOPPED' },
+  );
+
+  it('presents the payable total, not the raw one', () => {
+    expect(capped.events).toContainEqual(
+      expect.objectContaining({ type: 'WINS_PRESENTED', totalWin: minor(5_000) }),
+    );
+  });
+
+  it('presents the raw win when nothing was clipped', () => {
+    const ordinary = drive(
+      IDLE,
+      { type: 'PRESS' },
+      { type: 'SPIN_RESOLVED', response: spinRes({ totalWin: 500, next: 'SETTLE' }) },
+      { type: 'REELS_STOPPED' },
+    );
+
+    expect(ordinary.events).toContainEqual(
+      expect.objectContaining({ type: 'WINS_PRESENTED', totalWin: minor(500) }),
+    );
+  });
+
+  it('counts a feature outro to the round total the server capped', () => {
+    const triggered = drive(
+      IDLE,
+      { type: 'PRESS' },
+      {
+        type: 'SPIN_RESOLVED',
+        response: spinRes({ feature: feature(), next: 'FEATURE_SPIN', roundWin: 0 }),
+      },
+      { type: 'REELS_STOPPED' },
+      { type: 'INTRO_COMPLETE' },
+      {
+        type: 'FEATURE_SPIN_RESOLVED',
+        response: featureSpinRes(10, {
+          totalWin: 99_000,
+          roundWin: 5_000,
+          capped: true,
+          feature: feature({ total: 10, remaining: 0, step: 10 }),
+          next: 'SETTLE',
+        }),
+      },
+      { type: 'REELS_STOPPED' },
+      { type: 'PRESENTATION_COMPLETE' },
+    );
+
+    expect(triggered.events).toContainEqual({ type: 'FEATURE_ENDED', roundWin: minor(5_000) });
+  });
+});
+
+/* ── the math version gate ────────────────────────────────────────────────────────────────── */
+
+/**
+ * The one deploy mistake nothing else in the workspace notices.
+ *
+ * Every other test here builds its config from the same `@slot/game-math` the reducer imports, so
+ * the versions agree by construction — which is exactly the blind spot: a deployed server and a
+ * deployed client are two builds, and nothing but this check puts their versions side by side.
+ */
+describe('the math version gate', () => {
+  const servedOn = (mathVersion: string) => ({
+    ...authRes(),
+    config: { ...CONFIG, mathVersion },
+  });
+
+  it('accepts the version this build implements', () => {
+    expect(CONFIG.mathVersion).toBe(MATH_VERSION);
+    expect(step(initialState, { type: 'AUTHENTICATED', response: authRes() }).state.phase).toBe(
+      'IDLE',
+    );
+  });
+
+  it('freezes when the server is paying on a different math version', () => {
+    const { state, events } = step(initialState, {
+      type: 'AUTHENTICATED',
+      response: servedOn('1.0.0'),
+    });
+
+    expect(state).toMatchObject({ phase: 'ERROR', recovery: 'FROZEN' });
+    expect(state.phase === 'ERROR' && state.error.code).toBe('MATH_VERSION_MISMATCH');
+    // Both versions are in the message, because the first question anybody asks is "which two?".
+    expect(state.phase === 'ERROR' && state.error.message).toContain(MATH_VERSION);
+    expect(state.phase === 'ERROR' && state.error.message).toContain('1.0.0');
+    expect(typesOf(events)).toContain('ERROR_RAISED');
+  });
+
+  /** Any difference at all. A version that moved for a cosmetic reason is a versioning mistake. */
+  it('refuses a version that differs only in its patch number', () => {
+    const { state } = step(initialState, {
+      type: 'AUTHENTICATED',
+      response: servedOn(`${MATH_VERSION}-rc.1`),
+    });
+
+    expect(state.phase).toBe('ERROR');
+  });
+
+  /**
+   * The case that would otherwise slip through: a mismatched client with a round already in flight
+   * would land the reels on an outcome it cannot reproduce *before* anyone noticed the versions.
+   */
+  it('refuses to continue a round in flight rather than presenting it', () => {
+    const { state, effects } = step(initialState, {
+      type: 'AUTHENTICATED',
+      response: {
+        ...servedOn('1.0.0'),
+        pendingRound: {
+          roundId: ROUND_ID,
+          state: 'RESOLVED',
+          stake: STAKE,
+          roundWin: minor(500),
+          capped: false,
+          result: result(500),
+          next: 'SETTLE',
+        },
+      },
+    });
+
+    expect(state).toMatchObject({ phase: 'ERROR', recovery: 'FROZEN' });
+    expect(effects).toEqual([]);
+  });
+
+  it('offers no way out, because there is none', () => {
+    const frozen = step(initialState, {
+      type: 'AUTHENTICATED',
+      response: servedOn('1.0.0'),
+    }).state;
+
+    for (const input of [
+      { type: 'PRESS' },
+      { type: 'DISMISS_ERROR' },
+      { type: 'RETRY' },
+    ] as const) {
+      expect(step(frozen, input).state.phase).toBe('ERROR');
+    }
   });
 });
 

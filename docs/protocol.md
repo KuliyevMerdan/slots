@@ -66,7 +66,7 @@ interface GameConfig {
   paytable:     PaytableEntry[];
   paylines:     number[][];      // row index per reel
   betLevels:    Minor[];
-  limits:       { minStake: Minor; maxStake: Minor; maxWin: Minor };
+  limits:       { minStake: Minor; maxStake: Minor; maxWinMultiplier: number };
   jurisdiction: JurisdictionId;  // the server declares it; the client applies it (C6)
   devMode:      boolean;         // whether this server accepts `forceOutcome` at all
 }
@@ -74,6 +74,11 @@ interface GameConfig {
 
 `mathVersion` exists so a client shipped with older strips can detect that it is presenting a
 different math model than the server is playing, and fail loudly instead of drawing the wrong reels.
+
+`limits.maxWinMultiplier` is a **multiple of the stake actually played**, not an absolute amount: a
+ceiling expressed in money is a formality at the top bet level and unreachable at the bottom, so the
+same game would have a different maximum win depending on how the player bet. The cap for a round is
+`stake × maxWinMultiplier`, and §3 says when it is applied.
 
 ### 2.2 `spin`
 
@@ -88,6 +93,8 @@ interface SpinReq {
 interface SpinRes {
   roundId:  RoundId;
   balance:  Minor;               // after the debit, before any credit
+  roundWin: Minor;               // the round's payable total so far, already capped — §3
+  capped:   boolean;             // true once `stake × maxWinMultiplier` has clipped the round
   result:   RoundResult;
   feature?: FeatureProgress;     // present iff this spin triggered a feature
   next:     NextAction;
@@ -104,12 +111,14 @@ interface FeatureSpinReq {
 }
 
 interface FeatureSpinRes {
-  roundId: RoundId;
-  step:    number;
-  balance: Minor;                // unchanged — a free spin neither debits nor credits
-  result:  RoundResult;
-  feature: FeatureProgress;
-  next:    NextAction;
+  roundId:  RoundId;
+  step:     number;
+  balance:  Minor;               // unchanged — a free spin neither debits nor credits
+  roundWin: Minor;               // the round's payable total so far, already capped — §3
+  capped:   boolean;             // true once `stake × maxWinMultiplier` has clipped the round
+  result:   RoundResult;
+  feature:  FeatureProgress;
+  next:     NextAction;
 }
 ```
 
@@ -121,13 +130,47 @@ interface SettleReq  { roundId: RoundId }
 interface SettleRes  {
   roundId:  RoundId;
   balance:  Minor;               // after the credit
-  totalWin: Minor;               // the credited amount, after max-win capping
-  capped:   boolean;             // true iff `limits.maxWin` clipped the payout
+  totalWin: Minor;               // the credited amount — equal to the last `roundWin`
+  capped:   boolean;             // true iff the ceiling clipped this round
   next:     'IDLE';
 }
 ```
 
-### 2.5 Shared shapes
+### 2.5 `history`
+
+```ts
+interface HistoryReq {
+  limit?: number;                // 1–100, newest first. Defaults to 20.
+}
+
+interface HistoryRes {
+  rounds: RoundSummary[];        // newest first; settled rounds only
+  /** How far back this server keeps rounds at all. The list can never be longer. */
+  retention: number;
+}
+
+interface RoundSummary {
+  roundId:   RoundId;
+  at:        number;             // epoch ms, when the round was opened
+  stake:     Minor;
+  totalWin:  Minor;              // what was credited
+  capped:    boolean;
+  freeSpins: number;             // 0 for a base-only round
+}
+```
+
+Read-only, like `authenticate`, and carrying no idempotency key for the same reason. **Settled rounds
+only:** a round still in flight is `pendingRound`, and a history that mixed the two would invite a
+client to present an unfinished round as a result.
+
+Most regulated markets require a player-visible round history, and this is the server half of it: the
+`roundId` is already the key everything else is logged under, so the list joins to a server's own
+records without a lookup table. `retention` is on the wire because it is a real limit rather than an
+implementation detail — the simulator keeps the last few dozen rounds in a browser store, and a real
+RGS keeps months of them in Postgres (R1). A client that shows "your last 50 rounds" has to be told
+which number to say.
+
+### 2.6 Shared shapes
 
 ```ts
 type RoundState = 'OPEN' | 'RESOLVED' | 'SETTLED';   // server-side; §3
@@ -155,25 +198,26 @@ type Feature =
   | { kind: 'FREE_SPINS_RETRIGGER'; awarded: number };
 
 interface FeatureProgress {
-  kind:          'FREE_SPINS';
-  total:         number;         // awarded, including retriggers
-  remaining:     number;
-  step:          number;         // last completed step
-  cumulativeWin: Minor;          // base win + every free spin so far, uncredited until `settle`
-  stakeRef:      Minor;          // the triggering stake — multipliers resolve against it
+  kind:      'FREE_SPINS';
+  total:     number;             // awarded, including retriggers
+  remaining: number;
+  step:      number;             // last completed step
+  stakeRef:  Minor;              // the triggering stake — multipliers resolve against it
 }
 
 interface PendingRound {
   roundId:  RoundId;
   state:    'OPEN' | 'RESOLVED';
   stake:    Minor;
+  roundWin: Minor;               // the round's payable total so far, already capped
+  capped:   boolean;
   result?:  RoundResult;         // present once the round resolved
   feature?: FeatureProgress;     // present while a feature is in flight
   next:     NextAction;          // exactly what the client must do to continue
 }
 ```
 
-### 2.6 HTTP binding
+### 2.7 HTTP binding
 
 The shapes above are the contract; this is how they travel. Pinned here because two independent
 implementations have to agree on it exactly — `HttpTransport` in the client, `apps/mock-rgs` today,
@@ -234,7 +278,18 @@ drives the next transition — the client never infers it.
 
 **One round is one stake and one debit.** Free spins carry no stake: the debit happened at trigger,
 and `stakeRef` records what multipliers resolve against. Every win — base and feature — accumulates
-in `cumulativeWin` and is credited once, by `settle`.
+in `roundWin` and is credited once, by `settle`.
+
+**The ceiling is applied as the round accrues, never at the end.** `roundWin` is
+`min(everything won so far, stake × maxWinMultiplier)`, so it is the payable figure in every
+response, and `settle.totalWin` equals the last `roundWin` the client was sent. Capping only at
+`settle` would mean the win presentation counts up to a number the player is not paid — the reels,
+the banner and the balance have to agree, and they can only agree if the server states the payable
+total on the way in rather than the raw one on the way out.
+
+`result.totalWin` is **not** capped: it is what the math paid for that grid, which is what the
+client's dev-build assertion and the contract suite re-evaluate. The distinction is deliberate —
+`result` is the outcome, `roundWin` is the money.
 
 A retrigger arrives as a `FREE_SPINS_RETRIGGER` entry in a free spin's `result.features`; the server
 has already folded it into `feature.total` and `feature.remaining`. **The client displays the
@@ -274,6 +329,10 @@ presentation problem rather than a money problem.
   server resolves it on the next `spin` retry with the same `roundId`.
 - `pendingRound.state === 'RESOLVED'` → present `result` (or skip straight to the end of it) and call
   `settle`.
+
+`roundWin` rides along for the same reason it is on every other response: a client rebuilt mid-round
+has to know what the round will pay before it presents anything, and it must not derive that by
+adding up results it may never have seen.
 
 `balance` from `authenticate` is authoritative and replaces whatever the client had. This is also
 what makes a credit from outside the game — or a settle the client never saw the response to —
@@ -413,3 +472,15 @@ plugs in (R5).
 **D6 — The persistence schema version lives in `@slot/protocol`, defined in C1.**
 The sim's `localStorage` adapter (S0) and the client's feature persistence (C5) both write the
 envelope, so the constant has to exist before either — not at C5, where it was originally scheduled.
+
+**D7 — The maximum win is a multiple of the stake played, and it is applied as the round accrues.**
+Two decisions that only make sense together. A cap expressed as an absolute amount is a different
+game at every bet level — unreachable at the minimum stake, a formality at the maximum — so it is
+`stake × maxWinMultiplier`. And it is applied on the way *in*, so `roundWin` is always the payable
+figure: a cap applied only at `settle` makes the win presentation count up to a number the player is
+not paid, and no amount of client-side cleverness fixes that, because the client is not allowed to
+compute money.
+*Rejected:* capping at `settle` and having the client present `min(totalWin, cap)` itself — that is
+the client deciding what a player won, which is the one thing ADR-0001 forbids.
+*Rejected:* leaving `FeatureProgress.cumulativeWin` alongside `roundWin`. They would always be the
+same number, and two fields that must agree are a defect waiting for the day they do not.

@@ -1,5 +1,7 @@
 import type { ForceOutcome, Minor, RoundIdFactory } from '@slot/protocol';
 import { SlotError } from '@slot/protocol';
+import { min } from '@slot/money';
+import { MATH_VERSION } from '@slot/game-math';
 import type {
   EngineEffect,
   EngineEvent,
@@ -139,7 +141,13 @@ function advance(
   state: Extract<EngineState, { phase: 'WIN_PRESENTATION' | 'STOPPING' }>,
 ): Transition {
   const base = { config: state.config, balance: state.balance, stake: state.stake };
-  const round = { roundId: state.roundId, result: state.result, feature: state.feature };
+  const round = {
+    roundId: state.roundId,
+    result: state.result,
+    roundWin: state.roundWin,
+    capped: state.capped,
+    feature: state.feature,
+  };
 
   switch (state.next) {
     case 'IDLE':
@@ -174,7 +182,7 @@ function advance(
       // A feature that has run out gets its outro before the credit lands.
       if (state.feature !== undefined) {
         return move(state, { phase: 'FEATURE_OUTRO', ...base, ...round }, [
-          { type: 'FEATURE_ENDED', cumulativeWin: state.feature.cumulativeWin },
+          { type: 'FEATURE_ENDED', roundWin: state.roundWin },
         ]);
       }
 
@@ -250,6 +258,8 @@ function spinning(
           stake: state.stake,
           roundId: state.roundId,
           result: response.result,
+          roundWin: response.roundWin,
+          capped: response.capped,
           feature: response.feature,
           next: response.next,
           slam: state.slam,
@@ -295,6 +305,8 @@ function stopping(
           stake: state.stake,
           roundId: state.roundId,
           result: state.result,
+          roundWin: state.roundWin,
+          capped: state.capped,
           feature: state.feature,
           next: state.next,
           wins: state.result.wins,
@@ -303,7 +315,11 @@ function stopping(
           {
             type: 'WINS_PRESENTED',
             wins: state.result.wins,
-            totalWin: state.result.totalWin,
+            // What the grid paid, but never more than the round will actually pay: on a capped
+            // round the two differ, and a counter that rolls past the credit is the bug this
+            // clamp exists for (docs/protocol.md D7). Not arithmetic on money — both numbers came
+            // from the server and this picks one of them.
+            totalWin: min(state.result.totalWin, state.roundWin),
           },
         ],
       );
@@ -361,6 +377,8 @@ function featureIntro(
       stake: state.stake,
       roundId: state.roundId,
       result: state.result,
+      roundWin: state.roundWin,
+      capped: state.capped,
       feature,
       step,
       slam: false,
@@ -388,12 +406,14 @@ function featureSpinning(
           stake: state.stake,
           roundId: state.roundId,
           result: response.result,
+          roundWin: response.roundWin,
+          capped: response.capped,
           feature: response.feature,
           next: response.next,
           slam: state.slam,
         },
         [
-          { type: 'FEATURE_PROGRESS', feature: response.feature },
+          { type: 'FEATURE_PROGRESS', feature: response.feature, roundWin: response.roundWin },
           {
             type: 'REELS_TARGETED',
             stops: response.result.stops,
@@ -433,6 +453,8 @@ function featureOutro(
       stake: state.stake,
       roundId: state.roundId,
       result: state.result,
+      roundWin: state.roundWin,
+      capped: state.capped,
       feature: state.feature,
     },
     skipped,
@@ -505,12 +527,37 @@ type EngineStateConfig = Extract<EngineState, { phase: 'IDLE' }>['config'];
  * This *is* the recovery story (docs/protocol.md §5): there is no reconciliation endpoint and no
  * client-side replay of what it thinks happened. The server says where the round is, and the machine
  * drops into the phase that continues it, letting the ordinary transitions carry it home.
+ *
+ * **It is also where the math versions meet**, and three things about that check are deliberate.
+ *
+ * *Here*, because `authenticate` is the first and only moment the server states which game it is
+ * serving, and everything after it presents outcomes. *Compared by exact equality*, because
+ * `MATH_VERSION` moves whenever the strips, paylines or paytable move — a version that moved for a
+ * cosmetic reason is a versioning mistake to fix at the source, not a reason to loosen a gate.
+ * And *imported rather than injected*, because the thing being asserted is the math **this build
+ * ships**: the evaluator that draws the paylines and the symbol the reels anticipate on are code in
+ * `@slot/game-math`, not config from the wire. An injected version is a gate the wiring site can
+ * forget to connect, and a safety check nobody notices is missing is worse than none.
  */
 function authenticated(
   state: EngineState,
   response: Extract<EngineInput, { type: 'AUTHENTICATED' }>['response'],
 ): Transition {
   const { config, balance } = response;
+
+  // Before anything else, including a round already in flight: a client that cannot reproduce the
+  // server's math must not present its outcomes, and continuing a resumed round would be presenting
+  // one immediately.
+  if (config.mathVersion !== MATH_VERSION) {
+    return raise(
+      state,
+      new SlotError(
+        'MATH_VERSION_MISMATCH',
+        `this build implements math ${MATH_VERSION}; the server is paying on ${config.mathVersion}`,
+      ),
+    );
+  }
+
   const pending = response.pendingRound;
   const ready: EngineEvent[] = [
     { type: 'SESSION_READY', session: response.session, config, balance },
@@ -552,6 +599,8 @@ function authenticated(
       ...base,
       roundId: pending.roundId,
       result,
+      roundWin: pending.roundWin,
+      capped: pending.capped,
       feature: pending.feature,
       next: pending.next,
       slam: true,
@@ -561,7 +610,13 @@ function authenticated(
       { type: 'REELS_TARGETED', stops: result.stops, view: result.view, slam: true },
       ...(pending.feature === undefined
         ? []
-        : [{ type: 'FEATURE_PROGRESS', feature: pending.feature } as EngineEvent]),
+        : [
+            {
+              type: 'FEATURE_PROGRESS',
+              feature: pending.feature,
+              roundWin: pending.roundWin,
+            } as EngineEvent,
+          ]),
     ],
   );
 }

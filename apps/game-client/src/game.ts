@@ -12,6 +12,9 @@ import type { PanelView } from '@slot/ui';
 import { connect } from './transport.js';
 import { newRoundId } from './round-id.js';
 import { loadClientState, saveClientState, stakeFor } from './persistence.js';
+import { consoleTelemetry, guarded } from './telemetry.js';
+import type { Telemetry } from './telemetry.js';
+import { createAnnouncer } from './announce.js';
 
 /**
  * The wiring site — the one place that knows every piece exists.
@@ -31,7 +34,18 @@ export interface Game {
   destroy(): void;
 }
 
-export async function startGame(root: HTMLElement): Promise<Game> {
+export interface GameOptions {
+  /**
+   * Where failures are reported. Injected so a deployment can swap the console for a real collector
+   * without this file learning which one it got — see telemetry.ts.
+   */
+  telemetry?: Telemetry;
+}
+
+export async function startGame(root: HTMLElement, options: GameOptions = {}): Promise<Game> {
+  // Guarded at the boundary, once: every report site below sits on an error path, and a reporter
+  // that throws while reporting would turn a frozen reel set into a blank page.
+  const telemetry = guarded(options.telemetry ?? consoleTelemetry());
   const connection = connect();
 
   /**
@@ -69,9 +83,26 @@ export async function startGame(root: HTMLElement): Promise<Game> {
 
   const state = engine.state;
   if (state.phase === 'BOOTING' || state.phase === 'ERROR') {
-    throw new Error(
-      state.phase === 'ERROR' ? state.error.message : 'the session never became ready',
-    );
+    const failure =
+      state.phase === 'ERROR' ? state.error.message : 'the session never became ready';
+
+    // The one failure nobody else can report: it happens before the event subscription below, and
+    // it is the shape a math-version mismatch or a dead RGS takes.
+    telemetry.report({
+      name: 'boot_failed',
+      level: 'ERROR',
+      message: failure,
+      ...(state.phase === 'ERROR'
+        ? {
+            ...(state.error.correlationId === undefined
+              ? {}
+              : { correlationId: state.error.correlationId }),
+            detail: { code: state.error.code, class: state.error.errorClass },
+          }
+        : {}),
+    });
+
+    throw new Error(failure);
   }
 
   const app = new Application();
@@ -194,8 +225,21 @@ export async function startGame(root: HTMLElement): Promise<Game> {
   /** The grid the server sent for the round being presented — kept for the dev-build assertion. */
   let shownView: readonly (readonly string[])[] | null = null;
 
+  /**
+   * The live region in the HTML shell, kept in step with the panel.
+   *
+   * Rendered from the same view model rather than from the engine, so the sentence a screen reader
+   * hears and the numbers a sighted player sees cannot describe different states.
+   */
+  const announcer = createAnnouncer({
+    currency,
+    region: document.getElementById('a11y-status'),
+  });
+
   const render = (): void => {
-    panel.render(modelFor(engine.state, win, status, stage.turbo));
+    const view = modelFor(engine.state, win, status, stage.turbo);
+    panel.render(view);
+    announcer.announce(view);
   };
 
   const unsubscribe = engine.on((event: EngineEvent) => {
@@ -207,16 +251,18 @@ export async function startGame(root: HTMLElement): Promise<Game> {
       case 'REELS_TARGETED':
         shownView = event.view;
         if (__ASSERT_MATH__ && !viewMatchesStops(config.strips, event.stops, event.view)) {
-          console.error('[__ASSERT_MATH__] the server’s view disagrees with its own stops', {
-            stops: event.stops,
-            view: event.view,
+          telemetry.report({
+            name: 'assert_view_disagrees_with_stops',
+            level: 'ERROR',
+            message: 'the server’s view disagrees with its own stops',
+            detail: { stops: event.stops, view: event.view },
           });
         }
         break;
       case 'WINS_PRESENTED':
         win = event.totalWin;
         if (__ASSERT_MATH__)
-          assertWins(config, shownView, engine.state, event.wins, event.totalWin);
+          assertWins(config, shownView, engine.state, event.wins, event.totalWin, telemetry);
         break;
       // The feature's own counter lives on the stage, above the reels, where a player looks for it —
       // so the status line stays out of its way and keeps to what the stage does not say.
@@ -229,6 +275,23 @@ export async function startGame(root: HTMLElement): Promise<Game> {
         break;
       case 'ERROR_RAISED':
         status = event.error.message;
+        // Every raised error, not only the fatal ones: a `RECOVERABLE` that retries forever and a
+        // `PLAYER` error nobody can act on are both worth seeing in aggregate, and the class is
+        // right there to filter on.
+        telemetry.report({
+          name: 'error_raised',
+          level: event.error.errorClass === 'RECOVERABLE' ? 'WARN' : 'ERROR',
+          message: event.error.message,
+          ...(event.error.roundId === undefined ? {} : { roundId: event.error.roundId }),
+          ...(event.error.correlationId === undefined
+            ? {}
+            : { correlationId: event.error.correlationId }),
+          detail: {
+            code: event.error.code,
+            class: event.error.errorClass,
+            recovery: event.recovery,
+          },
+        });
         break;
       case 'ERROR_CLEARED':
         status = '';
@@ -238,6 +301,21 @@ export async function startGame(root: HTMLElement): Promise<Game> {
     }
     render();
   });
+
+  /**
+   * `prefers-reduced-motion`, read from the platform rather than offered as a setting.
+   *
+   * Watched rather than sampled once: the preference is a system toggle, and a player who turns it
+   * on mid-session did so because the animation is a problem *now*. `addEventListener` on a media
+   * query list is the modern spelling; the optional call keeps this working in a test environment
+   * that fakes `matchMedia` with the older one.
+   */
+  const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+  const applyMotionPreference = (): void => {
+    stage.setReducedMotion(motionQuery.matches);
+  };
+  applyMotionPreference();
+  motionQuery.addEventListener?.('change', applyMotionPreference);
 
   // One ticker for the whole game, delta-time driven. Nothing here allocates per frame.
   const tick = (): void => {
@@ -267,6 +345,7 @@ export async function startGame(root: HTMLElement): Promise<Game> {
   return {
     destroy: () => {
       unsubscribe();
+      motionQuery.removeEventListener?.('change', applyMotionPreference);
       app.ticker.remove(tick);
       app.renderer.off('resize', layout);
       stage.destroy();
@@ -309,6 +388,7 @@ function assertWins(
   state: EngineState,
   wins: readonly Win[],
   totalWin: Minor,
+  telemetry: Telemetry,
 ): void {
   if (view === null || !('stake' in state)) return;
 
@@ -334,9 +414,12 @@ function assertWins(
 
   if (local.totalWin === totalWin && shape(local.wins) === shape(wins)) return;
 
-  console.error('[__ASSERT_MATH__] the local paytable disagrees with the server about this spin', {
-    server: { wins, totalWin },
-    local,
+  telemetry.report({
+    name: 'assert_paytable_drift',
+    level: 'ERROR',
+    message: 'the local paytable disagrees with the server about this spin',
+    ...('roundId' in state ? { roundId: state.roundId } : {}),
+    detail: { server: { wins, totalWin }, local },
   });
 }
 

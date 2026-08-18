@@ -27,7 +27,7 @@ describe('the math half of GameConfig', () => {
       ...MATH_CONFIG,
       gameId: 'demo-slot',
       betLevels: BET_LEVELS,
-      limits: { minStake: 20, maxStake: 4_000, maxWin: 1_000_000 },
+      limits: { minStake: 20, maxStake: 4_000, maxWinMultiplier: 5_000 },
       jurisdiction: 'DEFAULT',
       devMode: false,
     });

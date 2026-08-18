@@ -5,8 +5,8 @@ import type { Minor } from '@slot/protocol';
  *
  * Expressed as a **multiple of the stake actually played**, which is the only way this can work: a
  * fixed amount would make the same banner a formality at the maximum bet and unreachable at the
- * minimum. (That is also the argument against `limits.maxWin` being an absolute figure — see the
- * gaps registry.)
+ * minimum. (Exactly the argument that moved `limits.maxWinMultiplier` off being an absolute figure —
+ * docs/protocol.md D7.)
  *
  * The numbers are conventional for a medium-volatility slot: a 5× win is worth a beat, 15× is worth
  * a banner, 50× is worth the room going quiet. S4 tunes the math; if the volatility moves, these

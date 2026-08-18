@@ -56,6 +56,10 @@ export type Feature = z.infer<typeof FeatureSchema>;
 /**
  * Where the feature is now. **The server has already folded retriggers into `total` and
  * `remaining`** — the client displays this arithmetic, it never performs it.
+ *
+ * What the feature has *won* is not here: that is `roundWin`, on the response itself, because it is
+ * a fact about the round rather than about the feature and a round without a feature has one too.
+ * Two fields carrying the same number is a defect waiting for the day they disagree (D7).
  */
 export const FeatureProgressSchema = z
   .object({
@@ -64,8 +68,6 @@ export const FeatureProgressSchema = z
     remaining: z.int().min(0),
     /** Last completed step; the next `featureSpin` is `step + 1`. */
     step: z.int().min(0),
-    /** Base win + every free spin so far. Uncredited until `settle`. */
-    cumulativeWin: NonNegativeMinorSchema,
     /** The triggering stake — free spins carry no stake, so multipliers resolve against this. */
     stakeRef: PositiveMinorSchema,
   })
@@ -105,6 +107,9 @@ export const PendingRoundSchema = z.object({
   roundId: RoundIdSchema,
   state: z.enum(['OPEN', 'RESOLVED']),
   stake: PositiveMinorSchema,
+  /** What the round will pay, already capped. A rebuilt client must not have to add this up. */
+  roundWin: NonNegativeMinorSchema,
+  capped: z.boolean(),
   result: RoundResultSchema.optional(),
   feature: FeatureProgressSchema.optional(),
   next: NextActionSchema,

@@ -1,4 +1,5 @@
 import { startGame } from './game.js';
+import { consoleTelemetry, guarded } from './telemetry.js';
 
 /**
  * The entry point, and the only file that touches the DOM outside the canvas.
@@ -32,5 +33,14 @@ void main().catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);
   say('Could not start');
   if (failure !== null) failure.textContent = message;
-  console.error('[boot] the game failed to start', error);
+
+  // The outermost net. `startGame` reports the failures it can name; this one catches everything
+  // else — a missing `#game` element, a WebGL context the device refused, an atlas that would not
+  // build — none of which the player can act on and all of which somebody needs to see.
+  guarded(consoleTelemetry()).report({
+    name: 'boot_crashed',
+    level: 'ERROR',
+    message,
+    detail: { error: String(error) },
+  });
 });

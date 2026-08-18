@@ -84,9 +84,6 @@ shortly after the project is shown to a studio. The same maintenance rules apply
   presentation is deterministic — Playwright screenshots at named beats (reels stopped, payline
   highlighted, big-win counter mid-roll) guard the part of the project least reachable by unit tests.
   Keep it to a few frames; a hundred flaky screenshots is worse than none.
-- **Run the contract suite against `apps/mock-rgs` over real HTTP in CI, not just in-process.**
-  In-process passes hide serialization bugs, header handling, and every failure mode that only exists
-  on a wire. It is the same suite with a different base URL — the cost is a service container.
 - **A soak test in the nightly job.** 100k seeded rounds through the engine with fault injection on,
   asserting no state violations and no memory growth. Slot bugs concentrate in the long tail —
   retrigger arithmetic, resume after a disconnect during a feature — and a nightly is where you find

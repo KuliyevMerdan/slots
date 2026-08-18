@@ -28,10 +28,16 @@ counter, turbo, skip-anything as a completable timeline, and the paytable re-eva
 and **C5 landed 2026-08-18** (free spins with retrigger, the intro and outro screens, the feature
 counter, preferences through the persistence envelope, and resume proven at five points mid-feature)
 and **S4 landed 2026-08-18** (`tools/math-sim`, and the tuning it forced: 96.107% RTP over twenty
-million rounds, on strips that no longer make the feature a runaway). 572 tests green.
+million rounds, on strips that no longer make the feature a runaway) and **S3 landed 2026-08-18**
+(`tests/contract/` — one suite, a target registry, and capabilities a target declares rather than
+quietly lacks). 683 tests green — including the work the S3 review surfaced as unowned: the
+math-version gate, the max-win ceiling as a multiple of the stake, the telemetry seam,
+`prefers-reduced-motion` with an announced region, the `history` call, and the network soak that
+found a shutdown hang in `apps/mock-rgs`.
 
 **Next is C6** — the platform layer: responsive layout, audio, i18n and the compliance presets. It is
-also where the feature stops being silent. **S3** (the contract suite) can run in parallel.
+also where the feature stops being silent. **R0** — the `apps/rgs` skeleton — can run in parallel,
+and is what turns the contract suite's third target from a named skip into an expected-red one.
 
 ---
 
@@ -55,7 +61,7 @@ contract suite. `#` maps each block back to the phase numbering of the original 
 | **S0** | `rgs-sim` pure core — PRNG, round machine, idempotency, persistence | C1 | 2 | ✅ (landed 2026-08-18) |
 | **S1** | Fault injection + force outcome + `MockTransport` | S0 | 2 | ✅ (landed 2026-08-18) |
 | **S2** | `apps/mock-rgs` — Fastify wrapper, the real network path | S0 | 2 | ✅ (landed 2026-08-18) |
-| **S3** | The contract suite — one suite, three targets. **The switch-over gate** | S2, R0 | 2 | ☐ |
+| **S3** | The contract suite — one suite, three targets. **The switch-over gate** | S2, R0 | 2 | ✅ (landed 2026-08-18, ahead of R0 — see the block) |
 | **S4** | `tools/math-sim` — RTP / hit frequency / volatility report | S0 | 8 | ✅ (landed 2026-08-18) |
 | **R0** | `apps/rgs` skeleton — routes stubbed, `NotImplemented`, wallet seam | C1 | 2 | ☐ |
 | **R1** | Rounds & idempotency on Postgres | R0, S3 | 10 | ☐ |
@@ -402,17 +408,24 @@ each, against identically seeded simulators, and asserts the responses are equal
 
 ## Block S3 — The contract suite
 
-_The gate everything else references._
+_The gate everything else references. Landed **2026-08-18**._
 
-- [ ] One suite, three targets: `rgs-sim` in-process · sim over HTTP (`apps/mock-rgs`) ·
-      `apps/rgs`.
-- [ ] Covers the full round lifecycle, idempotent replay, resume via `pendingRound`, every error
-      class, and stake/limit rejection.
-- [ ] Runs in CI against the first two targets; the third is expected-red and **documented as such**
-      until R1+.
+- [x] One suite, three targets: `rgs-sim` in-process · sim over HTTP (`apps/mock-rgs`) · `apps/rgs`.
+      `tests/contract/targets.ts` is the registry; `suite.ts` names no server implementation;
+      `contract.test.ts` is a `for` loop.
+- [x] Covers the full round lifecycle, idempotent replay, resume via `pendingRound`, every error
+      class, and stake/limit rejection. 25 cases per target, run in CI by `pnpm test:contract`.
+- [x] Runs in CI against the first two targets; the third is **documented in the run itself** — it
+      is registered with an `unavailable` reason and prints as a named skip, because a suite that
+      silently covers two targets while claiming three is worse than one that shows the hole.
+
+**Landed ahead of R0**, which the gate below depends on. `apps/rgs` does not exist yet, so the third
+target cannot be expected-red — only absent, and it says so by name. **R0 owns turning it red**; its
+own checklist already carries "wired into the contract suite as a third target".
 
 **Done when:** `pnpm test:contract` passes against both sim targets and fails against `apps/rgs`
-with `NotImplemented` only — no other kind of failure.
+with `NotImplemented` only — no other kind of failure. _(The first half holds today; the second is
+R0's gate.)_
 
 ## Block S4 — `tools/math-sim`
 
@@ -460,7 +473,8 @@ for sessions and idempotency, pino + OpenTelemetry for observability.
 - [ ] `WalletProvider` interface (`getBalance` / `debit` / `credit` / `rollback`) + `MockWallet` —
       the operator↔provider seam every real RGS has.
 - [ ] `RoundRepository` / `IdempotencyRepository` / `ServerSeedProvider` interfaces declared.
-- [ ] Wired into the contract suite as a third target (expected-red, documented).
+- [ ] Wired into the contract suite as a third target — replace the `unavailable` entry in
+      `tests/contract/targets.ts` with a real one (expected-red, documented).
 
 **Done when:** the contract suite runs against `apps/rgs` and every failure is `NotImplemented`.
 

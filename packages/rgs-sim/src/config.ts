@@ -1,5 +1,4 @@
 import type { GameConfig, JurisdictionId, Minor } from '@slot/protocol';
-import { minor } from '@slot/money';
 import { BET_LEVELS, MATH_CONFIG } from '@slot/game-math';
 
 /**
@@ -24,14 +23,13 @@ if (firstBetLevel === undefined || lastBetLevel === undefined) {
 }
 
 /**
- * The absolute payout ceiling, in minor units — 5,000× the largest bet level.
+ * The payout ceiling, as a multiple of the stake the player actually placed.
  *
- * Note that the protocol makes this an *absolute* amount rather than a multiple of the stake the
- * player actually placed, so a minimum-stake player shares the ceiling with a maximum-stake one.
- * That is not how real max-win caps work; it is logged in the gaps registry rather than quietly
- * worked around here.
+ * 5,000× is the industry-conventional headline figure, and the measured game reaches 304× in twenty
+ * million rounds — so the ceiling is real but rare, which is what a max-win cap is for. It applies
+ * per round, as the round accrues (docs/protocol.md §3, D7).
  */
-export const SIM_MAX_WIN: Minor = minor(lastBetLevel * 5_000);
+export const SIM_MAX_WIN_MULTIPLIER = 5_000;
 
 export interface SimConfigOptions {
   gameId?: string;
@@ -40,7 +38,7 @@ export interface SimConfigOptions {
   devMode?: boolean;
   minStake?: Minor;
   maxStake?: Minor;
-  maxWin?: Minor;
+  maxWinMultiplier?: number;
 }
 
 export const createSimConfig = ({
@@ -49,7 +47,7 @@ export const createSimConfig = ({
   devMode = false,
   minStake = firstBetLevel,
   maxStake = lastBetLevel,
-  maxWin = SIM_MAX_WIN,
+  maxWinMultiplier = SIM_MAX_WIN_MULTIPLIER,
 }: SimConfigOptions = {}): GameConfig => ({
   gameId,
   ...MATH_CONFIG,
@@ -57,7 +55,7 @@ export const createSimConfig = ({
   paytable: MATH_CONFIG.paytable.map((entry) => ({ ...entry, pays: [...entry.pays] })),
   paylines: MATH_CONFIG.paylines.map((line) => [...line]),
   betLevels: [...BET_LEVELS],
-  limits: { minStake, maxStake, maxWin },
+  limits: { minStake, maxStake, maxWinMultiplier },
   jurisdiction,
   devMode,
 });
