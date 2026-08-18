@@ -260,6 +260,33 @@ describe('the timeout', () => {
       wrap(stub, { policy: { timeoutMs: 1_000 } }).authenticate({ token: 't' }),
     ).resolves.toEqual({ ok: true });
   });
+
+  /**
+   * A timeout that only rejects the caller's promise is half a timeout: over HTTP the request goes
+   * on holding a socket until the server answers into nothing. Three retries on a bad link would
+   * leave three of them per spin, which is why the policy that owns the clock also owns the abort.
+   */
+  it('aborts the attempt it gave up on, and not the retry that replaces it', async () => {
+    const signals: AbortSignal[] = [];
+    const inner: RgsTransport = {
+      authenticate: () => Promise.reject(new Error('unused')),
+      spin: (_request: SpinReq, options?: { signal?: AbortSignal }) => {
+        if (options?.signal !== undefined) signals.push(options.signal);
+        return signals.length === 1
+          ? new Promise<SpinRes>(() => {})
+          : (Promise.resolve({ balance: 3 }) as unknown as Promise<SpinRes>);
+      },
+      featureSpin: () => Promise.reject(new Error('unused')),
+      settle: () => Promise.reject(new Error('unused')),
+    };
+
+    const transport = wrap(inner, { policy: { timeoutMs: 5, maxRetries: 1 } });
+    await expect(transport.spin(SPIN)).resolves.toEqual({ balance: 3 });
+
+    expect(signals).toHaveLength(2);
+    expect(signals[0]?.aborted).toBe(true);
+    expect(signals[1]?.aborted).toBe(false);
+  });
 });
 
 describe('classification', () => {

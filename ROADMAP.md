@@ -19,12 +19,13 @@ Check items off as they land. **Every block follows the house pattern:**
 **C1 landed 2026-08-17** (`protocol`, `money`, `game-math` — the contracts everything downstream
 reads), **S0 landed 2026-08-18** (`rgs-sim` — the pure core that decides outcomes: seeded PRNG, the
 round machine, idempotency, persistence, ADR-0003), **S1 landed 2026-08-18** (fault injection, the
-named force-outcome scenarios, and the `RgsTransport` seam with `MockTransport`) and **C2 landed
-2026-08-18** (the engine FSM, the retry policy, resume). 405 tests green.
+named force-outcome scenarios, and the `RgsTransport` seam with `MockTransport`), **C2 landed
+2026-08-18** (the engine FSM, the retry policy, resume) and **S2 landed 2026-08-18**
+(`apps/mock-rgs`, `HttpTransport`, the HTTP binding — ADR-0004). 455 tests green.
 
-**Next is C3** — reels on screen: the Pixi bootstrap, the atlas, the sprite pool and the spin
-curve. It is the first block that produces something to look at. **S2** (`apps/mock-rgs`) can run in
-parallel and is what `HttpTransport` needs to exist for.
+**Next is C3** — reels on screen: the Pixi bootstrap, the atlas, the sprite pool and the spin curve.
+It is the first block that produces something to look at, and the first that has to choose how the
+browser reaches `apps/mock-rgs` (Vite proxy or CORS — see the Gaps registry).
 
 ---
 
@@ -47,7 +48,7 @@ contract suite. `#` maps each block back to the phase numbering of the original 
 | **C8** | Packaging — deploy, README, Playwright E2E in CI | C6, C7, S4 | 9 | ☐ |
 | **S0** | `rgs-sim` pure core — PRNG, round machine, idempotency, persistence | C1 | 2 | ✅ (landed 2026-08-18) |
 | **S1** | Fault injection + force outcome + `MockTransport` | S0 | 2 | ✅ (landed 2026-08-18) |
-| **S2** | `apps/mock-rgs` — Fastify wrapper, the real network path | S0 | 2 | ☐ |
+| **S2** | `apps/mock-rgs` — Fastify wrapper, the real network path | S0 | 2 | ✅ (landed 2026-08-18) |
 | **S3** | The contract suite — one suite, three targets. **The switch-over gate** | S2, R0 | 2 | ☐ |
 | **S4** | `tools/math-sim` — RTP / hit frequency / volatility report | S0 | 8 | ☐ |
 | **R0** | `apps/rgs` skeleton — routes stubbed, `NotImplemented`, wallet seam | C1 | 2 | ☐ |
@@ -174,8 +175,9 @@ _3–4 days. Write this before any rendering. Everything else is downstream of i
 **Done when:** a golden-file test asserts evaluator output for ~30 handcrafted grids, and the
 protocol schemas are importable by both a client and a server target. ✅ 2026-08-17 — 30 grids in
 `game-math/src/__fixtures__/golden.json`, 145 tests green. The schemas are consumed by two packages
-today and carry no workspace dependencies; the *client and server* halves of that claim are proven
-when C3 and S2 import them.
+today and carry no workspace dependencies; the *server* half of that claim is proven by S2, where
+`apps/mock-rgs` and `HttpTransport` validate against the same schemas on opposite ends of a socket,
+and the *client* half lands with C3.
 
 ## Block C2 — Engine & transport
 
@@ -190,8 +192,8 @@ _4–5 days. The part reviewers actually read. Gates on **S1** for something to 
       the engine decides legality, the renderer will implement completion. Skipping and completing
       are asserted to produce an identical state.
 - [x] `packages/transport`: `RgsTransport` interface, `MockTransport`, timeout + exponential-backoff
-      retry reusing the same `roundId`, failures mapped onto the error taxonomy. `HttpTransport` is
-      left to S2, where there is a server to point it at.
+      retry reusing the same `roundId`, failures mapped onto the error taxonomy. `HttpTransport` was
+      left to S2, where there is a server to point it at — it landed there.
 - [x] Resume: reconstruct engine state from `pendingRound` — the same machine, entered halfway.
 - [x] Free-spin sequencing incl. retrigger arithmetic — forwarded, never recomputed.
 - [x] Tests: every legal transition and rejection of every illegal one (a phase × input table) ·
@@ -351,12 +353,21 @@ caller that is not racing its own timer._
 
 ## Block S2 — `apps/mock-rgs`
 
-- [ ] Fastify wrapper over `rgs-sim`; every route validates with the shared `@slot/protocol` schema.
-- [ ] Correlation ID per request, echoed and logged (pino), correlated on `roundId`.
-- [ ] Health/readiness endpoints; the fault-injection controls exposed for the debug panel.
+- [x] Fastify wrapper over `rgs-sim`; routes generated from the `CALLS` table, every request
+      validated with the shared `@slot/protocol` schema, the error taxonomy given HTTP statuses
+      (ADR-0004, docs/protocol.md §2.6).
+- [x] Correlation ID per request (`x-correlation-id`), adopted from the client or minted, echoed on
+      every response and logged (pino, via Fastify) beside the simulator's own replayable id.
+- [x] Health/readiness endpoints; `/dev/*` fault injection, session reset and state summary for the
+      debug panel; `POST /demo/session` standing in for the operator lobby (§7).
+- [x] `HttpTransport` in `@slot/transport` — response validation, failure classification,
+      `Retry-After`, and a real abort when the retry policy's clock runs out.
+- [x] Faults enacted on a real connection, including a **dropped response as a hijacked socket** —
+      the round happened, the answer never arrives, the client's timeout ends the wait.
 
 **Done when:** the client runs identically against `MockTransport` and `HttpTransport` — same
-behaviour, different latency.
+behaviour, different latency. ✅ [`tests/http.test.ts`](tests/http.test.ts) plays one round through
+each, against identically seeded simulators, and asserts the responses are equal field for field.
 
 ## Block S3 — The contract suite
 

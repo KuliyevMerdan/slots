@@ -10,7 +10,7 @@ import type {
   SpinRes,
 } from '@slot/protocol';
 import { SlotError, isSlotError } from '@slot/protocol';
-import type { RgsTransport } from './transport.js';
+import type { CallOptions, RgsTransport } from './transport.js';
 
 /**
  * Timeout, retry and error classification — the policy half of the seam.
@@ -30,6 +30,10 @@ import type { RgsTransport } from './transport.js';
  * 3. **The engine never sees raw network noise.** A rejected `fetch`, an aborted request, a parse
  *    failure — all of it is mapped onto the taxonomy here, so the state machine downstream can
  *    branch on a class and never on a message string.
+ *
+ * It also owns cancellation, because it owns the clock: each attempt gets its own `AbortSignal`,
+ * aborted the moment that attempt times out. An implementation that talks to a network is expected
+ * to hang the request off it; one that does not may ignore it.
  */
 
 export interface RetryPolicy {
@@ -91,11 +95,21 @@ const wait = (ms: number): Promise<void> =>
  * Leaving the timer running would keep a handle alive for every call the game ever makes, which on
  * a long session is a slow leak in the one place nobody looks.
  */
-function withTimeout<T>(work: Promise<T>, ms: number, timedOut: () => Error): Promise<T> {
+function withTimeout<T>(
+  work: Promise<T>,
+  ms: number,
+  timedOut: () => Error,
+  onTimeout: () => void,
+): Promise<T> {
   if (ms <= 0) return work;
 
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(timedOut()), ms);
+    const timer = setTimeout(() => {
+      // Order matters only for readability: the caller is told first, and the attempt it is no
+      // longer waiting for is cancelled behind it.
+      reject(timedOut());
+      onTimeout();
+    }, ms);
     work.then(
       (value) => {
         clearTimeout(timer);
@@ -145,19 +159,19 @@ export class ResilientTransport implements RgsTransport {
   }
 
   authenticate(request: AuthenticateReq): Promise<AuthenticateRes> {
-    return this.#call('authenticate', () => this.#inner.authenticate(request));
+    return this.#call('authenticate', (options) => this.#inner.authenticate(request, options));
   }
 
   spin(request: SpinReq): Promise<SpinRes> {
-    return this.#call('spin', () => this.#inner.spin(request));
+    return this.#call('spin', (options) => this.#inner.spin(request, options));
   }
 
   featureSpin(request: FeatureSpinReq): Promise<FeatureSpinRes> {
-    return this.#call('featureSpin', () => this.#inner.featureSpin(request));
+    return this.#call('featureSpin', (options) => this.#inner.featureSpin(request, options));
   }
 
   settle(request: SettleReq): Promise<SettleRes> {
-    return this.#call('settle', () => this.#inner.settle(request));
+    return this.#call('settle', (options) => this.#inner.settle(request, options));
   }
 
   /**
@@ -175,7 +189,7 @@ export class ResilientTransport implements RgsTransport {
     return Math.round(exponential * (1 - jitter + this.#random() * jitter));
   }
 
-  async #call<T>(call: string, attemptOnce: () => Promise<T>): Promise<T> {
+  async #call<T>(call: string, attemptOnce: (options: CallOptions) => Promise<T>): Promise<T> {
     const timedOut = (): Error =>
       new SlotError('TIMEOUT', `${call} did not answer within ${this.#policy.timeoutMs}ms`);
 
@@ -188,10 +202,21 @@ export class ResilientTransport implements RgsTransport {
         await this.#sleep(delayMs);
       }
 
+      // One controller per attempt: aborting the attempt that ran out of clock must not cancel the
+      // retry that replaces it.
+      const controller = new AbortController();
+
       try {
         // `attemptOnce` closes over the *same* request object every time. That is the idempotency
         // guarantee in one line: no retry ever mints a new `roundId`.
-        return await withTimeout(attemptOnce(), this.#policy.timeoutMs, timedOut);
+        return await withTimeout(
+          attemptOnce({ signal: controller.signal }),
+          this.#policy.timeoutMs,
+          timedOut,
+          () => {
+            controller.abort();
+          },
+        );
       } catch (error) {
         failure = classify(error, call);
         if (!failure.isRetryable) throw failure;

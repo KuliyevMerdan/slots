@@ -11,8 +11,12 @@ not enforcing.
 | `packages/engine/illegal-deep-import.ts` | no package may import into another's `src/` | `.dependency-cruiser.cjs` |
 | `packages/engine/legal.ts` | the allowed imports are *not* flagged | `.dependency-cruiser.cjs` |
 | `packages/engine/impure.ts` | pure packages cannot use ambient randomness, time or I/O | [`eslint.config.mjs`](../../eslint.config.mjs) |
+| `apps/mock-rgs/illegal-transport.ts` | the HTTP wrapper cannot reach the client's transport | `.dependency-cruiser.cjs` |
+| `apps/mock-rgs/illegal-deep-import.ts` | an app imports a package through its entry point | `.dependency-cruiser.cjs` |
+| `apps/mock-rgs/legal.ts` | the wrapper's allowed imports are *not* flagged | `.dependency-cruiser.cjs` |
 
 They are excluded from TypeScript, ESLint and Prettier in normal runs, and `pnpm lint:boundaries`
-only scans `packages/`. Nothing here is compiled or shipped.
+scans `packages/` and `apps/`. Nothing here is compiled or shipped.
 
-The paths mirror the real workspace (`packages/<name>/…`) because both rule sets match on path.
+The paths mirror the real workspace (`packages/<name>/…`, `apps/<name>/…`) because both rule sets
+match on path.

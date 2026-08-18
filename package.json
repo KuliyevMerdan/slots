@@ -12,8 +12,9 @@
     "typecheck": "tsc -p tsconfig.json && turbo run typecheck",
     "test": "turbo run test",
     "lint": "eslint . && pnpm run lint:boundaries",
-    "lint:boundaries": "depcruise packages --config .dependency-cruiser.cjs",
+    "lint:boundaries": "depcruise packages apps --config .dependency-cruiser.cjs",
     "check": "pnpm run lint && pnpm run build && pnpm run typecheck && pnpm run test && pnpm run test:root && pnpm run format:check",
+    "dev:rgs": "pnpm --filter @slot/mock-rgs dev",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "prepare": "husky",
@@ -22,6 +23,7 @@
   "devDependencies": {
     "@eslint/js": "^9",
     "@slot/engine": "workspace:*",
+    "@slot/mock-rgs": "workspace:*",
     "@slot/protocol": "workspace:*",
     "@slot/rgs-sim": "workspace:*",
     "@slot/transport": "workspace:*",

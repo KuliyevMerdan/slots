@@ -147,3 +147,22 @@ export const CALL_NAMES = Object.keys(CALLS) as [CallName, ...CallName[]];
 export type CallRequest<N extends CallName> = z.infer<(typeof CALLS)[N]['req']>;
 
 export type CallResponse<N extends CallName> = z.infer<(typeof CALLS)[N]['res']>;
+
+/* ── the HTTP binding ─────────────────────────────────────────────────────────────────────────
+ * The URL is part of the wire, so it is pinned where the rest of the wire is — docs/protocol.md
+ * §2.6. `HttpTransport` builds its request path from this and `apps/mock-rgs` registers its routes
+ * from it, which is one fewer string for the two of them to disagree about.
+ */
+
+export const HTTP_ROUTE_PREFIX = '/rgs';
+
+/** `POST /rgs/spin`. One route per call — no verbs in the body, no envelope, nothing to dispatch on. */
+export const routeFor = (call: CallName): string => `${HTTP_ROUTE_PREFIX}/${call}`;
+
+/**
+ * The header carrying the correlation id, in both directions.
+ *
+ * The client mints one per request and the server echoes it, so a round is traceable from a browser
+ * console to a server log without either side inventing a scheme the other has to guess.
+ */
+export const CORRELATION_HEADER = 'x-correlation-id';

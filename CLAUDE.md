@@ -4,19 +4,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-> ⚠️ **The game is playable and invisible.** As of **2026-08-18**, **C0, C1, S0, S1 and C2 have
-> landed**: the workspace (pnpm + Turborepo, strict TypeScript, enforced dependency boundaries,
-> purity rules, CI), the contracts everything reads — `protocol`, `money`, `game-math` — `rgs-sim`,
-> the pure simulator core that decides outcomes and can be made to fail on demand, the
-> `RgsTransport` seam with `MockTransport` and its retry policy, and `engine`, the headless round
-> FSM. 405 tests, `pnpm check` green. The other five `packages/*` are scaffolded and empty; each
-> `src/index.ts` names the block that fills it.
+> ⚠️ **The game is playable, over a network, and invisible.** As of **2026-08-18**, **C0, C1, S0,
+> S1, C2 and S2 have landed**: the workspace (pnpm + Turborepo, strict TypeScript, enforced
+> dependency boundaries, purity rules, CI), the contracts everything reads — `protocol`, `money`,
+> `game-math` — `rgs-sim`, the pure simulator core that decides outcomes and can be made to fail on
+> demand, the `RgsTransport` seam with `MockTransport`, `HttpTransport` and the retry policy,
+> `engine`, the headless round FSM, and `apps/mock-rgs`, the Fastify wrapper that puts the simulator
+> on a real socket. 455 tests, `pnpm check` green. The other five `packages/*` are scaffolded and
+> empty; each `src/index.ts` names the block that fills it.
 >
-> **Nothing renders yet — and a full session already runs.** [`tests/soak.test.ts`](tests/soak.test.ts)
-> plays a thousand seeded rounds through the real engine, the real transport and the real simulator,
-> then a thousand more through a connection that drops responses and fails wallets, with the money
-> balancing to the minor unit both times. There is no Pixi, no canvas and no client: the next block
-> is **C3** (reels on screen), with **S2** (`apps/mock-rgs`) available in parallel.
+> **Nothing renders yet — and a full session already runs, two ways.**
+> [`tests/soak.test.ts`](tests/soak.test.ts) plays a thousand seeded rounds through the real engine,
+> the real transport and the real simulator, then a thousand more through a connection that drops
+> responses and fails wallets, with the money balancing to the minor unit both times.
+> [`tests/http.test.ts`](tests/http.test.ts) plays a round through `MockTransport` and through
+> `HttpTransport` against an identically seeded simulator and asserts the two responses are equal
+> field for field — *"swap the transport URL"* is now a test, not a claim. There is no Pixi, no
+> canvas and no client: the next block is **C3** (reels on screen).
 >
 > The canon is four documents: `CLAUDE.md` (this file), [`ROADMAP.md`](ROADMAP.md) (the task map),
 > [`RECOMMENDATIONS.md`](RECOMMENDATIONS.md) (the strategic registry) and
@@ -72,7 +76,7 @@ empty, and the block named is the commitment.
 | Package             | Path                 | Role                                                     | Block |
 | ------------------- | -------------------- | -------------------------------------------------------- | ----- |
 | `@slot/game-client` | `apps/game-client`   | The deliverable — Pixi client on Vite                     | C0/C3 |
-| `@slot/mock-rgs`    | `apps/mock-rgs`      | Fastify wrapper around `rgs-sim` — proves the network path | S2    |
+| `@slot/mock-rgs`    | `apps/mock-rgs`      | Fastify wrapper around `rgs-sim` — proves the network path | ✅ S2 |
 | `@slot/rgs`         | `apps/rgs`           | Node.js RGS skeleton — routes stubbed, `NotImplemented`    | R0    |
 | `@slot/protocol`    | `packages/protocol`  | ★ Contracts: zod schemas + inferred TS types + error taxonomy | ✅ C1 |
 | `@slot/money`       | `packages/money`     | Branded `Minor` integer units, exact arithmetic, formatting | ✅ C1 |
@@ -81,7 +85,7 @@ empty, and the block named is the commitment.
 | `@slot/renderer`    | `packages/renderer`  | Pixi layer: reels, symbols, effects                       | C3    |
 | `@slot/ui`          | `packages/ui`        | Pixi UI: buttons, bet selector, HUD, modals               | C3    |
 | `@slot/rgs-sim`     | `packages/rgs-sim`   | ★ Mock server core (pure — runs in a browser or in Node)  | ✅ S0 |
-| `@slot/transport`   | `packages/transport` | `RgsTransport` interface + Mock/Http implementations      | ◐ C2  |
+| `@slot/transport`   | `packages/transport` | `RgsTransport` interface + Mock/Http implementations      | ✅ S2 |
 | `@slot/platform`    | `packages/platform`  | Audio, storage, visibility, safe-area, device capabilities | C6   |
 | `@slot/compliance`  | `packages/compliance`| Jurisdiction rules, reality check, session/loss/stake limits | C6  |
 | `@slot/dev-tools`   | `packages/dev-tools` | Debug panel, event log, force-outcome UI                  | C7    |
@@ -229,14 +233,26 @@ ui          → protocol, money                  # pixi allowed here
 game-client → everything above
 ```
 
-Plus two rules the table doesn't spell out: **no cycles**, and **no deep imports** — a package is
-reached through its entry point, never into another's `src/`.
+```
+mock-rgs    → protocol, rgs-sim               # apps/mock-rgs — NOT transport
+```
+
+Plus three rules the table doesn't spell out: **no cycles**, **no deep imports** — a package is
+reached through its entry point, never into another's `src/`, and an app is held to the same rule —
+and one option that is load-bearing rather than cosmetic. `dist/` is **`doNotFollow`, not
+`exclude`**: a workspace import resolves to the target's *built* entry point, so excluding `dist`
+deleted the edge from the graph and the rule fired only while the import was **undeclared** and
+therefore unresolvable. Adding the dependency to `package.json` first — the normal way anyone
+introduces one — made the boundary silently stop being enforced. `doNotFollow` keeps the edge and
+declines to cruise what is behind it.
 
 **`engine` importing Pixi must fail CI.** That single rule is what keeps the engine unit-testable
 without a canvas, and it is the strongest structural signal a reviewer will read. Which is why the
-rule itself is tested: `config/fixtures/` holds deliberately illegal files and
-[`tests/boundaries.test.ts`](tests/boundaries.test.ts) asserts each one is rejected **by name**, and
-that a legal import is not. A rule nobody has watched fail is a rule you are trusting, not enforcing.
+rules themselves are tested: `config/fixtures/` holds deliberately illegal files — for the engine and
+for `apps/mock-rgs` — and [`tests/boundaries.test.ts`](tests/boundaries.test.ts) asserts each one is
+rejected **by name**, and that a legal import is not. A rule nobody has watched fail is a rule you
+are trusting, not enforcing — which is exactly how the `dist` hole above survived until S2 went
+looking.
 
 ### Purity rules for `engine`, `rgs-sim`, `game-math`, `money`
 
@@ -424,17 +440,37 @@ and the reason `mock.test.ts` can drive the whole thing with a twenty-line fake.
 test that the two actually meet, so [`tests/wiring.test.ts`](tests/wiring.test.ts) does it at the
 root — standing in for `apps/game-client`, and the seed of the contract suite (S3).
 
-`withRetry` (**C2**) is the policy, as a decorator so both implementations share one copy of the
-rules. Three of them, and they are the whole point: **only `RECOVERABLE` errors are retried** (a
-`PLAYER` error means retrying changes nothing; a `FATAL` one means hammering the endpoint cannot fix
-a disagreement about reality); **a retry re-sends the identical request**, so the `roundId` is
-unchanged and the server replays rather than re-spins; and **raw network noise never reaches the
-engine** — a rejected `fetch` or an aborted request becomes `UPSTREAM_UNAVAILABLE` here. A server
-that sent `retryAfterMs` wins over the client's own arithmetic, because it knows something the
-client does not. `onRetry` is the seam a debug log or a telemetry reporter hangs on.
+`withRetry` is the policy, as a decorator so both implementations share one copy of the rules. Three
+of them, and they are the whole point: **only `RECOVERABLE` errors are retried** (a `PLAYER` error
+means retrying changes nothing; a `FATAL` one means hammering the endpoint cannot fix a disagreement
+about reality); **a retry re-sends the identical request**, so the `roundId` is unchanged and the
+server replays rather than re-spins; and **raw network noise never reaches the engine** — a rejected
+`fetch` or an aborted request becomes `UPSTREAM_UNAVAILABLE` here. A server that sent `retryAfterMs`
+wins over the client's own arithmetic, because it knows something the client does not. `onRetry` is
+the seam a debug log or a telemetry reporter hangs on.
 
-Still owed (**S2**): `HttpTransport` — `apps/mock-rgs` today, the real RGS later, distinguished by
-one base URL.
+Because it owns the clock it also owns **cancellation**: every attempt is handed an `AbortSignal`
+that fires when that attempt times out, and `HttpTransport` hangs its request off it. A timeout that
+only rejects the caller's promise is half a timeout — over HTTP the request goes on holding a socket
+until the server answers into nothing, three times per spin on a bad link. `CallOptions` is optional
+on every method, so the engine's `RgsPort` — four one-argument methods — never learns that
+cancellation exists.
+
+`HttpTransport` (**S2**) is the same four calls over the wire: `POST /rgs/<call>`, with the route
+built from `@slot/protocol`'s `routeFor()` so the client's path and the server's routes come from one
+definition. It **validates the response** against the same schema the server validated the request
+with (a shape the client cannot read is a `FATAL` `SCHEMA_MISMATCH`, caught at the boundary rather
+than three animations later), **classifies every failure** — a protocol error body becomes the
+`SlotError` the server meant, and anything else is mapped by status — and **carries a correlation id**
+the server echoes, so one round is traceable across two processes. The class is always derived from
+the code, so a server that mislabels a `PLAYER` error as `RECOVERABLE` cannot talk the client into
+retrying a spin the player cannot afford. `fetch` arrives as a three-member structural type rather
+than a global, for the same reason the simulator's storage does (ADR-0003).
+
+**The one line that decides which server this is, is the base URL.**
+[`tests/http.test.ts`](tests/http.test.ts) is what makes that a statement rather than a hope: one
+round, played through both transports against two identically seeded simulators, asserted equal field
+for field.
 
 ### The simulator is the spec — `packages/rgs-sim`
 
@@ -500,12 +536,41 @@ left a debited round nobody has seen, so a retry with the same key must replay i
 scenario the whole idempotency design exists for, and it is now producible on demand.
 
 The sim can neither sleep nor hang, so `deliver()` returns the verdict as data — `DELIVER` /
-`REJECT` / `DROP` plus a delay — and the caller enacts it. `MockTransport` does that in-process
-today; `apps/mock-rgs` (S2) will do it to an HTTP response. One policy, two enactments.
+`REJECT` / `DROP` plus a delay — and the caller enacts it. `MockTransport` does that in-process and
+`apps/mock-rgs` does it to an HTTP response. One policy, two enactments.
 
-Still owed (**S2**):
+### The network path — `apps/mock-rgs`
 
-- **`apps/mock-rgs`** — the Fastify wrapper that proves the network path.
+The simulator, over a real socket, in about two hundred lines of Fastify. It exists to prove one
+sentence: **the client runs identically against `MockTransport` and `HttpTransport` — same
+behaviour, different latency.** Everything that *decides* anything is `@slot/rgs-sim` and is not
+reimplemented here; this app parses a request, hands it to `SimServer.deliver`, and enacts what comes
+back. If it had its own copy of the rules, the parity test would only prove that two implementations
+currently agree.
+
+The binding is pinned in [docs/protocol.md §2.6](docs/protocol.md) and argued in
+[ADR-0004](docs/adr/ADR-0004-http-binding.md). Four points are worth knowing without opening either:
+
+- **Routes come from the `CALLS` table**, via `routeFor()` — `POST /rgs/spin` and friends. A fifth
+  call would be routed, validated and typed the moment it joined the contract.
+- **The status code is for operators; the body is for the client.** The client branches on the
+  `class`, which is derived from the `code`, which is in the body. `STATUS_OF_CODE` is declared
+  `satisfies Record<ErrorCode, number>`, so a new error code cannot be added without deciding what it
+  looks like on the wire.
+- **A dropped response is a hijacked reply** — the connection is held open and says nothing, because
+  that is what the fault *is*: the round happened and the answer was lost. The client's own timeout
+  ends the wait, exactly as in-process. Hijacked sockets are tracked so shutdown destroys them
+  instead of waiting on a connection that waits forever.
+- **`x-correlation-id` in both directions.** The client mints one and the server echoes it; the
+  simulator's own `sim-000042` ids (replayable, not unique across sessions) go to the log line beside
+  it.
+
+`/dev/*` — fault injection, session reset, a state summary — is what the debug panel (C7) drives and
+what lets the contract suite (S3) *demand* a failure rather than wait for one; it is mounted only
+when `devRoutes` is on, and `apps/rgs` will not have it. `POST /demo/session` is not gated, because a
+server you cannot obtain a token for is not a server (docs/protocol.md §7). Configuration is
+environment, validated with a schema like anything else that crosses a boundary — a mistyped server
+seed silently changes every outcome the session produces.
 
 ### The future backend — `apps/rgs`
 
@@ -549,7 +614,8 @@ shape.
 | Layer | Where | What it proves |
 | --- | --- | --- |
 | **Unit** | beside the code, Vitest | Pure logic: evaluator (golden-file grids), money arithmetic, FSM transitions |
-| **Engine soak** | `packages/engine` | 1,000 seeded rounds incl. features, retries and disconnects, with **no state violations** |
+| **Engine soak** | `tests/soak.test.ts` | 1,000 seeded rounds incl. features, retries and disconnects, with **no state violations** |
+| **Transport parity** | `tests/http.test.ts` | One round through `MockTransport` and through `HttpTransport`, against identically seeded simulators, **equal field for field** |
 | **Contract** | one suite, three targets | `rgs-sim` in-process · sim over HTTP · `apps/rgs` — the switch-over gate |
 | **E2E** | Playwright, in CI | Fixed seed + forced outcomes: spin, win, feature, resume after reload |
 | **Perf** | `tools/perf-harness` | fps/memory on a throttled mobile profile — numbers, not adjectives |
@@ -597,23 +663,36 @@ made visible:_
   the field as specified rather than working around it. Changing it is a wire change, so it belongs
   in `docs/protocol.md` first; decide before S4 tunes the math against a ceiling that will move.
 - **Nothing compares the two math versions.** `GameConfig.mathVersion` is on the wire, `game-math`
-  exports `MATH_VERSION`, and the transport that should put them side by side now exists — and does
-  not. The comparison belongs on the authenticate path and raises `MATH_VERSION_MISMATCH`; it is
-  still scheduled in no block. Until it exists, a strip edit ships a client drawing reels the server
-  is not playing, and `tests/soak.test.ts` would not notice because both halves come from the same
-  workspace.
+  exports `MATH_VERSION`, `apps/mock-rgs` now publishes the server's on `GET /ready` — and nothing
+  puts the two side by side. The comparison belongs on the authenticate path and raises
+  `MATH_VERSION_MISMATCH`; it is still scheduled in no block. Until it exists, a strip edit ships a
+  client drawing reels the server is not playing, and neither `tests/soak.test.ts` nor
+  `tests/http.test.ts` would notice, because both halves come from the same workspace. The HTTP path
+  makes this worse rather than better: a deployed `apps/mock-rgs` can now be a different build from
+  the client talking to it.
 
 **Workspace & tooling**
 
-- **The seam is proven in-process only.** `tests/wiring.test.ts` shows `SimServer` and
-  `MockTransport` meeting and a full round surviving a lost response — but it is one hand-written
-  file at the root, not the suite S3 promises: *one* suite run against three targets. Until that
-  exists, "swap the transport URL" is a claim demonstrated against exactly one implementation.
-- **Four packages have no boundary rule.** The dependency table covers `protocol`, `money`,
-  `game-math`, `engine`, `rgs-sim`, `transport`, `renderer` and `ui` — so `platform`, `compliance`,
-  `dev-tools` and `game-client` are unconstrained: today nothing stops `compliance` importing Pixi or
-  `platform` importing the engine. Decide what each may reach (C6/C7 are the natural moments) and add
-  the rules; until then the enforcement story has four holes in it.
+- **Two targets, two hand-written suites — not the one suite S3 promises.**
+  `tests/wiring.test.ts` and `tests/http.test.ts` prove the in-process and HTTP paths agree, but they
+  are two files that happen to assert similar things, not *one* suite parameterised over three
+  targets. The HTTP one also plays a single round where the soak plays a thousand: the network path
+  has no equivalent of `tests/soak.test.ts`, so a fault that only manifests under sustained load over
+  a socket has nothing looking for it. S3 is where both are fixed.
+- **Four packages still have no boundary rule.** The dependency table covers `protocol`, `money`,
+  `game-math`, `engine`, `rgs-sim`, `transport`, `renderer`, `ui` and now `apps/mock-rgs` — so
+  `platform`, `compliance`, `dev-tools` and `game-client` are unconstrained: today nothing stops
+  `compliance` importing Pixi or `platform` importing the engine. Decide what each may reach (C6/C7
+  are the natural moments) and add the rules; until then the enforcement story has four holes in it.
+
+- **A browser cannot call `apps/mock-rgs` yet.** The server sends no CORS headers, so the Vite client
+  on `:5173` talking to `:8787` will be blocked the moment C3 tries it — the parity proven in
+  `tests/http.test.ts` is proven from Node, where the same-origin policy does not apply. Two honest
+  fixes: a Vite dev proxy (client-side, no server change, and what most studios do) or `@fastify/cors`
+  on the mock. Pick one in C3 rather than discovering it while debugging a blank canvas.
+- **The HTTP server has no limits of its own** — no rate limiting, no body-size cap, no request
+  timeout. Fine for a dev tool bound to `127.0.0.1`, and exactly the list `apps/rgs` cannot ship
+  without (R5/R7). Worth stating so its absence reads as a decision.
 
 **Simulator (`packages/rgs-sim`) — behaviour the real RGS will have to earn**
 

@@ -21,13 +21,32 @@ import type {
  * Four methods, matching the four calls. Everything else a transport does — timeout, exponential
  * backoff retrying the same `roundId`, mapping network noise onto the error taxonomy — happens
  * *behind* this interface, so the engine only ever sees a classified `SlotError`. That policy layer
- * is block C2; this package currently ships the seam and the in-process implementation.
+ * is `withRetry` in retry.ts.
+ *
+ * `options` is optional on every method, which is what keeps the engine's `RgsPort` — four
+ * one-argument methods — satisfied by any transport without the engine ever learning that
+ * cancellation exists.
  */
 export interface RgsTransport {
-  authenticate(request: AuthenticateReq): Promise<AuthenticateRes>;
-  spin(request: SpinReq): Promise<SpinRes>;
-  featureSpin(request: FeatureSpinReq): Promise<FeatureSpinRes>;
-  settle(request: SettleReq): Promise<SettleRes>;
+  authenticate(request: AuthenticateReq, options?: CallOptions): Promise<AuthenticateRes>;
+  spin(request: SpinReq, options?: CallOptions): Promise<SpinRes>;
+  featureSpin(request: FeatureSpinReq, options?: CallOptions): Promise<FeatureSpinRes>;
+  settle(request: SettleReq, options?: CallOptions): Promise<SettleRes>;
+}
+
+/**
+ * What the policy layer passes down to the implementation.
+ *
+ * The only member is the signal `ResilientTransport` aborts when an attempt runs out of clock.
+ * Without it the timeout is a lie told to the caller: the promise rejects, the reels stop waiting,
+ * and the request carries on holding a connection until the server answers into nothing. A slot on a
+ * bad mobile link retries three times, so that is three abandoned sockets per spin.
+ *
+ * An implementation may ignore it — `MockTransport` does, because a dropped in-process response is
+ * modelled as a promise that never settles and there is no socket to reclaim.
+ */
+export interface CallOptions {
+  readonly signal?: AbortSignal;
 }
 
 /**

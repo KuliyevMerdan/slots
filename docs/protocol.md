@@ -1,9 +1,9 @@
 # Wire protocol
 
-**Status:** decisions pinned **2026-08-16**. `packages/protocol` implements them in **C1** — the zod
-schemas and inferred types do not exist yet. This document is the contract; the code is downstream of
-it. When the wire changes, change this file and `packages/protocol` **first**, then the simulator,
-then the engine, then the UI.
+**Status:** decisions pinned **2026-08-16**; implemented by `packages/protocol` (C1), served by
+`packages/rgs-sim` (S0/S1) and carried over HTTP by `apps/mock-rgs` and `HttpTransport` (S2). This
+document is the contract; the code is downstream of it. When the wire changes, change this file and
+`packages/protocol` **first**, then the simulator, then the engine, then the UI.
 
 The shapes below are written as TypeScript for readability. In `packages/protocol` each one is a zod
 schema whose inferred type is the exported TS type — one definition, used to validate on **both**
@@ -172,6 +172,49 @@ interface PendingRound {
   next:     NextAction;          // exactly what the client must do to continue
 }
 ```
+
+### 2.6 HTTP binding
+
+The shapes above are the contract; this is how they travel. Pinned here because two independent
+implementations have to agree on it exactly — `HttpTransport` in the client, `apps/mock-rgs` today,
+`apps/rgs` later — and because the contract suite (S3) runs one suite against all three. The
+reasoning and the rejected alternatives are in
+[ADR-0004](adr/ADR-0004-http-binding.md).
+
+| | |
+| --- | --- |
+| Route | `POST /rgs/<call>` — `authenticate`, `spin`, `featureSpin`, `settle` |
+| Body | The request shape from §2, as JSON. `POST` for all four, including the read-only `authenticate`: a token belongs in a body, not in a URL that lands in every access log on the way |
+| Success | `200` with the response shape from §2 |
+| Failure | The `ProtocolError` of §6, as JSON, with the status below |
+| Correlation | `x-correlation-id` in both directions: the client mints one, the server adopts it or mints its own, and every response echoes it |
+
+`HTTP_ROUTE_PREFIX` and `routeFor()` are exported from `@slot/protocol` beside the `CALLS` table, so
+the client's path and the server's routes come from one definition.
+
+**The client branches on the `class` in the body, never on the status.** The status is for the things
+between the two — a proxy log, a health rule, a `curl` in a terminal:
+
+| Status | Codes |
+| --- | --- |
+| `400` | `SCHEMA_MISMATCH` |
+| `401` | `SESSION_EXPIRED` |
+| `403` | `FORCE_OUTCOME_REFUSED` |
+| `404` | `UNKNOWN_ROUND` (and any unknown route, as `SCHEMA_MISMATCH`) |
+| `409` | `ROUND_CONFLICT` · `ILLEGAL_TRANSITION` · `MATH_VERSION_MISMATCH` |
+| `422` | `INSUFFICIENT_FUNDS` · `STAKE_NOT_ALLOWED` · `LIMIT_REACHED` — understood and refused, not malformed |
+| `429` | `RATE_LIMITED` (honours `Retry-After`) |
+| `503` | `UPSTREAM_UNAVAILABLE` · `WALLET_UNAVAILABLE` |
+| `504` | `TIMEOUT` |
+
+**A dropped response has no status.** The simulator's `DROP` fault means the call ran and its answer
+was lost, so the server holds the connection open and says nothing — the client's own timeout ends
+the wait, exactly as it does in-process. Encoding it as a 504 would tell the client something the
+network never did.
+
+Two surfaces outside the game contract, both dev affordances: `POST /demo/session → { token }` (§7),
+and `GET /health` · `GET /ready`. `apps/mock-rgs` adds `/dev/*` — fault injection, session reset, a
+state summary — which `apps/rgs` will not have.
 
 ---
 

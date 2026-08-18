@@ -43,6 +43,8 @@ describe('dependency boundaries', () => {
     ['packages/engine/src/illegal-pixi.ts', 'engine-is-headless'],
     ['packages/engine/src/illegal-renderer.ts', 'engine-deps'],
     ['packages/engine/src/illegal-deep-import.ts', 'no-cross-package-deep-imports'],
+    ['apps/mock-rgs/src/illegal-transport.ts', 'mock-rgs-deps'],
+    ['apps/mock-rgs/src/illegal-deep-import.ts', 'apps-import-entry-points-only'],
   ])('rejects %s — %s', (fixture, expectedRule) => {
     const names = violationsFor(fixture).map((violation) => violation.rule.name);
     expect(names).toContain(expectedRule);
@@ -50,5 +52,9 @@ describe('dependency boundaries', () => {
 
   it('accepts the engine importing protocol and money', () => {
     expect(violationsFor('packages/engine/src/legal.ts')).toEqual([]);
+  });
+
+  it('accepts the HTTP wrapper importing the contract and the simulator', () => {
+    expect(violationsFor('apps/mock-rgs/src/legal.ts')).toEqual([]);
   });
 });
