@@ -23,12 +23,14 @@ named force-outcome scenarios, and the `RgsTransport` seam with `MockTransport`)
 2026-08-18** (the engine FSM, the retry policy, resume), **S2 landed 2026-08-18**
 (`apps/mock-rgs`, `HttpTransport`, the HTTP binding — ADR-0004) and **C3 landed 2026-08-18**
 (`renderer`, `ui`, `apps/game-client` — reels on screen, the five-stage spin curve, the generated
-atlas, the sprite pool). 497 tests green.
+atlas, the sprite pool) and **C4 landed 2026-08-18** (payline highlighting, the tiered big-win
+counter, turbo, skip-anything as a completable timeline, and the paytable re-evaluation assertion).
+531 tests green.
 
-**Next is C4** — the win presentation and interruptibility: paylines, a tiered big-win counter, turbo,
-and the skip-anything behaviour the engine already decides is legal. The stage currently answers
-`WIN_PRESENTATION` with a placeholder hold, which is the seam C4 replaces. **S3** (the contract suite)
-and **S4** (the RTP report) can run in parallel.
+**Next is C5** — features and resume: free spins with retrigger, intro and outro screens, and a hard
+refresh mid-feature that comes back where it left off. The stage answers `FEATURE_INTRO` and
+`FEATURE_OUTRO` with a hold today, which is the seam C5 replaces. **S3** (the contract suite) and
+**S4** (the RTP report) can run in parallel.
 
 ---
 
@@ -44,7 +46,7 @@ contract suite. `#` maps each block back to the phase numbering of the original 
 | **C1** | `protocol` · `money` · `game-math` — the contracts everything reads | C0 | 1 | ✅ (landed 2026-08-17) |
 | **C2** | `engine` FSM + `transport` (retry/backoff/timeout, resume) | C1, S1 | 3 | ✅ (landed 2026-08-18) |
 | **C3** | Reels on screen — Pixi bootstrap, atlas, pool, spin curve | C2 | 4 | ✅ (landed 2026-08-18) |
-| **C4** | Win presentation + interruptibility (slam stop, skip-anything) | C3 | 5 | ☐ |
+| **C4** | Win presentation + interruptibility (slam stop, skip-anything) | C3 | 5 | ✅ (landed 2026-08-18) |
 | **C5** | Features + resume — free spins, retrigger, mid-feature reload | C4, S0 | 6 | ☐ |
 | **C6** | Platform layer — responsive, audio, i18n, compliance | C4 | 7 | ☐ |
 | **C7** | Dev tools + performance pass | C5, S1 | 8 | ☐ |
@@ -242,16 +244,24 @@ says nothing about frame rate.
 
 _4–5 days._
 
-- [ ] Payline highlighting + per-symbol win animations, sequenced from the server's `wins[]`.
-- [ ] Tiered big-win counter (Nice / Big / Mega thresholds) with a rolling count-up.
-- [ ] Turbo mode.
-- [ ] **Slam stop** and **skip-anything**: timelines complete via `.progress(1)`, counters snap to
-      final, state advances — implementing the engine's interruption contract.
-- [ ] Dev-build assertion: re-evaluate the server's `view` with the local paytable and scream on a
-      mismatch (`__ASSERT_MATH__`).
+- [x] Payline highlighting + per-symbol emphasis, sequenced from the server's `wins[]` — a line for a
+      line win, rings only for a scatter, and a per-win cycle with a *budget* rather than a fixed
+      duration, so a twenty-line max win is a rhythm and not a slideshow.
+- [x] Tiered big-win counter (Nice 5× / Big 15× / Mega 50×, as multiples of the stake) with a rolling
+      count-up. One counter drives both the banner and the HUD.
+- [x] Turbo mode — one factor, applied to the spin curve and the presentation together, leaving
+      speed, overshoot and the blur threshold alone.
+- [x] **Slam stop** and **skip-anything**: the presentation is a `Timeline` whose `complete()` runs
+      every remaining step to its end, so a skip lands the counter on the final number and clears
+      every highlight. Asserted as a trace comparison, not as a screenshot.
+- [x] Dev-build assertion: re-evaluate the server's `view` with the local paytable and scream on a
+      mismatch (`__ASSERT_MATH__`) — plus the forced-outcome hook that makes a max win reachable on
+      demand instead of by luck.
 
 **Done when:** you can mash the spin button through an entire max-win presentation and the balance is
-still exactly correct.
+still exactly correct. ✅ [`tests/mash.test.ts`](tests/mash.test.ts) does exactly that, 120 rounds of
+random pressing through the real engine, transport, simulator and renderer, asserting the client's
+balance equals the server's after every round.
 
 ## Block C5 — Features & resume
 

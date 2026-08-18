@@ -14,4 +14,7 @@ export * from './curve.js';
 export * from './atlas.js';
 export * from './reel.js';
 export * from './reels.js';
+export * from './timeline.js';
+export * from './tiers.js';
+export * from './win-presentation.js';
 export * from './stage.js';

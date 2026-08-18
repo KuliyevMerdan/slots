@@ -3,6 +3,7 @@ import type {
   AuthenticateRes,
   FeatureSpinReq,
   FeatureSpinRes,
+  ForceOutcome,
   RoundIdFactory,
   SettleReq,
   SettleRes,
@@ -40,19 +41,28 @@ export interface SlotEngineOptions {
   port: RgsPort;
   /** Injected: this package may not reach for `crypto`, any more than it may for a clock. */
   newRoundId: RoundIdFactory;
+  /**
+   * A development hook: what the next base spin should be forced to, if anything.
+   *
+   * The client only wires one behind `__DEV_TOOLS__`, and the server refuses the field outside dev
+   * mode — two independent gates, neither of them here. See `ReduceContext.forceOutcome`.
+   */
+  forceOutcome?: () => ForceOutcome | undefined;
 }
 
 export class SlotEngine {
   readonly #port: RgsPort;
   readonly #newRoundId: RoundIdFactory;
+  readonly #forceOutcome: (() => ForceOutcome | undefined) | undefined;
   readonly #listeners = new Set<EngineListener>();
   #state: EngineState = initialState;
   /** Effects run one at a time, in order — a round is a sequence, not a fan-out. */
   #draining: Promise<void> = Promise.resolve();
 
-  constructor({ port, newRoundId }: SlotEngineOptions) {
+  constructor({ port, newRoundId, forceOutcome }: SlotEngineOptions) {
     this.#port = port;
     this.#newRoundId = newRoundId;
+    this.#forceOutcome = forceOutcome;
   }
 
   get state(): EngineState {
@@ -81,7 +91,10 @@ export class SlotEngine {
    * for are queued behind whatever is already in flight.
    */
   send(input: EngineInput): EngineState {
-    const transition = reduce(this.#state, input, { newRoundId: this.#newRoundId });
+    const transition = reduce(this.#state, input, {
+      newRoundId: this.#newRoundId,
+      ...(this.#forceOutcome === undefined ? {} : { forceOutcome: this.#forceOutcome }),
+    });
     this.#state = transition.state;
 
     for (const event of transition.events) this.#emit(event);

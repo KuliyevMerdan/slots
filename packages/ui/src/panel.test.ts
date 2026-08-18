@@ -68,27 +68,34 @@ describe('the control panel', () => {
   const build = () => {
     const presses: number[] = [];
     const stakes: Minor[] = [];
+    const turbos: boolean[] = [];
     const panel = new ControlPanel({
       config,
       currency: 'EUR',
       onPress: () => presses.push(1),
       onStakeChange: (stake) => stakes.push(stake),
+      onToggleTurbo: (on) => turbos.push(on),
     });
-    return { panel, presses, stakes };
+    return { panel, presses, stakes, turbos };
   };
+
+  const view = (over: Partial<Parameters<ControlPanel['render']>[0]> = {}) => ({
+    action: 'SPIN',
+    canPress: true,
+    canChangeStake: true,
+    balance: 999_980 as Minor,
+    stake: 20 as Minor,
+    win: undefined,
+    status: '',
+    turbo: false,
+    canToggleTurbo: true,
+    ...over,
+  });
 
   it('renders whatever the caller says the phase means', () => {
     const { panel } = build();
 
-    panel.render({
-      action: 'STOP',
-      canPress: true,
-      canChangeStake: false,
-      balance: 999_980 as Minor,
-      stake: 20 as Minor,
-      win: undefined,
-      status: '',
-    });
+    panel.render(view({ action: 'STOP', canChangeStake: false }));
 
     // The win readout is hidden rather than zeroed: a dead spin shows no win, it does not show 0.00.
     expect(panel.hud.win.view.visible).toBe(false);
@@ -97,17 +104,31 @@ describe('the control panel', () => {
   it('shows the win when there is one', () => {
     const { panel } = build();
 
-    panel.render({
-      action: 'SKIP',
-      canPress: true,
-      canChangeStake: false,
-      balance: 999_980 as Minor,
-      stake: 20 as Minor,
-      win: 140 as Minor,
-      status: '',
-    });
+    panel.render(view({ action: 'SKIP', canChangeStake: false, win: 140 as Minor }));
 
     expect(panel.hud.win.view.visible).toBe(true);
+  });
+
+  it('reflects turbo without deciding it, and reports a toggle', () => {
+    const { panel, turbos } = build();
+
+    panel.render(view({ turbo: true }));
+    expect(panel.turbo.on).toBe(true);
+
+    const pill = panel.turbo.view as unknown as { emit: (event: string) => void };
+    pill.emit('pointertap');
+
+    expect(turbos).toEqual([false]);
+  });
+
+  it('lets a jurisdiction take turbo away', () => {
+    const { panel, turbos } = build();
+
+    panel.render(view({ canToggleTurbo: false }));
+    const pill = panel.turbo.view as unknown as { emit: (event: string) => void };
+    pill.emit('pointertap');
+
+    expect(turbos).toEqual([]);
   });
 
   it('reports a press without interpreting it', () => {

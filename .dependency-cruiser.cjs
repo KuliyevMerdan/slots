@@ -19,8 +19,16 @@ const WORKSPACE = '^(\\.\\./)*(packages/[^/]+/|@slot/[^/]+$)';
 const only = (...names) =>
   `^(\\.\\./)*(packages/(${names.join('|')})/|@slot/(${names.join('|')})$)`;
 
-/** Pixi, the DOM-side libraries, and Node I/O — banned from the pure packages. */
-const BROWSER_OR_IO = '^(pixi\\.js|@pixi/|howler|fs|node:fs|node:fs/|fs/promises)';
+/**
+ * Pixi, the DOM-side libraries, and Node I/O — banned from the pure packages.
+ *
+ * Matched on **any path segment**, not just the bare specifier. A dependency that resolves lands in
+ * the graph as `../../node_modules/pixi.js/lib/index.mjs`, so a rule anchored to `^pixi\.js` fires
+ * only while the import is *undeclared* — and stops firing the moment someone adds the package to
+ * `dependencies`, which is how anyone would actually introduce it. Same failure mode as excluding
+ * `dist/`, and the fixtures now catch both.
+ */
+const BROWSER_OR_IO = '(^|/)(pixi\\.js|@pixi|howler)(/|$)|^(node:)?fs(/|$)';
 
 /**
  * `from` a package, `to` anywhere in the workspace that is not on its allow-list.

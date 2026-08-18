@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { Texture } from 'pixi.js';
 import type { GameConfig } from '@slot/protocol';
 import type { EngineEvent, EngineInput, EngineState } from '@slot/engine';
+import type { Win } from '@slot/protocol';
 import { GameStage } from './stage.js';
 import type { SymbolAtlas } from './atlas.js';
 
@@ -30,6 +31,10 @@ const atlas: SymbolAtlas = {
 const config = {
   strips: [STRIP, STRIP, STRIP, STRIP, STRIP],
   rows: ROWS,
+  paylines: [
+    [1, 1, 1, 1, 1],
+    [0, 0, 0, 0, 0],
+  ],
 } as unknown as GameConfig;
 
 /** A stand-in for `SlotEngine`: it records inputs and lets a test publish any event it likes. */
@@ -47,8 +52,8 @@ class FakeEngine {
     return undefined;
   }
 
-  emit(event: EngineEvent): void {
-    for (const listener of this.#listeners) listener(event, { phase: 'IDLE' } as EngineState);
+  emit(event: EngineEvent, state: EngineState = { phase: 'IDLE' } as EngineState): void {
+    for (const listener of this.#listeners) listener(event, state);
   }
 
   get types(): string[] {
@@ -64,13 +69,50 @@ const viewFor = (stops: readonly number[]): string[][] =>
 const build = () => {
   const engine = new FakeEngine();
   const mismatches: unknown[] = [];
+  const amounts: number[] = [];
   const stage = new GameStage({
     engine,
     config,
     atlas,
+    currency: 'EUR',
     onGridMismatch: (expected, drawn) => mismatches.push({ expected, drawn }),
+    onWinAmount: (amount) => amounts.push(amount),
   });
-  return { engine, stage, mismatches };
+  return { engine, stage, mismatches, amounts };
+};
+
+const LINE_WIN = {
+  kind: 'LINE',
+  line: 0,
+  symbol: 'A',
+  count: 3,
+  positions: [
+    [0, 1],
+    [1, 1],
+    [2, 1],
+  ],
+  amount: 300,
+} as unknown as Win;
+
+const SCATTER_WIN = {
+  kind: 'SCATTER',
+  symbol: 'C',
+  count: 3,
+  positions: [
+    [0, 0],
+    [2, 2],
+    [4, 1],
+  ],
+  amount: 200,
+} as unknown as Win;
+
+/** Put the machine where a win presentation happens: a phase change, then what to present. */
+const present = (engine: FakeEngine, totalWin: number, stake = 100) => {
+  engine.emit({ type: 'PHASE_CHANGED', from: 'STOPPING', to: 'WIN_PRESENTATION' });
+  engine.emit(
+    { type: 'WINS_PRESENTED', wins: [LINE_WIN, SCATTER_WIN], totalWin: totalWin as never },
+    { phase: 'WIN_PRESENTATION', stake } as unknown as EngineState,
+  );
 };
 
 /** Run frames until the stage reports the reels stopped, or give up. */
@@ -123,6 +165,22 @@ describe('the engine drives the reels', () => {
     expect(mismatches).toHaveLength(1);
   });
 
+  /**
+   * Resume: `authenticate` hands back a round that was left open, and the engine walks into the
+   * phase that continues it — targeting reels that were never started. Before this was handled, the
+   * client hung at boot on reels that would never move.
+   */
+  it('starts reels that were never spun when a target arrives, and still lands on the stops', () => {
+    const { engine, stage } = build();
+    const stops = [2, 4, 6, 1, 3];
+
+    engine.emit({ type: 'REELS_TARGETED', stops, view: viewFor(stops), slam: false });
+    runToStop(stage, engine);
+
+    expect(engine.types).toContain('REELS_STOPPED');
+    expect(stage.reels.grid()).toEqual(viewFor(stops));
+  });
+
   it('re-spins for a free spin, which arrives as a phase change rather than a SPIN_STARTED', () => {
     const { engine, stage } = build();
 
@@ -173,9 +231,97 @@ describe('interruption', () => {
   });
 });
 
-describe('the presentation stubs (C4 replaces these)', () => {
+describe('the win presentation', () => {
+  it('reports itself complete once the sequence has run', () => {
+    const { engine, stage } = build();
+
+    present(engine, 700);
+    stage.update(100);
+    expect(engine.types).not.toContain('PRESENTATION_COMPLETE');
+
+    for (let frame = 0; frame < 400; frame += 1) stage.update(16.67);
+    expect(engine.types).toContain('PRESENTATION_COMPLETE');
+  });
+
+  it('rolls the amount up and always ends on the total the server sent', () => {
+    const { engine, stage, amounts } = build();
+
+    present(engine, 500);
+    for (let frame = 0; frame < 400; frame += 1) stage.update(16.67);
+
+    expect(amounts.length).toBeGreaterThan(5);
+    expect(Math.max(...amounts)).toBe(500);
+    expect(amounts.at(-1)).toBe(500);
+    // It counts *up*: no frame may show more than the final figure.
+    for (const amount of amounts) expect(amount).toBeLessThanOrEqual(500);
+  });
+
+  /**
+   * The done-when of this block, at the level that implements it: a skipped presentation must leave
+   * exactly what a finished one leaves — the final number, and nothing still lit.
+   */
+  it('leaves the same state whether it is skipped or finished', () => {
+    const played = build();
+    const skipped = build();
+
+    present(played.engine, 4_000);
+    for (let frame = 0; frame < 600; frame += 1) played.stage.update(16.67);
+
+    present(skipped.engine, 4_000);
+    skipped.stage.update(16.67);
+    skipped.engine.emit({ type: 'SKIPPED', phase: 'WIN_PRESENTATION' });
+
+    expect(skipped.amounts.at(-1)).toBe(played.amounts.at(-1));
+    expect(skipped.amounts.at(-1)).toBe(4_000);
+  });
+
+  /**
+   * The engine advances *itself* on a skip, so a presentation that fired its completion afterwards
+   * would deliver an input the new phase cannot service.
+   */
+  it('does not report completion after a skip', () => {
+    const { engine, stage } = build();
+
+    present(engine, 900);
+    stage.update(16.67);
+    engine.emit({ type: 'SKIPPED', phase: 'WIN_PRESENTATION' });
+    for (let frame = 0; frame < 400; frame += 1) stage.update(16.67);
+
+    expect(engine.types).not.toContain('PRESENTATION_COMPLETE');
+  });
+
+  it('is instant when the spin paid nothing', () => {
+    const { engine, stage } = build();
+
+    engine.emit({ type: 'PHASE_CHANGED', from: 'STOPPING', to: 'WIN_PRESENTATION' });
+    engine.emit({ type: 'WINS_PRESENTED', wins: [], totalWin: 0 as never }, {
+      phase: 'WIN_PRESENTATION',
+      stake: 100,
+    } as unknown as EngineState);
+    stage.update(16.67);
+
+    expect(engine.types).toContain('PRESENTATION_COMPLETE');
+  });
+
+  it('is shorter in turbo', () => {
+    const framesFor = (turbo: boolean): number => {
+      const { engine, stage } = build();
+      stage.setTurbo(turbo);
+      present(engine, 6_000);
+      let frames = 0;
+      while (!engine.types.includes('PRESENTATION_COMPLETE') && frames < 2_000) {
+        stage.update(16.67);
+        frames += 1;
+      }
+      return frames;
+    };
+
+    expect(framesFor(true)).toBeLessThan(framesFor(false));
+  });
+});
+
+describe('the feature holds (C5 replaces these)', () => {
   it.each([
-    ['WIN_PRESENTATION', 'PRESENTATION_COMPLETE'],
     ['FEATURE_INTRO', 'INTRO_COMPLETE'],
     ['FEATURE_OUTRO', 'OUTRO_COMPLETE'],
   ] as const)('answers %s with %s after a hold', (phase, input) => {
@@ -189,28 +335,14 @@ describe('the presentation stubs (C4 replaces these)', () => {
     expect(engine.types).toContain(input);
   });
 
-  /**
-   * A skip advances the machine itself, so a stub that fired afterwards would deliver an input the
-   * new phase cannot service. Dropping it is the renderer's half of the interruption contract.
-   */
-  it('drops the pending stub when the player skips', () => {
+  it('drops the pending hold on any other phase change', () => {
     const { engine, stage } = build();
 
-    engine.emit({ type: 'PHASE_CHANGED', from: 'STOPPING', to: 'WIN_PRESENTATION' });
-    engine.emit({ type: 'SKIPPED', phase: 'WIN_PRESENTATION' });
+    engine.emit({ type: 'PHASE_CHANGED', from: 'STOPPING', to: 'FEATURE_INTRO' });
+    engine.emit({ type: 'PHASE_CHANGED', from: 'FEATURE_INTRO', to: 'FEATURE_SPINNING' });
     stage.update(5_000);
 
-    expect(engine.types).not.toContain('PRESENTATION_COMPLETE');
-  });
-
-  it('drops it on any other phase change too', () => {
-    const { engine, stage } = build();
-
-    engine.emit({ type: 'PHASE_CHANGED', from: 'STOPPING', to: 'WIN_PRESENTATION' });
-    engine.emit({ type: 'PHASE_CHANGED', from: 'WIN_PRESENTATION', to: 'SETTLING' });
-    stage.update(5_000);
-
-    expect(engine.types).not.toContain('PRESENTATION_COMPLETE');
+    expect(engine.types).not.toContain('INTRO_COMPLETE');
   });
 });
 

@@ -43,6 +43,17 @@ export const UNKNOWN_SYMBOL = { fill: 0x333844, edge: 0x9aa0b4, glyph: '?' } as 
 export const styleFor = (symbol: string): { fill: number; edge: number; glyph: string } =>
   SYMBOL_STYLE[symbol] ?? UNKNOWN_SYMBOL;
 
+/** The win presentation: the line, the ring around a winning cell, and the big-win plate. */
+export const WIN_PALETTE = {
+  line: 0xffd166,
+  lineShadow: 0x1a1200,
+  ring: 0xffe9a8,
+  bannerPlate: 0x1b1330,
+  bannerEdge: 0xffd166,
+  bannerText: 0xffe9a8,
+  amount: 0xffffff,
+} as const;
+
 /** The type face. A system stack, so the repository ships no font and licences no font. */
 export const FONT_STACK =
   '"Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", system-ui, sans-serif';

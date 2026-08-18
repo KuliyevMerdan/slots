@@ -44,6 +44,9 @@ importers:
       '@slot/protocol':
         specifier: workspace:*
         version: link:packages/protocol
+      '@slot/renderer':
+        specifier: workspace:*
+        version: link:packages/renderer
       '@slot/rgs-sim':
         specifier: workspace:*
         version: link:packages/rgs-sim
@@ -68,6 +71,9 @@ importers:
       lint-staged:
         specifier: ^16
         version: 16.4.0
+      pixi.js:
+        specifier: 'catalog:'
+        version: 8.19.0
       prettier:
         specifier: ^3
         version: 3.9.6

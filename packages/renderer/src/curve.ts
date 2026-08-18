@@ -356,3 +356,31 @@ export const isStopped = (motion: ReelMotion): boolean => motion.phase === 'STOP
 /** Whether this frame should draw the blurred symbol texture rather than the sharp one. */
 export const isBlurred = (motion: ReelMotion, curve: SpinCurve): boolean =>
   Math.abs(motion.velocity) > curve.blurAboveSpeed;
+
+/**
+ * The same curve, faster — turbo, and the compliance switch that turns it off.
+ *
+ * Only the *durations* scale. Speed, overshoot and the blur threshold are unchanged, because turbo
+ * is meant to shorten a spin rather than to make it a different animation: the reel still dips,
+ * still overshoots and still settles, and a player who turns it on has not been given a different
+ * game. A jurisdiction that forbids turbo (the UK preset, C6) simply never applies a factor — and
+ * one that mandates a minimum spin duration raises `minCruiseMs` instead of forbidding anything.
+ */
+export function scaleCurve(curve: SpinCurve, factor: number): SpinCurve {
+  if (factor <= 0) throw new RangeError(`a spin curve cannot be scaled by ${factor}`);
+
+  return {
+    ...curve,
+    anticipationMs: curve.anticipationMs * factor,
+    accelerateMs: curve.accelerateMs * factor,
+    minCruiseMs: curve.minCruiseMs * factor,
+    decelerateMs: curve.decelerateMs * factor,
+    settleMs: curve.settleMs * factor,
+    staggerMs: curve.staggerMs * factor,
+    anticipationHoldMs: curve.anticipationHoldMs * factor,
+    slamDecelerateMs: curve.slamDecelerateMs * factor,
+  };
+}
+
+/** How much faster turbo is. One number, so the debug panel and the compliance layer share it. */
+export const TURBO_FACTOR = 0.4;

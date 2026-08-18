@@ -1,4 +1,4 @@
-import type { Minor, RoundIdFactory } from '@slot/protocol';
+import type { ForceOutcome, Minor, RoundIdFactory } from '@slot/protocol';
 import { SlotError } from '@slot/protocol';
 import type {
   EngineEffect,
@@ -32,7 +32,27 @@ import type {
 export interface ReduceContext {
   /** Mints round ids. Injected, because this package may not reach for `crypto` (or a clock). */
   newRoundId: RoundIdFactory;
+  /**
+   * A forced outcome for the **next** spin, or `undefined` for a real one.
+   *
+   * A development affordance with two independent gates, and this is neither of them: the client
+   * only supplies a provider behind `__DEV_TOOLS__` (so a production bundle has no way to ask), and
+   * the server refuses the field unless `GameConfig.devMode` is on (docs/protocol.md §8). It lives
+   * here rather than in the driver because the request is built here — and because C4 and C5 present
+   * near misses, features and max wins, which are otherwise developed by waiting for one.
+   *
+   * Consulted once per **base** spin. A free spin inside a feature is not forced: getting *into* the
+   * feature on demand is what makes it developable, and threading the provider through the feature
+   * sequencing would buy a second dev affordance nobody has asked for yet.
+   */
+  forceOutcome?: () => ForceOutcome | undefined;
 }
+
+/** `{ forceOutcome }` only when there is one — the field must be absent, not undefined, on the wire. */
+const forced = (context: ReduceContext): { forceOutcome?: ForceOutcome } => {
+  const outcome = context.forceOutcome?.();
+  return outcome === undefined ? {} : { forceOutcome: outcome };
+};
 
 /* ── builders ─────────────────────────────────────────────────────────────────────────────── */
 
@@ -196,7 +216,7 @@ function idle(
           slam: false,
         },
         [{ type: 'SPIN_STARTED', roundId, stake: state.stake }],
-        [{ type: 'CALL_SPIN', request: { roundId, stake: state.stake } }],
+        [{ type: 'CALL_SPIN', request: { roundId, stake: state.stake, ...forced(context) } }],
       );
     }
 

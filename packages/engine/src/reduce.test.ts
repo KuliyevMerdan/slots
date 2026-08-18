@@ -530,3 +530,58 @@ describe('every phase answers every input', () => {
     expect(sessionOf(round.state)?.balance).toBe(settleRes({ totalWin: 500 }).balance);
   });
 });
+
+describe('the force-outcome hook', () => {
+  /**
+   * A development affordance, and the reason it is here rather than in the driver: the spin request
+   * is built in this file. Neither of its two gates is in this package — the client only supplies a
+   * provider behind `__DEV_TOOLS__`, and the server refuses the field outside dev mode.
+   */
+  it('puts the forced outcome on the spin request when a provider offers one', () => {
+    const { effects } = reduce(
+      IDLE,
+      { type: 'PRESS' },
+      {
+        newRoundId: () => ROUND_ID,
+        forceOutcome: () => ({ scenario: 'MAX_WIN' }),
+      },
+    );
+
+    expect(effects).toEqual([
+      {
+        type: 'CALL_SPIN',
+        request: { roundId: ROUND_ID, stake: STAKE, forceOutcome: { scenario: 'MAX_WIN' } },
+      },
+    ]);
+  });
+
+  /** Absent, not `undefined`: the field must not appear on the wire at all in an ordinary spin. */
+  it('leaves the field off entirely when the provider declines', () => {
+    const { effects } = reduce(
+      IDLE,
+      { type: 'PRESS' },
+      {
+        newRoundId: () => ROUND_ID,
+        forceOutcome: () => undefined,
+      },
+    );
+
+    const [effect] = effects;
+    expect(effect?.type).toBe('CALL_SPIN');
+    expect(Object.keys((effect as { request: object }).request)).toEqual(['roundId', 'stake']);
+  });
+
+  it('is consulted once per spin, so a one-shot provider forces exactly one round', () => {
+    let remaining = 1;
+    const context = {
+      newRoundId: () => ROUND_ID,
+      forceOutcome: () => (remaining-- > 0 ? ({ scenario: 'NEAR_MISS' } as const) : undefined),
+    };
+
+    const first = reduce(IDLE, { type: 'PRESS' }, context);
+    const second = reduce(IDLE, { type: 'PRESS' }, context);
+
+    expect(JSON.stringify(first.effects)).toContain('NEAR_MISS');
+    expect(JSON.stringify(second.effects)).not.toContain('NEAR_MISS');
+  });
+});

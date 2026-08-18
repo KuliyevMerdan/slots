@@ -53,11 +53,20 @@ export class ReelSet {
   readonly #reels: Reel[] = [];
   readonly #motions: ReelMotion[] = [];
   readonly #curve: SpinCurve;
+  readonly #cell: number;
+  readonly #symbolSize: number;
   readonly #strips: readonly (readonly string[])[];
   readonly #anticipationSymbol: string;
   readonly #anticipationTrigger: number;
   readonly #window = new Container();
   readonly #mask: Graphics;
+  /**
+   * Which rows are lit, per reel. Allocated once and mutated in place: the pulse runs every frame of
+   * a win presentation, and rebuilding five arrays a frame is exactly the kind of allocation the
+   * ticker rules exist to prevent.
+   */
+  readonly #lit: boolean[][] = [];
+  #emphasised = false;
   #spinning = false;
 
   constructor({
@@ -75,14 +84,17 @@ export class ReelSet {
     this.#curve = { ...DEFAULT_CURVE, ...curve };
     this.#anticipationSymbol = anticipationSymbol;
     this.#anticipationTrigger = anticipationTrigger;
+    this.#symbolSize = symbolSize;
 
     const cell = symbolSize + gap;
+    this.#cell = cell;
     strips.forEach((strip, index) => {
       const reel = new Reel({ strip, rows, atlas, symbolSize, gap });
       reel.view.x = index * cell;
       this.#reels.push(reel);
       this.#motions.push(parked(0));
       this.#window.addChild(reel.view);
+      this.#lit.push(new Array<boolean>(rows).fill(false));
       reel.update(0, false);
     });
 
@@ -108,6 +120,9 @@ export class ReelSet {
 
   /** Launch. The outcome is not known yet — that is the whole reason a spin has a cruise phase. */
   spin(slamRequested = false): void {
+    // Whatever the last round lit, the next spin starts clean. A payline still glowing over a
+    // spinning reel is the classic symptom of a presentation that was interrupted badly.
+    this.setEmphasis(null);
     this.#spinning = true;
     for (let reel = 0; reel < this.#motions.length; reel += 1) {
       this.#motions[reel] = startSpin(
@@ -146,6 +161,46 @@ export class ReelSet {
         slamRequested,
       );
     }
+  }
+
+  /**
+   * Light exactly these `[reel, row]` cells, or clear the emphasis with `null`.
+   *
+   * Called once per presentation step, not per frame. The positions come from the server's `wins[]`
+   * — the client highlights what it was told won, it does not work out what won.
+   */
+  setEmphasis(positions: readonly (readonly [number, number])[] | null): void {
+    for (const rows of this.#lit) rows.fill(false);
+
+    if (positions !== null) {
+      for (const [reel, row] of positions) {
+        const rows = this.#lit[reel];
+        if (rows !== undefined && row >= 0 && row < rows.length) rows[row] = true;
+      }
+    }
+
+    this.#emphasised = positions !== null;
+    this.pulse(0);
+  }
+
+  /** One frame of the win pulse. `phase` runs 0 → 1 → 0; nothing here allocates. */
+  pulse(phase: number): void {
+    for (let index = 0; index < this.#reels.length; index += 1) {
+      const reel = this.#reels[index];
+      if (reel === undefined) continue;
+      reel.emphasise(this.#emphasised ? (this.#lit[index] ?? null) : null, phase);
+    }
+  }
+
+  /** Turbo, and the compliance layer that will one day forbid it, both arrive through here. */
+  setCurve(curve: SpinCurve): void {
+    Object.assign(this.#curve, curve);
+  }
+
+  /** Where a cell's centre sits, in the reel area's own coordinates — payline geometry reads this. */
+  centreOf(reel: number, row: number): { x: number; y: number } {
+    const cell = this.#cell;
+    return { x: reel * cell + this.#symbolSize / 2, y: row * cell + this.#symbolSize / 2 };
   }
 
   /** The player pressed again: cut the waiting, keep the outcome. */

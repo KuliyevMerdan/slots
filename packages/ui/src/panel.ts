@@ -1,7 +1,7 @@
 import { Container, Graphics, Text, TextStyle } from 'pixi.js';
 import type { GameConfig, Minor } from '@slot/protocol';
 import { BetSelector } from './bet-selector.js';
-import { SpinButton } from './button.js';
+import { SpinButton, ToggleButton } from './button.js';
 import { Hud } from './hud.js';
 import { UI_FONT, UI_PALETTE } from './theme.js';
 
@@ -26,6 +26,10 @@ export interface PanelView {
   win: Minor | undefined;
   /** Shown under the button — free spins remaining, an error, a reconnect notice. */
   status: string;
+  /** Turbo is a presentation preference, so the client owns it and the panel only reflects it. */
+  turbo: boolean;
+  /** A jurisdiction may forbid turbo outright (C6); until then it is always available. */
+  canToggleTurbo: boolean;
 }
 
 export interface ControlPanelOptions {
@@ -35,12 +39,14 @@ export interface ControlPanelOptions {
   width?: number;
   onPress: () => void;
   onStakeChange: (stake: Minor) => void;
+  onToggleTurbo: (on: boolean) => void;
 }
 
 export class ControlPanel {
   readonly view = new Container();
   readonly button: SpinButton;
   readonly bet: BetSelector;
+  readonly turbo: ToggleButton;
   readonly hud: Hud;
 
   readonly #status: Text;
@@ -54,6 +60,7 @@ export class ControlPanel {
     width = 760,
     onPress,
     onStakeChange,
+    onToggleTurbo,
   }: ControlPanelOptions) {
     this.#width = width;
 
@@ -67,6 +74,7 @@ export class ControlPanel {
       onChange: onStakeChange,
     });
     this.button = new SpinButton({ onPress });
+    this.turbo = new ToggleButton({ label: 'TURBO', onToggle: onToggleTurbo });
 
     this.#status = new Text({
       text: '',
@@ -89,9 +97,20 @@ export class ControlPanel {
 
     this.bet.view.position.set(24, barTop + (barHeight - this.bet.height) / 2);
     this.button.view.position.set(width / 2, barTop + barHeight / 2);
+    this.turbo.view.position.set(
+      width - 24 - this.turbo.width,
+      barTop + (barHeight - this.turbo.height) / 2,
+    );
     this.#status.position.set(width / 2, barTop + barHeight + 10);
 
-    this.view.addChild(this.hud.view, this.#plate, this.bet.view, this.button.view, this.#status);
+    this.view.addChild(
+      this.hud.view,
+      this.#plate,
+      this.bet.view,
+      this.button.view,
+      this.turbo.view,
+      this.#status,
+    );
   }
 
   get width(): number {
@@ -108,6 +127,8 @@ export class ControlPanel {
     this.button.enabled = model.canPress;
     this.bet.enabled = model.canChangeStake;
     this.bet.stake = model.stake;
+    this.turbo.on = model.turbo;
+    this.turbo.enabled = model.canToggleTurbo;
     this.hud.balance.amount = model.balance;
 
     if (model.win === undefined) {

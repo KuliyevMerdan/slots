@@ -4,27 +4,32 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-> ⚠️ **The game renders, spins and pays — against a simulator you can make fail on demand.** As of
-> **2026-08-18**, **C0, C1, S0, S1, C2, S2 and C3 have landed**: the workspace (pnpm + Turborepo,
-> strict TypeScript, enforced dependency boundaries, purity rules, CI), the contracts everything
-> reads — `protocol`, `money`, `game-math` — `rgs-sim`, the pure simulator core, the `RgsTransport`
-> seam with `MockTransport`, `HttpTransport` and the retry policy, `engine`, the headless round FSM,
-> `apps/mock-rgs`, the Fastify wrapper that puts the simulator on a real socket, and now `renderer`,
-> `ui` and `apps/game-client` — reels on screen, the five-stage spin curve, a pooled symbol layer and
-> a control panel. 497 tests, `pnpm check` green. Three `packages/*` remain scaffolded and empty —
-> `platform`, `compliance`, `dev-tools` — and each `src/index.ts` names the block that fills it.
+> ⚠️ **The game renders, spins, pays and can be mashed through.** As of **2026-08-18**, **C0, C1,
+> S0, S1, C2, S2, C3 and C4 have landed**: the workspace (pnpm + Turborepo, strict TypeScript,
+> enforced dependency boundaries, purity rules, CI), the contracts everything reads — `protocol`,
+> `money`, `game-math` — `rgs-sim`, the pure simulator core, the `RgsTransport` seam with
+> `MockTransport`, `HttpTransport` and the retry policy, `engine`, the headless round FSM,
+> `apps/mock-rgs`, the Fastify wrapper that puts the simulator on a real socket, and `renderer`, `ui`
+> and `apps/game-client` — reels, the five-stage spin curve, a pooled symbol layer, payline
+> highlighting, a tiered big-win counter, turbo, and skip-anything. 531 tests, `pnpm check` green.
+> Three `packages/*` remain scaffolded and empty — `platform`, `compliance`, `dev-tools` — and each
+> `src/index.ts` names the block that fills it.
 >
 > **`pnpm dev:client` opens a playable slot.** It authenticates, spins, lands on the server's
-> `stops[]`, settles, and survives a reload mid-round because the in-process simulator persists to
-> `localStorage`. Point it at `apps/mock-rgs` with one environment variable and the same client plays
-> the same game over HTTP — [`tests/http.test.ts`](tests/http.test.ts) asserts the two paths produce
-> equal responses field for field, and the spin curve's landing is proven stop by stop in
-> [`curve.test.ts`](packages/renderer/src/curve.test.ts).
+> `stops[]`, lights the paylines it was told won, counts the win up and settles — and survives a
+> reload mid-round, because the in-process simulator persists to `localStorage`. Point it at
+> `apps/mock-rgs` with one environment variable and the same client plays the same game over HTTP.
 >
-> **What is deliberately not there yet:** a win presentation (paylines light up in **C4**; today the
-> stage holds for a beat and reports itself done), feature screens (**C5**), audio and i18n (**C6**),
-> the debug panel (**C7**), and any measured performance numbers (**C7**). The next block is **C4**,
-> with **S3** (the contract suite) and **S4** (the RTP report) available in parallel.
+> **The interruption contract is real and tested.** [`tests/mash.test.ts`](tests/mash.test.ts) plays
+> a hundred and twenty rounds through the real engine, the real transport, the real simulator and the
+> real renderer while pressing the button at random — mid-spin, mid-count-up, mid-feature — and
+> asserts the client's balance equals the server's after **every** round, including a forced max win
+> mashed from the first frame to the last.
+>
+> **What is deliberately not there yet:** feature screens (**C5** — the intro and outro are still a
+> hold), audio and i18n (**C6**), the debug panel (**C7**), and any measured performance numbers
+> (**C7**). The next block is **C5**, with **S3** (the contract suite) and **S4** (the RTP report)
+> available in parallel.
 >
 > The canon is four documents: `CLAUDE.md` (this file), [`ROADMAP.md`](ROADMAP.md) (the task map),
 > [`RECOMMENDATIONS.md`](RECOMMENDATIONS.md) (the strategic registry) and
@@ -248,7 +253,10 @@ and one option that is load-bearing rather than cosmetic. `dist/` is **`doNotFol
 deleted the edge from the graph and the rule fired only while the import was **undeclared** and
 therefore unresolvable. Adding the dependency to `package.json` first — the normal way anyone
 introduces one — made the boundary silently stop being enforced. `doNotFollow` keeps the edge and
-declines to cruise what is behind it.
+declines to cruise what is behind it. The Pixi ban had the **same** shape of hole — it matched
+`^pixi\.js`, the *unresolved* spelling — so it too fired only while the import was undeclared, and
+went quiet the moment the package was added to a `package.json`. It now matches any path segment.
+Both holes were found by a fixture failing, which is the argument for having fixtures.
 
 **`engine` importing Pixi must fail CI.** That single rule is what keeps the engine unit-testable
 without a canvas, and it is the strongest structural signal a reviewer will read. Which is why the
@@ -449,10 +457,36 @@ frame. Real art replaces this file and nothing else.
 - Target **60 fps on a mid-range Android**. The trace and the numbers are **C7**; nothing here claims
   them yet.
 
-`@slot/ui` is the control surface: spin button, bet selector, balance/win HUD. It takes a **view
-model, not an engine** — `ui → protocol, money` is the whole dependency list — so the client maps
-phases onto `PanelView` and the interruption contract stays in the engine where it is tested. Two
-rules hold throughout: the HUD **never computes money** (every number it shows arrived from the
+**The win presentation is a `Timeline`, and that is the whole interruption story.** A sequence of
+steps with durations, built from the server's `wins[]`: the total counts up over every winning cell,
+a tiered win gets a banner and a hold, then each win is shown in turn with its payline drawn and its
+own amount, and a final zero-length step puts the screen back exactly as it was found. `complete()`
+runs every remaining step *to its end, in order* — so a skip lands the counter on the final number
+and clears every highlight, rather than freezing a presentation half-lit over the next spin.
+[`timeline.test.ts`](packages/renderer/src/timeline.test.ts) asserts that directly: two identical
+timelines, one played and one completed, produce the same trace.
+
+Three details worth knowing:
+
+- **Tiers are multiples of the stake** ([`tiers.ts`](packages/renderer/src/tiers.ts)) — NICE at 5×,
+  BIG at 15×, MEGA at 50× — compared with integer arithmetic, so a win one minor unit short of a tier
+  does not round into it. An absolute threshold would make the same banner a formality at the top bet
+  and unreachable at the bottom.
+- **The per-win cycle has a budget, not a per-win duration.** A max-win screen can pay twenty lines,
+  and twenty × 700 ms is a slideshow the player mashes through — so many wins become a rhythm and a
+  few still get their beat each.
+- **One counter, two readouts.** The rolling amount is published by the presentation and the client
+  feeds it to the HUD, so the number in the banner and the number under `WIN` cannot disagree.
+
+**Turbo is one switch** — `scaleCurve` shortens every duration in the spin curve and the same factor
+scales the presentation. Speed, overshoot and the blur threshold are untouched, because turbo should
+shorten a spin rather than hand the player a different game; and when the compliance layer (C6)
+forbids turbo in a jurisdiction there is exactly one thing for it to refuse.
+
+`@slot/ui` is the control surface: spin button, bet selector, turbo toggle, balance/win HUD. It takes
+a **view model, not an engine** — `ui → protocol, money` is the whole dependency list — so the client
+maps phases onto `PanelView` and the interruption contract stays in the engine where it is tested.
+Two rules hold throughout: the HUD **never computes money** (every number it shows arrived from the
 server), and the stake is always one of `GameConfig.betLevels`.
 
 ### The client — `apps/game-client`
@@ -470,11 +504,15 @@ take, and maps engine phases onto a button label.
   server never has to hand out `Access-Control-Allow-Origin: *`.
 - **`roundId` is minted here, as a UUIDv7** — the client-side key that makes a retry provably the same
   round. The engine takes it as an injected factory because a pure package may not reach for `crypto`.
-- **Both dev gates are wired.** `__ASSERT_MATH__` compares the server's `view` against its own
-  `stops` *and* the grid actually drawn against the grid the server sent, screaming into the console
-  on either mismatch; `__DEV_TOOLS__` currently exposes `window.__slot` for the console and is what
-  C7's debug panel will hang off. Both are `define`d to literal booleans, so a production build
-  contains neither the flag nor the code behind it.
+- **Both dev gates are wired.** `__ASSERT_MATH__` runs three checks — the server's `view` against its
+  own `stops`, the grid actually drawn against the grid the server sent, and (as of C4) the server's
+  `wins[]` **re-evaluated with the local paytable** — screaming into the console on any mismatch. The
+  third is the expensive one to be missing: it catches a client whose shipped paytable has drifted
+  from the one the server is paying on, which would light a win the player was not paid.
+  `__DEV_TOOLS__` exposes `window.__slot`, including `force('MAX_WIN')` — a one-shot forced outcome
+  for the next spin, which is how a win presentation is developed at all rather than waited for.
+  Both flags are `define`d to literal booleans, so a production build contains neither the flag nor
+  the code behind it, and the server refuses `forceOutcome` outside dev mode regardless.
 - The loading state is DOM rather than canvas, because it has to be visible before Pixi, the atlas or
   the session exist — and if the boot fails it says why, in words, instead of leaving a black
   rectangle. The 18+/demo notice sits under the canvas on every screen.
@@ -673,6 +711,7 @@ shape.
 | --- | --- | --- |
 | **Unit** | beside the code, Vitest | Pure logic: evaluator (golden-file grids), money arithmetic, FSM transitions, **the spin curve** |
 | **Renderer, headless** | `packages/renderer`, `packages/ui` | Pixi's scene graph is ordinary JavaScript until something draws: with a faked atlas, the stage's whole event contract runs in Node (`config/vitest.pixi.ts` stubs the two globals Pixi reads on import) |
+| **Mash** | `tests/mash.test.ts` | 120 rounds through the real engine, transport, simulator **and renderer**, pressing at random — the client's balance equals the server's after every round |
 | **Engine soak** | `tests/soak.test.ts` | 1,000 seeded rounds incl. features, retries and disconnects, with **no state violations** |
 | **Transport parity** | `tests/http.test.ts` | One round through `MockTransport` and through `HttpTransport`, against identically seeded simulators, **equal field for field** |
 | **Contract** | one suite, three targets | `rgs-sim` in-process · sim over HTTP · `apps/rgs` — the switch-over gate |
@@ -777,29 +816,26 @@ made visible:_
 
 **Client — implied by the domain, built by no block**
 
-- **Nothing in the client can force an outcome.** The simulator honours `forceOutcome` in dev mode
-  and `rgs-sim` ships four named scenarios, but the engine builds every spin request without the
-  field and no UI can set it — so a feature, a near miss or a max win can only be reached by waiting
-  for one. C4 and C5 are about presenting exactly those, which makes the debug panel (C7) a
-  dependency of *developing* them rather than a nicety after them. Either bring the force-outcome
-  control forward or accept that C4/C5 are demoed by luck.
 - **Autoplay does not exist, yet the UK preset disables it.** Every real slot has autoplay, the
   compliance work (C6) assumes it, and no block builds it — including the loss/win-limit stop
   conditions regulators actually care about. Either schedule it or state in the README that it is out
   of scope; the current position is an inconsistency.
 - **No game history / "last rounds" surface.** Regulated markets require a player-visible round
   history, and `roundId` + the persisted round state already make it nearly free.
-- **A capped max win is a status line, not a presentation.** `SettleRes.capped` now reaches the
-  player as the words `MAXIMUM WIN REACHED` under the button, which is better than silence and is not
-  what a regulated market means by telling them. C4 sequences the win presentation from
-  `result.wins` — which will happily count up to a number the player is not paid — so the real
-  treatment belongs there.
-- **Accessibility is unaddressed, and now concretely so.** The reels spin with no
-  `prefers-reduced-motion` path — the spin curve has no reduced variant and the loading spinner only
-  slows down — the symbol set is distinguished by colour *and* glyph but win highlighting (C4) is
-  implied to be colour-only, and a canvas game has no screen-reader story at all: the balance and win
-  are pixels, not an announced region. The HTML shell is the obvious place for a live region, and the
-  curve already takes its timings as data, so neither fix is large. Both are unscheduled.
+- **A capped max win counts up to a number the player is not paid.** The presentation rolls to
+  `result.totalWin`, and `settle` may credit less because `limits.maxWin` clipped it — after which the
+  status line reads `MAXIMUM WIN REACHED` and the balance moves by the smaller figure. The counter,
+  the banner and the credit should agree; today the first two are the round's win and the third is
+  the capped one. The fix needs the cap on the way *in* (the server knows at spin time whether the
+  round will clip) or a presentation that counts to the credited amount, and it is a wire question
+  before it is a rendering one.
+- **Accessibility is unaddressed, and every block makes it more concrete.** There is no
+  `prefers-reduced-motion` path: the reels spin, the winning symbols pulse and a big win flashes a
+  banner, none of which has a reduced variant — and the timings are all data, so one would be cheap.
+  Win highlighting is a ring plus a dim, which happens to survive colour blindness, but nothing
+  verifies that. And a canvas game still has no screen-reader story at all: the balance, the win and
+  the phase are pixels, not an announced region, though the HTML shell is right there to hold one.
+  All of it is unscheduled.
 - **A `FATAL` error is reported to nobody.** The debug panel exports an event log *locally*; there is
   no telemetry seam, so a schema mismatch in a deployed build is invisible. The fix is a `Telemetry`
   port with a console adapter, called from the error boundary and the FSM's illegal-transition path —
