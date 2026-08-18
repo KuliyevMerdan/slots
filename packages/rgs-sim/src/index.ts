@@ -14,6 +14,8 @@ export * from './store.js';
 export * from './state.js';
 export * from './config.js';
 export * from './outcome.js';
+export * from './scenarios.js';
+export * from './faults.js';
 export * from './errors.js';
 export * from './sim.js';
 export * from './server.js';

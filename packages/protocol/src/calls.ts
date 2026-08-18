@@ -136,3 +136,14 @@ export const CALLS = {
 export type CallName = keyof typeof CALLS;
 
 export const CALL_NAMES = Object.keys(CALLS) as [CallName, ...CallName[]];
+
+/**
+ * The request and response type of a call, by name.
+ *
+ * Derived from the same table the routing and validation read, so a generic caller — the simulator's
+ * dispatcher, `MockTransport`, the contract suite — stays typed without any of them re-declaring the
+ * mapping. Three hand-written copies of "spin returns SpinRes" is three chances to drift.
+ */
+export type CallRequest<N extends CallName> = z.infer<(typeof CALLS)[N]['req']>;
+
+export type CallResponse<N extends CallName> = z.infer<(typeof CALLS)[N]['res']>;

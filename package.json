@@ -11,16 +11,19 @@
     "build": "turbo run build",
     "typecheck": "tsc -p tsconfig.json && turbo run typecheck",
     "test": "turbo run test",
-    "test:boundaries": "vitest run",
     "lint": "eslint . && pnpm run lint:boundaries",
     "lint:boundaries": "depcruise packages --config .dependency-cruiser.cjs",
-    "check": "pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run test:boundaries && pnpm run build && pnpm run format:check",
+    "check": "pnpm run lint && pnpm run build && pnpm run typecheck && pnpm run test && pnpm run test:root && pnpm run format:check",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "prepare": "husky"
+    "prepare": "husky",
+    "test:root": "vitest run"
   },
   "devDependencies": {
     "@eslint/js": "^9",
+    "@slot/protocol": "workspace:*",
+    "@slot/rgs-sim": "workspace:*",
+    "@slot/transport": "workspace:*",
     "@types/node": "^20",
     "dependency-cruiser": "^16",
     "eslint": "^9",

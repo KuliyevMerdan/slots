@@ -4,17 +4,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-> ⚠️ **The contracts and the server exist; the game does not.** As of **2026-08-18**, **C0, C1 and
-> S0 have landed**: the workspace (pnpm + Turborepo, strict TypeScript, enforced dependency
+> ⚠️ **The contracts and the server exist; the game does not.** As of **2026-08-18**, **C0, C1, S0
+> and S1 have landed**: the workspace (pnpm + Turborepo, strict TypeScript, enforced dependency
 > boundaries, purity rules, CI), the three packages everything else reads — `protocol`, `money`,
-> `game-math` — and `rgs-sim`, the pure simulator core that decides outcomes. 251 tests,
-> `pnpm check` green. The other seven `packages/*` are scaffolded and empty; each `src/index.ts`
-> names the block that fills it.
+> `game-math` — `rgs-sim`, the pure simulator core that decides outcomes and can be made to fail on
+> demand, and the `RgsTransport` seam with `MockTransport` behind it. 317 tests, `pnpm check` green.
+> The other six `packages/*` are scaffolded and empty; each `src/index.ts` names the block that
+> fills it.
 >
-> **Nothing renders yet.** There is no Pixi and no client. The simulator plays a complete round —
-> seeded, idempotent, persisted — but only a test harness has ever called it. The next block is
-> **S1** (fault injection, force-outcome scenarios, `MockTransport`), with **C2** (engine +
-> transport) behind it.
+> **Nothing renders yet.** There is no Pixi and no client. A complete round can be played through
+> the real seam — `tests/wiring.test.ts` does exactly that, including a lost response recovered by
+> retrying the same `roundId` — but nothing draws it. The next block is **C2** (the engine FSM, and
+> the transport's timeout/backoff/retry policy), with **S2** (`apps/mock-rgs`) available in
+> parallel.
 >
 > The canon is four documents: `CLAUDE.md` (this file), [`ROADMAP.md`](ROADMAP.md) (the task map),
 > [`RECOMMENDATIONS.md`](RECOMMENDATIONS.md) (the strategic registry) and
@@ -64,7 +66,8 @@ win set matches — a mismatch is a loud console error. **Presentation logic, no
 ### Packages
 
 `pnpm` workspaces + Turborepo. Scope is `@slot/*`. A ✅ in the **Block** column means the package is
-real; everything else is scaffolded and empty, and the block named is the commitment.
+real, ◐ means partly built with the named block finishing it; everything else is scaffolded and
+empty, and the block named is the commitment.
 
 | Package             | Path                 | Role                                                     | Block |
 | ------------------- | -------------------- | -------------------------------------------------------- | ----- |
@@ -78,7 +81,7 @@ real; everything else is scaffolded and empty, and the block named is the commit
 | `@slot/renderer`    | `packages/renderer`  | Pixi layer: reels, symbols, effects                       | C3    |
 | `@slot/ui`          | `packages/ui`        | Pixi UI: buttons, bet selector, HUD, modals               | C3    |
 | `@slot/rgs-sim`     | `packages/rgs-sim`   | ★ Mock server core (pure — runs in a browser or in Node)  | ✅ S0 |
-| `@slot/transport`   | `packages/transport` | `RgsTransport` interface + Mock/Http implementations      | C2    |
+| `@slot/transport`   | `packages/transport` | `RgsTransport` interface + Mock/Http implementations      | ◐ S1  |
 | `@slot/platform`    | `packages/platform`  | Audio, storage, visibility, safe-area, device capabilities | C6   |
 | `@slot/compliance`  | `packages/compliance`| Jurisdiction rules, reality check, session/loss/stake limits | C6  |
 | `@slot/dev-tools`   | `packages/dev-tools` | Debug panel, event log, force-outcome UI                  | C7    |
@@ -144,12 +147,12 @@ pnpm check
 
 | Command                | What it does                                                                        |
 | ---------------------- | ----------------------------------------------------------------------------------- |
-| `pnpm check`           | lint → typecheck → test → rule fixtures → build → format check. **What CI runs.**    |
+| `pnpm check`           | lint → build → typecheck → test → root suites → format check. **What CI runs.**      |
 | `pnpm lint`            | ESLint (incl. the purity rules) **and** the dependency-boundary rules                |
 | `pnpm lint:boundaries` | `dependency-cruiser` over `packages/` — the dependency table, enforced               |
 | `pnpm typecheck`       | Root suites + `turbo run typecheck` across every package                             |
 | `pnpm test`            | `turbo run test` — unit tests (Vitest) per package                                   |
-| `pnpm test:boundaries` | Proves the boundary and purity rules actually fire (`config/fixtures/`)              |
+| `pnpm test:root`       | Root suites: the boundary and purity rules actually fire, and the sim/transport seam wires up |
 | `pnpm build`           | `turbo run build` with `^build` ordering, `dist/` per package                        |
 | `pnpm format`          | Prettier write (code and config; the hand-wrapped Markdown canon is left alone)      |
 | `pnpm dev`             | Client + `mock-rgs` in watch mode — the one dev command _(C3 · S2)_                  |
@@ -204,8 +207,10 @@ real home directory.
   for tests (same transform pipeline).
 - **Zod lives in `protocol`** — one definition produces both the compile-time type and the runtime
   validator, used on **both sides of the wire**.
-- **CI** (`.github/workflows/ci.yml`) runs lint → typecheck → test → rule fixtures → build → format
-  on every push and PR. Keep it green; it is what enforces the block discipline.
+- **CI** (`.github/workflows/ci.yml`) runs lint → build → typecheck → test → root suites → format
+  on every push and PR. The build comes before the typecheck because packages resolve each other
+  through `dist/`, and the root suites read those declarations too. Keep it green; it is what
+  enforces the block discipline.
 
 ### Dependency rules — enforced, not suggested
 
@@ -369,12 +374,27 @@ the industry.
 
 ### Transport — `packages/transport`
 
-`RgsTransport` is the seam. It owns **timeout, retry with exponential backoff, and the mapping of
-failures onto the error taxonomy** — the engine sees classified errors, never raw network noise.
-Retries always reuse the same `roundId`, which is what makes them safe.
+`RgsTransport` is the seam: four async methods, one per call. The client depends on this interface
+and on `@slot/protocol`, never on a server implementation, which is what makes swapping the
+simulator for a real RGS a change of which object is constructed at boot.
 
-Implementations: `MockTransport` (calls `rgs-sim` in-process — dev default) and `HttpTransport`
-(`apps/mock-rgs` today, the real RGS later, distinguished by one base URL).
+`MockTransport` (**S1**) is the dev default and is deliberately thin — the backend decides what
+happens to a call, including how long it takes and whether it is answered at all, and this enacts
+it. A dropped response becomes a promise that **never settles**, because that is what a hard
+disconnect looks like to a caller; turning it into a `TIMEOUT` is the retry layer's job, and doing
+it here would make the transport useless for testing the retry layer.
+
+**It does not import `@slot/rgs-sim`.** The dependency table says `transport → protocol` and nothing
+else, so the in-process backend is an injected structural interface (`InProcessBackend`) that
+`SimServer` happens to satisfy — the same reasoning as [ADR-0003](docs/adr/ADR-0003-injected-persistence-port.md),
+and the reason `mock.test.ts` can drive the whole thing with a twenty-line fake. Neither package can
+test that the two actually meet, so [`tests/wiring.test.ts`](tests/wiring.test.ts) does it at the
+root — standing in for `apps/game-client`, and the seed of the contract suite (S3).
+
+Still owed (**C2**): **timeout, exponential-backoff retry reusing the same `roundId`, and the
+mapping of raw network failures onto the error taxonomy**, so the engine sees classified errors and
+never raw noise. Plus `HttpTransport` (`apps/mock-rgs` today, the real RGS later, distinguished by
+one base URL).
 
 ### The simulator is the spec — `packages/rgs-sim`
 
@@ -421,12 +441,30 @@ What it does today (**S0**):
   *before* any other validation, so a tampered request never learns anything else. Explicit `stops[]`
   work in dev mode; the named scenarios are S1.
 
-Still owed (**S1–S2**):
+And since **S1**:
 
-- **Fault injection**, toggleable at runtime from the debug panel: fixed/jittered latency, per-class
-  error rates, hard disconnect mid-round, slow responses (to exercise the spin timeout). Until it
-  exists, the sim has no producer for the `RECOVERABLE` class at all.
-- **Named force-outcome scenarios** — `NEAR_MISS`, `FREE_SPINS_TRIGGER`, `MAX_WIN`, `DEAD_SPIN`.
+- **Named force-outcome scenarios** (`scenarios.ts`) — `NEAR_MISS`, `FREE_SPINS_TRIGGER`, `MAX_WIN`,
+  `DEAD_SPIN`, every one of them *found on the actual strips* rather than hard-coded, so an S4
+  re-tune cannot leave them pointing at whatever symbol moved. `MAX_WIN` is coordinate ascent over
+  the real payout, which matters more than it sounds: the first version maximised "high symbols
+  visible per reel" and lost to an ordinary spin, because a payline needs its symbol on a
+  *particular row* and because five scatters pay more than any line on this paytable.
+- **Fault injection** (`faults.ts`) — latency, jitter, a slow-response rate, per-code error rates
+  and a **dropped response**. Toggleable at runtime (`setFaults`) and **seeded**: the verdict is a
+  pure function of the server seed and the call number, so a faulty session replays down to which
+  call failed. A bug you cannot re-run is a bug you do not fix.
+
+The fault model's one real idea: **a `FAIL` is decided before the handler runs and a `DROP` after
+it.** A rejected call never happened, so a retry is a fresh attempt; a dropped call *did* happen and
+left a debited round nobody has seen, so a retry with the same key must replay it. The second is the
+scenario the whole idempotency design exists for, and it is now producible on demand.
+
+The sim can neither sleep nor hang, so `deliver()` returns the verdict as data — `DELIVER` /
+`REJECT` / `DROP` plus a delay — and the caller enacts it. `MockTransport` does that in-process
+today; `apps/mock-rgs` (S2) will do it to an HTTP response. One policy, two enactments.
+
+Still owed (**S2**):
+
 - **`apps/mock-rgs`** — the Fastify wrapper that proves the network path.
 
 ### The future backend — `apps/rgs`
@@ -525,6 +563,10 @@ made visible:_
 
 **Workspace & tooling**
 
+- **The seam is proven in-process only.** `tests/wiring.test.ts` shows `SimServer` and
+  `MockTransport` meeting and a full round surviving a lost response — but it is one hand-written
+  file at the root, not the suite S3 promises: *one* suite run against three targets. Until that
+  exists, "swap the transport URL" is a claim demonstrated against exactly one implementation.
 - **Four packages have no boundary rule.** The dependency table covers `protocol`, `money`,
   `game-math`, `engine`, `rgs-sim`, `transport`, `renderer` and `ui` — so `platform`, `compliance`,
   `dev-tools` and `game-client` are unconstrained: today nothing stops `compliance` importing Pixi or
@@ -533,6 +575,10 @@ made visible:_
 
 **Simulator (`packages/rgs-sim`) — behaviour the real RGS will have to earn**
 
+- **A dropped response hangs forever, by design, and nothing yet ends the wait.** `MockTransport`
+  models a lost response as a promise that never settles, which is honest — but the timeout that
+  turns it into a `TIMEOUT` is C2's, so today a `dropRate` above zero will hang any caller that is
+  not racing its own timer. The fault is usable; the recovery around it is not built.
 - **The sim cannot produce an `OPEN` round with no feature.** docs/protocol.md §5 defines that
   recovery case — "the spin was debited but never resolved" — and the in-process sim has no window
   in which it can happen: a handler is synchronous, so debit and resolve land in the same call.

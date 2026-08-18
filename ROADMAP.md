@@ -17,11 +17,14 @@ Check items off as they land. **Every block follows the house pattern:**
 
 **C0 landed 2026-08-16** (workspace, strict TS, enforced boundaries, purity rules, CI, ADR-0001),
 **C1 landed 2026-08-17** (`protocol`, `money`, `game-math` — the contracts everything downstream
-reads) and **S0 landed 2026-08-18** (`rgs-sim` — the pure core that decides outcomes: seeded PRNG,
-the round machine, idempotency, persistence, ADR-0003). 251 tests green.
+reads), **S0 landed 2026-08-18** (`rgs-sim` — the pure core that decides outcomes: seeded PRNG, the
+round machine, idempotency, persistence, ADR-0003) and **S1 landed 2026-08-18** (fault injection,
+the named force-outcome scenarios, and the `RgsTransport` seam with `MockTransport`). 317 tests
+green.
 
-**Next is S1**, which gives the sim a way to fail on demand and wires `MockTransport` — C2 gates on
-it, because the engine needs something to talk to *and* something to recover from.
+**Next is C2** — the engine FSM, and the transport policy the seam is still missing: timeout,
+exponential-backoff retry on the same `roundId`, and resume from `pendingRound`. **S2**
+(`apps/mock-rgs`) can run in parallel; it needs nothing C2 produces.
 
 ---
 
@@ -43,7 +46,7 @@ contract suite. `#` maps each block back to the phase numbering of the original 
 | **C7** | Dev tools + performance pass | C5, S1 | 8 | ☐ |
 | **C8** | Packaging — deploy, README, Playwright E2E in CI | C6, C7, S4 | 9 | ☐ |
 | **S0** | `rgs-sim` pure core — PRNG, round machine, idempotency, persistence | C1 | 2 | ✅ (landed 2026-08-18) |
-| **S1** | Fault injection + force outcome + `MockTransport` | S0 | 2 | ☐ |
+| **S1** | Fault injection + force outcome + `MockTransport` | S0 | 2 | ✅ (landed 2026-08-18) |
 | **S2** | `apps/mock-rgs` — Fastify wrapper, the real network path | S0 | 2 | ☐ |
 | **S3** | The contract suite — one suite, three targets. **The switch-over gate** | S2, R0 | 2 | ☐ |
 | **S4** | `tools/math-sim` — RTP / hit frequency / volatility report | S0 | 8 | ☐ |
@@ -317,19 +320,27 @@ package; 251 across the workspace.
 
 ## Block S1 — Fault injection & force outcome
 
-- [ ] Runtime-toggleable fault injection: fixed/jittered latency (e.g. 80 ms ± 200 ms), per-class
-      error rates, hard disconnect mid-round, slow response (to exercise the client's spin timeout).
-- [ ] Force outcome: the named scenarios — `NEAR_MISS`, `FREE_SPINS_TRIGGER`, `MAX_WIN`,
-      `DEAD_SPIN`. Explicit `stops[]` already works; the scenarios need an outcome search, and the
-      sim refuses them by name until it exists rather than ignoring the field.
+- [x] Runtime-toggleable fault injection: fixed/jittered latency, per-code error rates, a dropped
+      response (the server did the work, the answer vanished) and a slow-response rate. Seeded, so a
+      faulty session replays down to which call failed.
+- [x] Force outcome: the named scenarios — `NEAR_MISS`, `FREE_SPINS_TRIGGER`, `MAX_WIN`,
+      `DEAD_SPIN` — each found on the real strips rather than hard-coded, so an S4 re-tune cannot
+      strand them.
 - [x] **Server-side dev-mode gate on `forceOutcome`** — landed with S0, along with the test that a
       production-mode server refuses a hand-crafted request carrying the field, and the one that
       proves the refusal comes *before* any other validation. The stripped client can no longer send
       it, which is exactly why nothing else would catch a regression there.
-- [ ] `MockTransport` wired so `apps/game-client` can run against the sim in-process at zero latency.
+- [x] `MockTransport` wired so `apps/game-client` can run against the sim in-process at zero
+      latency — driving an injected `InProcessBackend`, because `transport` may only depend on
+      `protocol`. `tests/wiring.test.ts` stands in for the client until C3 builds it.
 
 **Done when:** the client can be made to fail, hang and disconnect on demand, and each path lands in
-the right error class.
+the right error class. ✅ All three, through the real seam — including a lost response recovered by
+re-authenticating and retrying the same `roundId` for one debit. 317 tests across the workspace.
+
+_Left to C2, which owns the policy side of the seam: timeout, exponential-backoff retry, and the
+mapping of raw network failures onto the taxonomy. Until it lands, a non-zero `dropRate` hangs any
+caller that is not racing its own timer._
 
 ## Block S2 — `apps/mock-rgs`
 

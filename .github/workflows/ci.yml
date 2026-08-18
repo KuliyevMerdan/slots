@@ -28,17 +28,19 @@ jobs:
       - name: Lint (incl. dependency boundaries)
         run: pnpm run lint
 
+      # Before typecheck and the root suites: packages resolve each other through dist/, so both
+      # read declarations that only exist once the workspace has been built.
+      - name: Build
+        run: pnpm run build
+
       - name: Typecheck
         run: pnpm run typecheck
 
       - name: Unit tests
         run: pnpm run test
 
-      - name: Boundary rules fire
-        run: pnpm run test:boundaries
-
-      - name: Build
-        run: pnpm run build
+      - name: Root suites (boundary rules fire, purity rules fire, the seam is wired)
+        run: pnpm run test:root
 
       - name: Formatting
         run: pnpm run format:check

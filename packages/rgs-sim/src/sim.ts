@@ -28,6 +28,7 @@ import {
   spinOutcome,
   toRoundResult,
 } from './outcome.js';
+import { scenarioStops } from './scenarios.js';
 import type { SimOutcome, SimRound, SimState } from './state.js';
 import { findOpenRound, findRound, withRound } from './state.js';
 
@@ -90,12 +91,24 @@ const rejected = <T>(
 type ForcedStops =
   { readonly ok: true; readonly stops: number[] } | { readonly ok: false; readonly reason: string };
 
-const resolveForceOutcome = (config: GameConfig, force: ForceOutcome): ForcedStops => {
+const resolveForceOutcome = (
+  config: GameConfig,
+  force: ForceOutcome,
+  seed: string,
+): ForcedStops => {
   if (!('stops' in force)) {
-    // Named scenarios (`NEAR_MISS`, `MAX_WIN`, …) need an outcome search, which is block S1. The sim
-    // refuses rather than silently ignoring the field: a debug panel that thinks it forced an
-    // outcome and did not is worse than one that is told no.
-    return { ok: false, reason: `force scenario '${force.scenario}' is not implemented until S1` };
+    try {
+      return { ok: true, stops: scenarioStops(config, force.scenario, seed) };
+    } catch (cause) {
+      // A scenario that cannot be built on these strips is a math problem, not a client one — say
+      // which scenario and why rather than returning a screen that does not match its name.
+      return {
+        ok: false,
+        reason: `scenario '${force.scenario}' cannot be built on these strips: ${
+          cause instanceof Error ? cause.message : String(cause)
+        }`,
+      };
+    }
   }
 
   if (force.stops.length !== config.reels) {
@@ -174,6 +187,8 @@ export function spin(state: SimState, request: SpinReq, context: SimContext): Si
     request.forceOutcome ?? null,
   ]);
 
+  const spinSeed = deriveSpinSeed(next.serverSeed, request.roundId, request.clientSeed, 0);
+
   // Idempotency first, before any validation: a retry of a round that already happened must replay
   // it, not re-litigate whether it should have been allowed. A stake that has since fallen outside
   // the limits does not retroactively un-spin a spin the player already saw.
@@ -200,7 +215,7 @@ export function spin(state: SimState, request: SpinReq, context: SimContext): Si
         request.roundId,
       );
     }
-    const resolution = resolveForceOutcome(config, request.forceOutcome);
+    const resolution = resolveForceOutcome(config, request.forceOutcome, spinSeed);
     if (!resolution.ok) {
       return rejected(next, 'FORCE_OUTCOME_REFUSED', resolution.reason, request.roundId);
     }
@@ -221,10 +236,9 @@ export function spin(state: SimState, request: SpinReq, context: SimContext): Si
     );
   }
 
-  const seed = deriveSpinSeed(next.serverSeed, request.roundId, request.clientSeed, 0);
   const outcome =
     forced === undefined
-      ? spinOutcome(config, seed, request.stake)
+      ? spinOutcome(config, spinSeed, request.stake)
       : resolveStops(config, forced, request.stake);
 
   const features = baseFeatures(outcome.scatters);
@@ -317,6 +331,7 @@ export function featureSpin(
   }
 
   const fingerprint = canonical([request.forceOutcome ?? null]);
+  const stepSeed = deriveSpinSeed(next.serverSeed, request.roundId, round.clientSeed, request.step);
   const recorded = round.steps[request.step - 1];
   if (recorded !== undefined) {
     if (recorded.fingerprint !== fingerprint) {
@@ -361,19 +376,18 @@ export function featureSpin(
         request.roundId,
       );
     }
-    const resolution = resolveForceOutcome(config, request.forceOutcome);
+    const resolution = resolveForceOutcome(config, request.forceOutcome, stepSeed);
     if (!resolution.ok) {
       return rejected(next, 'FORCE_OUTCOME_REFUSED', resolution.reason, request.roundId);
     }
     forced = resolution.stops;
   }
 
-  const seed = deriveSpinSeed(next.serverSeed, request.roundId, round.clientSeed, request.step);
   // Free spins carry no stake of their own, so every multiplier resolves against the stake that
   // bought the feature. `stakeRef` is on the wire for exactly this reason.
   const outcome =
     forced === undefined
-      ? spinOutcome(config, seed, feature.stakeRef)
+      ? spinOutcome(config, stepSeed, feature.stakeRef)
       : resolveStops(config, forced, feature.stakeRef);
 
   const features = retriggerFeatures(outcome.scatters);

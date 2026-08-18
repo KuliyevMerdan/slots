@@ -383,13 +383,24 @@ describe('spin', () => {
       expectError(outcome, 'FORCE_OUTCOME_REFUSED');
     });
 
-    it('refuses a named scenario until S1 implements one', () => {
+    it('honours a named scenario in devMode', () => {
+      const { response } = ok(
+        spin(
+          testState(),
+          { roundId: roundId(18), stake: STAKE, forceOutcome: { scenario: 'FREE_SPINS_TRIGGER' } },
+          testContext(devConfig),
+        ),
+      );
+      expect(response.next).toBe('FEATURE_SPIN');
+    });
+
+    it('refuses a named scenario when devMode is off', () => {
       const outcome = spin(
         testState(),
-        { roundId: roundId(18), stake: STAKE, forceOutcome: { scenario: 'MAX_WIN' } },
-        testContext(devConfig),
+        { roundId: roundId(19), stake: STAKE, forceOutcome: { scenario: 'MAX_WIN' } },
+        testContext(config),
       );
-      expect(expectError(outcome, 'FORCE_OUTCOME_REFUSED').message).toContain('S1');
+      expectError(outcome, 'FORCE_OUTCOME_REFUSED');
     });
   });
 });

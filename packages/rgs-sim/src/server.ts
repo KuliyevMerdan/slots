@@ -1,20 +1,26 @@
 import type {
+  AuthenticateReq,
   AuthenticateRes,
   CallName,
+  CallResponse,
+  FeatureSpinReq,
   FeatureSpinRes,
   GameConfig,
+  SettleReq,
   SettleRes,
+  SpinReq,
   SpinRes,
 } from '@slot/protocol';
 import { CALLS, SlotError } from '@slot/protocol';
 import { createSimConfig } from './config.js';
-import { correlationIdFor } from './errors.js';
+import { correlationIdFor, errorPayload } from './errors.js';
+import { NO_FAULTS, decideFault, retryAdvice } from './faults.js';
+import type { FaultConfig } from './faults.js';
 import { authenticate, featureSpin, settle, spin } from './sim.js';
-import type { SimContext } from './sim.js';
 import { InMemoryStore, SIM_STORE_KEY } from './store.js';
 import type { SimStore } from './store.js';
 import { loadState, saveState } from './state.js';
-import type { SimOutcome, SimState } from './state.js';
+import type { SimState } from './state.js';
 
 /**
  * The stateful shell around the pure handlers: it holds the state, persists it, and validates what
@@ -28,7 +34,23 @@ import type { SimOutcome, SimState } from './state.js';
  * Requests are parsed with the shared `@slot/protocol` schemas rather than trusted. In-process the
  * types already guarantee the shape; over HTTP they guarantee nothing, and one validation path that
  * both callers share is worth more than two that agree today.
+ *
+ * Two ways in, on purpose. The four typed methods are the direct path — no faults, throw on error —
+ * and are what tests and `tools/math-sim` want. `deliver()` is the fault-aware path a transport
+ * uses: it returns what *should* happen, including how long to wait and whether to answer at all,
+ * because a pure package cannot sleep and cannot drop a connection.
  */
+
+export type SimDelivery<T> =
+  /** Answer with `response`, after waiting `delayMs`. */
+  | { readonly kind: 'DELIVER'; readonly delayMs: number; readonly response: T }
+  /** Answer with `error`, after waiting `delayMs`. */
+  | { readonly kind: 'REJECT'; readonly delayMs: number; readonly error: SlotError }
+  /**
+   * Never answer. The call **was** executed and the state moved — this is a lost response, not a
+   * lost request, which is precisely the case idempotency exists to survive.
+   */
+  | { readonly kind: 'DROP' };
 
 export interface SimServerOptions {
   /** Used when the store holds no usable session. */
@@ -38,7 +60,12 @@ export interface SimServerOptions {
   storeKey?: string;
   /** Epoch ms. The only clock this package has, and it is injected — never read ambiently. */
   now: () => number;
+  /** Fault injection. Off by default; toggle at runtime with `setFaults`. */
+  faults?: FaultConfig;
 }
+
+type Executed<T> =
+  { readonly ok: true; readonly response: T } | { readonly ok: false; readonly error: SlotError };
 
 export class SimServer {
   readonly config: GameConfig;
@@ -46,6 +73,7 @@ export class SimServer {
   readonly #key: string;
   readonly #now: () => number;
   #state: SimState;
+  #faults: FaultConfig;
 
   constructor({
     initialState,
@@ -53,11 +81,13 @@ export class SimServer {
     store = new InMemoryStore(),
     storeKey = SIM_STORE_KEY,
     now,
+    faults = NO_FAULTS,
   }: SimServerOptions) {
     this.config = config;
     this.#store = store;
     this.#key = storeKey;
     this.#now = now;
+    this.#faults = faults;
 
     const restored = loadState(store, storeKey);
     // A saved session from a different server seed is a different game. Discarding it is the same
@@ -74,20 +104,29 @@ export class SimServer {
     return this.#state;
   }
 
+  get faults(): FaultConfig {
+    return this.#faults;
+  }
+
+  /** Runtime-toggleable, which is the point: the debug panel (C7) flips these mid-session. */
+  setFaults(faults: FaultConfig): void {
+    this.#faults = faults;
+  }
+
   authenticate(request: unknown): AuthenticateRes {
-    return this.#run('authenticate', request, authenticate);
+    return this.#direct('authenticate', request);
   }
 
   spin(request: unknown): SpinRes {
-    return this.#run('spin', request, spin);
+    return this.#direct('spin', request);
   }
 
   featureSpin(request: unknown): FeatureSpinRes {
-    return this.#run('featureSpin', request, featureSpin);
+    return this.#direct('featureSpin', request);
   }
 
   settle(request: unknown): SettleRes {
-    return this.#run('settle', request, settle);
+    return this.#direct('settle', request);
   }
 
   /** Forget the session. The store key is cleared too, so a reload does not resurrect it. */
@@ -96,11 +135,46 @@ export class SimServer {
     this.#store.remove(this.#key);
   }
 
-  #run<N extends CallName, Req, Res>(
-    call: N,
-    request: unknown,
-    handler: (state: SimState, request: Req, context: SimContext) => SimOutcome<Res>,
-  ): Res {
+  /**
+   * The fault-aware entry point.
+   *
+   * Note the ordering, which is the whole design: a `FAIL` is decided **before** the handler runs,
+   * so nothing happened and a retry is a fresh attempt; a `DROP` runs the handler **first**, so the
+   * round is real and a retry with the same key must replay it.
+   */
+  deliver<N extends CallName>(call: N, request: unknown): SimDelivery<CallResponse<N>> {
+    const verdict = decideFault(this.#faults, this.#state.serverSeed, this.#state.seq + 1);
+
+    if (verdict.kind === 'FAIL') {
+      const seq = this.#state.seq + 1;
+      this.#state = { ...this.#state, seq };
+      this.#persist();
+      const payload = errorPayload(seq, verdict.code, `injected fault on ${call}`);
+      const advice = retryAdvice(verdict.code, verdict.delayMs);
+      return {
+        kind: 'REJECT',
+        delayMs: verdict.delayMs,
+        error: SlotError.fromPayload(
+          advice === undefined ? payload : { ...payload, retryAfterMs: advice },
+        ),
+      };
+    }
+
+    const executed = this.#execute(call, request);
+    if (verdict.kind === 'DROP') return { kind: 'DROP' };
+
+    return executed.ok
+      ? { kind: 'DELIVER', delayMs: verdict.delayMs, response: executed.response }
+      : { kind: 'REJECT', delayMs: verdict.delayMs, error: executed.error };
+  }
+
+  #direct<N extends CallName>(call: N, request: unknown): CallResponse<N> {
+    const executed = this.#execute(call, request);
+    if (!executed.ok) throw executed.error;
+    return executed.response;
+  }
+
+  #execute<N extends CallName>(call: N, request: unknown): Executed<CallResponse<N>> {
     const now = this.#now();
     const parsed = CALLS[call].req.safeParse(request);
 
@@ -108,23 +182,43 @@ export class SimServer {
       // The counter still advances: a malformed request is a call that happened, and its
       // correlation id has to appear in the log like any other.
       this.#state = { ...this.#state, seq: this.#state.seq + 1 };
-      this.#persist(now);
-      throw new SlotError(
-        'SCHEMA_MISMATCH',
-        `${call} request failed validation: ${parsed.error.issues.map((issue) => `${issue.path.join('.')} ${issue.message}`).join('; ')}`,
-        { correlationId: correlationIdFor(this.#state.seq) },
-      );
+      this.#persist();
+      return {
+        ok: false,
+        error: new SlotError(
+          'SCHEMA_MISMATCH',
+          `${call} request failed validation: ${parsed.error.issues
+            .map((issue) => `${issue.path.join('.')} ${issue.message}`)
+            .join('; ')}`,
+          { correlationId: correlationIdFor(this.#state.seq) },
+        ),
+      };
     }
 
-    const outcome = handler(this.#state, parsed.data as Req, { config: this.config, now });
-    this.#state = outcome.state;
-    this.#persist(now);
+    const context = { config: this.config, now };
+    const state = this.#state;
 
-    if (!outcome.ok) throw SlotError.fromPayload(outcome.error);
-    return outcome.response;
+    // A switch rather than a handler map: the four calls take four different request types, and a
+    // map would type them as a union no call site could satisfy. The casts are safe because each
+    // branch parses with that call's own schema, one line above.
+    const outcome =
+      call === 'authenticate'
+        ? authenticate(state, parsed.data as AuthenticateReq, context)
+        : call === 'spin'
+          ? spin(state, parsed.data as SpinReq, context)
+          : call === 'featureSpin'
+            ? featureSpin(state, parsed.data as FeatureSpinReq, context)
+            : settle(state, parsed.data as SettleReq, context);
+
+    this.#state = outcome.state;
+    this.#persist();
+
+    return outcome.ok
+      ? { ok: true, response: outcome.response as CallResponse<N> }
+      : { ok: false, error: SlotError.fromPayload(outcome.error) };
   }
 
-  #persist(now: number): void {
-    saveState(this.#store, this.#key, this.#state, now);
+  #persist(): void {
+    saveState(this.#store, this.#key, this.#state, this.#now());
   }
 }

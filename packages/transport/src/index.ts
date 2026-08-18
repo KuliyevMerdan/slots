@@ -1,5 +1,13 @@
-// @slot/transport — The `RgsTransport` seam: timeout, backoff, error classification.
+// @slot/transport — the RgsTransport seam and its implementations.
 //
-// Empty on purpose: block C2 fills this package. The shape it must take is in CLAUDE.md.
-// May depend on: @slot/protocol (enforced by .dependency-cruiser.cjs).
-export {};
+// The client talks to this interface and to @slot/protocol; it never sees a server implementation.
+// That is what makes swapping the in-process simulator for a real RGS a change of which object is
+// constructed at boot rather than a refactor.
+//
+// This package may depend on @slot/protocol and nothing else in the workspace, which is why the
+// in-process backend arrives as an injected structural interface instead of an import of
+// @slot/rgs-sim. Timeout, exponential backoff and error classification are block C2; HttpTransport
+// is C2 as well.
+
+export * from './transport.js';
+export * from './mock.js';

@@ -23,6 +23,15 @@ importers:
       '@eslint/js':
         specifier: ^9
         version: 9.39.5
+      '@slot/protocol':
+        specifier: workspace:*
+        version: link:packages/protocol
+      '@slot/rgs-sim':
+        specifier: workspace:*
+        version: link:packages/rgs-sim
+      '@slot/transport':
+        specifier: workspace:*
+        version: link:packages/transport
       '@types/node':
         specifier: ^20
         version: 20.19.43
