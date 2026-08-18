@@ -129,6 +129,25 @@ describe('the error body', () => {
     expect(response.json()).toMatchObject({ code: 'SCHEMA_MISMATCH' });
   });
 
+  /**
+   * The body-size cap, proven rather than configured-and-hoped. Every real request in this protocol
+   * is hundreds of bytes; a client that produces more is not this client, and a retry would only
+   * send the same payload again — so the refusal is FATAL, not RECOVERABLE.
+   */
+  it('refuses an oversized body with SCHEMA_MISMATCH, not a retry invitation', async () => {
+    const { app } = open();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/rgs/spin',
+      headers: { 'content-type': 'application/json' },
+      payload: `{"roundId":"${roundId(3)}","stake":100,"clientSeed":"${'x'.repeat(20 * 1024)}"}`,
+    });
+
+    expect(response.statusCode).toBe(413);
+    expect(response.json()).toMatchObject({ class: 'FATAL', code: 'SCHEMA_MISMATCH' });
+  });
+
   /** A client asking for a route this server does not have is built against a different contract. */
   it('answers an unknown route in the protocol error shape', async () => {
     const { app } = open();

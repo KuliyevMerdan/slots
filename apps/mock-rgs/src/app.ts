@@ -52,6 +52,13 @@ export function buildApp({
     // way `request.id` is what the log lines, the echoed header and the error bodies all carry.
     requestIdHeader: CORRELATION_HEADER,
     genReqId: () => randomUUID(),
+    // The whole protocol fits in hundreds of bytes, so anything approaching this limit is not a
+    // client of this game. Fastify's default is 1 MiB, which on a public socket is an invitation.
+    bodyLimit: 16 * 1024,
+    // How long a client may take to *send* a request (Node's server.requestTimeout). It ends the
+    // half-open connection that never finishes its body; it does not touch a hijacked reply, whose
+    // request arrived in full — the DROP fault still hangs for as long as the test wants it to.
+    requestTimeout: 5_000,
   });
 
   /**
@@ -87,11 +94,17 @@ export function buildApp({
 
   app.setErrorHandler((error, request, reply) => {
     const failure = classifyFrameworkError(error);
+    // The status is for operators (ADR-0004), so the framework's own — a 413, a 415 — survives when
+    // it is more specific than the taxonomy's generic mapping. The client never reads it; it
+    // branches on the class in the body.
+    const { statusCode } = error as { statusCode?: number };
+    const status =
+      statusCode !== undefined && statusCode >= 400 ? statusCode : statusOf(failure.code);
     request.log.warn(
       { err: error, code: failure.code },
       'request failed before the simulator saw it',
     );
-    void reply.code(statusOf(failure.code)).send(errorBody(failure, request.id));
+    void reply.code(status).send(errorBody(failure, request.id));
   });
 
   app.setNotFoundHandler((request, reply) => {

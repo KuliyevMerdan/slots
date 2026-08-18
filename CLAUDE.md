@@ -9,9 +9,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > workspace, the contracts (`protocol`, `money`, `game-math`), `rgs-sim`, the `RgsTransport` seam
 > with `MockTransport`, `HttpTransport` and the retry policy, `engine`, `apps/mock-rgs`, `renderer`,
 > `ui` and `apps/game-client`, `tools/math-sim` — the RTP report that tuned the strips — and
-> `tests/contract/`, the switch-over gate. 683 tests, `pnpm check` green. Three `packages/*` remain
-> scaffolded and empty — `platform`, `compliance`, `dev-tools` — and each `src/index.ts` names the
-> block that fills it.
+> `tests/contract/`, the switch-over gate. 693 tests, `pnpm check` green. Three `packages/*` remain
+> scaffolded and empty — `platform`, `compliance`, `dev-tools` — but no longer unconstrained: as of
+> 2026-08-19 each has a dependency rule, fixtures that prove it fires, and (`compliance`) a place in
+> `PURE_PACKAGES`, so the first import ever written into them is already policed. Each
+> `src/index.ts` names the block that fills it and the imports it is allowed.
 >
 > **`pnpm dev:client` opens a playable slot.** It authenticates, spins, lands on the server's
 > `stops[]`, lights the paylines it was told won, counts the win up, runs the feature and settles.
@@ -250,6 +252,9 @@ rgs-sim     → protocol, money, game-math       # NO pixi, NO dom
 transport   → protocol
 renderer    → protocol, engine, money          # pixi allowed here
 ui          → protocol, money                  # pixi allowed here
+platform    → protocol                         # browser APIs behind ports — NO pixi, no game state
+compliance  → protocol, money                  # pure (in PURE_PACKAGES) — NO pixi, NO dom
+dev-tools   → protocol, money, engine          # DOM panel — NO pixi
 game-client → everything above
 ```
 
@@ -277,9 +282,11 @@ rejected **by name**, and that a legal import is not. A rule nobody has watched 
 are trusting, not enforcing — which is exactly how the `dist` hole above survived until S2 went
 looking.
 
-### Purity rules for `engine`, `rgs-sim`, `game-math`, `money`
+### Purity rules for `engine`, `rgs-sim`, `game-math`, `money`, `compliance`
 
-These four packages are pure and deterministic. `Math.random()`, `Date.now()`, argless `new Date()`
+These five packages are pure and deterministic — `compliance` by decision before it has code
+(2026-08-19): a reality check or a session limit is a pure function of an injected clock, or it is
+untestable. `Math.random()`, `Date.now()`, argless `new Date()`
 and `fetch` are **lint errors** inside them ([`eslint.config.mjs`](eslint.config.mjs)), `window` /
 `document` / `localStorage` are lint errors *and* type errors (no `DOM` lib), and
 [`tests/purity.test.ts`](tests/purity.test.ts) proves those rules fire. In addition to the import
@@ -783,6 +790,11 @@ The binding is pinned in [docs/protocol.md §2.7](docs/protocol.md) and argued i
 - **`x-correlation-id` in both directions.** The client mints one and the server echoes it; the
   simulator's own `sim-000042` ids (replayable, not unique across sessions) go to the log line beside
   it.
+- **Two limits of its own** (2026-08-19): a 16 KB body cap — the whole protocol fits in hundreds of
+  bytes — and a 5 s request timeout for a client that never finishes sending. An oversized body is
+  refused as `SCHEMA_MISMATCH`, not a retry invitation, and the test pins that. Rate limiting is
+  deliberately still absent (see the gaps registry): it arrives in C8, when this server first faces
+  a network that is not `127.0.0.1`.
 
 `/dev/*` — fault injection, session reset, a state summary — is what the debug panel (C7) drives and
 what lets the contract suite *demand* a failure rather than wait for one; it is mounted only
@@ -818,9 +830,9 @@ shape.
 
 ### Platform, compliance, dev-tools
 
-- **`platform`** — audio (Howler sprite, iOS unlock-on-first-tap, mute on `visibilitychange`),
-  storage, visibility, safe-area insets, device capability detection. Everything the browser makes
-  awkward, behind one boring interface.
+- **`platform`** — audio (synthesized at boot with WebAudio — the atlas decision applied to sound;
+  iOS unlock-on-first-tap, mute on `visibilitychange`), storage, visibility, safe-area insets,
+  device capability detection. Everything the browser makes awkward, behind one boring interface.
 - **`compliance`** — jurisdiction presets as **data**, applied at runtime: reality check, session /
   loss / stake limits, and a **UK preset** (2.5 s minimum spin duration, autoplay and turbo
   disabled). Switching jurisdiction in the debug panel must visibly change game behaviour.
@@ -909,8 +921,13 @@ made visible:_
   transparent re-authenticate that resumes from `pendingRound`, or the protocol needs a renew call.
   `rgs-sim` produces the code but deliberately checks expiry on `authenticate` **only**, and the
   engine now makes the consequence concrete: `SESSION_EXPIRED` is `PLAYER`, so `DISMISS` returns to
-  `IDLE` and a debited round is simply abandoned. Nothing re-authenticates. Decide before C6, when
-  the compliance layer starts ending sessions on purpose.
+  `IDLE` and a debited round is simply abandoned. Nothing re-authenticates.
+  **Decision (2026-08-19, build in C6):** no renew call — three servers would have to carry it, and
+  the recovery path already exists. `SESSION_EXPIRED` becomes context-aware in the engine: with a
+  round open, the client transparently re-authenticates (a fresh token through the same lobby seam
+  that issued the first one) and the machine resumes from `pendingRound` exactly as a reload does;
+  with no round open it stays a `PLAYER` modal. Document in `docs/protocol.md` §5 first, then teach
+  `rgs-sim` to expire sessions mid-round so the path has a producer.
 
 **Workspace & tooling**
 
@@ -919,22 +936,25 @@ made visible:_
   flight — which is what found the `preClose` bug. What it is not is *load*: one client, no
   concurrency, no memory measurement over time. Sustained multi-client load and a heap trend belong
   to R7, and the nightly run `RECOMMENDATIONS.md` asks for.
-- **Three packages still have no boundary rule.** The dependency table covers `protocol`, `money`,
-  `game-math`, `engine`, `rgs-sim`, `transport`, `renderer`, `ui` and `apps/mock-rgs` — so
-  `platform`, `compliance` and `dev-tools` are unconstrained: today nothing stops `compliance`
-  importing Pixi or `platform` importing the engine. (`apps/game-client` is deliberately
-  unconstrained — it is the wiring site, and it may reach everything.) Decide what each may reach
-  (C6/C7 are the natural moments) and add the rules; until then the enforcement story has three holes
-  in it.
-
+  **Decision (2026-08-19, build in C8):** a scheduled nightly CI job runs the existing soak with the
+  round count from an environment variable (~5,000) plus a heap-trend assertion — the PR gate keeps
+  300, because load in a merge gate is flake with a purpose. Multi-client load (k6/autocannon) waits
+  for R7, where there is a server worth loading.
 - **The cross-origin question is deferred, not answered.** Development works because Vite proxies
   `/rgs`, `/demo` and `/dev` to `apps/mock-rgs`, so the browser makes same-origin requests and the
   server never widens CORS. A *deployed* client (C8) has no proxy: either it is served from the same
-  origin as the RGS, or the RGS grows a real CORS policy. Decide it in C8 rather than at the point a
-  built bundle silently fails against a live server.
-- **The HTTP server has no limits of its own** — no rate limiting, no body-size cap, no request
-  timeout. Fine for a dev tool bound to `127.0.0.1`, and exactly the list `apps/rgs` cannot ship
-  without (R5/R7). Worth stating so its absence reads as a decision.
+  origin as the RGS, or the RGS grows a real CORS policy.
+  **Decision (2026-08-19, build in C8):** same-origin, CORS never widens. `apps/mock-rgs` gains a
+  flag-gated `@fastify/static` that serves the built client from the same origin the game API lives
+  on — one process, one deploy, zero CORS headers, which is also how operators actually embed games.
+  Record it as an ADR; a genuinely cross-origin operator integration is `apps/rgs`'s problem (R5),
+  with an explicit origin allow-list and never `*`.
+- **The HTTP server has no rate limiting.** The body-size cap (16 KB) and the request timeout landed
+  2026-08-19 as `Fastify` constructor options, with a test pinning the oversized-body refusal to
+  `SCHEMA_MISMATCH` — a payload no honest client produces is not a retry invitation.
+  **Decision (2026-08-19):** `@fastify/rate-limit` with a per-IP budget arrives in C8, the moment
+  this server first faces a network that is not `127.0.0.1`; per-session budgets and backpressure
+  are `apps/rgs`'s to ship (R5/R7).
 
 **Simulator (`packages/rgs-sim`) — behaviour the real RGS will have to earn**
 
@@ -945,11 +965,18 @@ made visible:_
   target capability (`unresolvedRounds`), it is skipped **by name** in every run, and a target that
   can produce it must implement `TargetHandle.strand()`. So the client still implements that branch
   of recovery against no producer, and the first real evidence arrives with R1.
+  **Decision (2026-08-19):** stays exactly so — splitting a synchronous handler to fake the window
+  would test fiction. `TargetHandle.strand()` gets its first real implementation in the `apps/rgs`
+  target (R1), where a transaction boundary genuinely separates the debit from the resolve.
 - **Jurisdiction is declared but not enforced.** `GameConfig.jurisdiction` now comes *from* the
   server, which is the right direction, but enforcement still lives entirely in the client's
   `compliance` package (C6). A real regulator requires the *server* to enforce minimum spin duration
   and autoplay limits; the sim has no policy surface at all, so the UK preset remains a UI convention
   rather than a rule until R5.
+  **Decision (2026-08-19, build in C6):** the sim gains a minimal policy surface *alongside* the
+  client half, so `compliance` is built against a server that pushes back: refuse a `spin` arriving
+  before `minSpinIntervalMs` has passed (the injected clock keeps it pure and testable) and refuse
+  turbo where the jurisdiction forbids it. Regulator-grade enforcement stays R5.
 
 **Real RGS (`apps/rgs`) — the whole surface**
 
@@ -959,40 +986,65 @@ made visible:_
   with a real one, after which the suite is expected to fail against it with `NotImplemented` **and
   nothing else** until R1+ lands. Replace this bullet with specific gaps as the R-blocks land and
   the failures become real ones.
+  **Decision (2026-08-19):** R0 is scheduled immediately after C6 — a day of work that turns the
+  named skip into an expected-red target and makes "swap the transport URL" a process the suite
+  watches happen, endpoint by endpoint.
 
 **Client — implied by the domain, built by no block**
 
 - **Autoplay does not exist, yet the UK preset disables it.** Every real slot has autoplay, the
   compliance work (C6) assumes it, and no block builds it — including the loss/win-limit stop
-  conditions regulators actually care about. Either schedule it or state in the README that it is out
-  of scope; the current position is an inconsistency.
+  conditions regulators actually care about.
+  **Decision (2026-08-19, build in C6):** build it, as part of the compliance work — a preset that
+  disables a feature that does not exist is a test without a subject. An autoplay controller sits
+  *above* the engine: it sends `PRESS` on `IDLE`, decrements its counter and evaluates its stop
+  conditions (spin count, loss limit, single-win-over-N× limit) on `ROUND_SETTLED`. The engine is
+  untouched — which is itself the demonstration that the FSM's input contract is right.
 - **Round history has a server but no screen.** `history` is on the wire, the simulator serves it and
   the contract suite holds every target to it — and nothing in `apps/game-client` shows it to a
   player. It wants the debug panel's frame (C7) or a panel of its own (C8). The other half is
   retention: this server keeps `MAX_ROUND_HISTORY` rounds in a browser store, which is not what a
   regulator means by a round history, and `retention` is on the wire so the client can say so
   honestly until R1 puts months of rows behind it.
+  **Decision (2026-08-19, build in C7):** a DOM overlay, not a Pixi screen — a history is a
+  document, and DOM gives it scroll, focus order and a screen-reader story for free while spending
+  nothing from the ticker budget. It lists the `history` response verbatim and states `retention`
+  honestly. Built beside the debug panel, whose frame it shares.
 - **Accessibility is started, not finished.** `prefers-reduced-motion` is honoured (the reels go to
   the outcome without the travel) and the HTML shell carries a polite live region the client keeps in
   step with the panel. What is still missing: the region announces state but nothing is *operable*
   from the keyboard — the spin button is a Pixi sprite, so a player who cannot use a pointer cannot
   play. Win highlighting is a ring plus a dim, which happens to survive colour blindness, and nothing
   verifies that. Both want C6, alongside i18n.
+  **Decision (2026-08-19, build in C6):** a transparent DOM control layer — real `<button>`s
+  overlaid on the canvas, driven by the same `PanelView` the Pixi panel renders — so focus,
+  `:focus-visible`, Enter/Space and the accessibility tree arrive for free and Pixi stays purely
+  visual. Contrast stops being luck: an automated WCAG-contrast test over the atlas `PALETTE`
+  constants, in CI.
 
 **Assets & content**
 
 - **The feature is silent, and so is everything else.** C5 gives the feature a border, a counter and
-  two screens; what tells a player the rules changed in every real slot is the music, and there is no
-  audio layer at all until C6. The gap below is the blocker for it.
+  two screens; what tells a player the rules changed in every real slot is the music, and there is
+  no audio layer at all until C6. The blocker below is now decided: this is scheduling, not
+  research.
 - **Audio has no source, and no licence story.** The art question is answered — the symbol atlas is
   *generated at boot* from shapes and text, so the repository ships no image, licenses nothing and
   attributes nobody, and swapping in real art later replaces one file. Sound cannot be generated as
-  cheaply: C6 assumes an audio sprite, and for a **public** repository every clip has to be CC0 or
-  properly licensed with attribution in the README. Resolve it before C6, not during.
+  cheaply: C6 assumed an audio sprite, and for a **public** repository every clip has to be CC0 or
+  properly licensed with attribution in the README.
+  **Decision (2026-08-19, build in C6):** the atlas answer, applied to sound — synthesize at boot
+  with WebAudio (oscillators and shaped noise: reel-stop ticks, tiered win cadences, a feature pad).
+  No binary asset, no licence, no attribution, and "real audio replaces this module and nothing
+  else" becomes the README's symmetric sentence to the art one. Fallback if the synthesized set
+  disappoints: Kenney's CC0 packs, attributed in the README out of courtesy.
 - **Font coverage for RU is unverified.** i18n ships en/ru (C6). Many display faces carry no Cyrillic;
   if the chosen face doesn't, a Russian build silently falls back per glyph and the type design
-  simply doesn't apply to half the supported languages. Verify the actual `.ttf`/atlas when the face
-  is picked, not after.
+  simply doesn't apply to half the supported languages.
+  **Decision (2026-08-19, build in C6):** pick an OFL face with full Cyrillic (Inter or Manrope) and
+  make coverage a test, not a checklist item — a build-time check (fontkit/opentype.js) walks every
+  character in the RU string catalogue and asserts the face has a glyph for it, so a new string with
+  a missing glyph fails CI rather than falling back per glyph in front of a player.
 
 ## Rules
 

@@ -9,8 +9,11 @@ import prettier from 'eslint-config-prettier';
  * `engine`, `rgs-sim`, `game-math` and `money` replay identically from a seed — which is what makes
  * the simulator, the math tool and the E2E suite trustworthy. Ambient randomness or wall-clock time
  * anywhere in them silently destroys that, and it is the kind of thing code review misses.
+ *
+ * `compliance` is on the list from before it has code (2026-08-19): a reality-check timer or a
+ * session limit is a pure function of an injected clock, or it is untestable.
  */
-const PURE_PACKAGES = ['engine', 'rgs-sim', 'game-math', 'money'];
+const PURE_PACKAGES = ['engine', 'rgs-sim', 'game-math', 'money', 'compliance'];
 
 export default tseslint.config(
   {

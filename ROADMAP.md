@@ -30,7 +30,7 @@ counter, preferences through the persistence envelope, and resume proven at five
 and **S4 landed 2026-08-18** (`tools/math-sim`, and the tuning it forced: 96.107% RTP over twenty
 million rounds, on strips that no longer make the feature a runaway) and **S3 landed 2026-08-18**
 (`tests/contract/` — one suite, a target registry, and capabilities a target declares rather than
-quietly lacks). 683 tests green — including the work the S3 review surfaced as unowned: the
+quietly lacks). 693 tests green — including the work the S3 review surfaced as unowned: the
 math-version gate, the max-win ceiling as a multiple of the stake, the telemetry seam,
 `prefers-reduced-motion` with an announced region, the `history` call, and the network soak that
 found a shutdown hang in `apps/mock-rgs`.
@@ -295,16 +295,29 @@ and is credited exactly once.
 
 _4–5 days._
 
+_The scope below grew on 2026-08-19, when every open gap was given a decided solution — the
+rationale for each line lives in CLAUDE.md's gaps registry._
+
 - [ ] Responsive portrait + landscape with safe-area insets.
-- [ ] `packages/platform`: Howler audio sprite, iOS unlock-on-first-tap, mute on `visibilitychange`,
+- [ ] `packages/platform`: audio **synthesized at boot with WebAudio** (the atlas decision applied
+      to sound — no binary, no licence), iOS unlock-on-first-tap, mute on `visibilitychange`,
       storage, device capability detection.
-- [ ] i18n (en/ru) with currency-aware formatting — **and verify the chosen face actually carries
-      Cyrillic** before shipping the RU build.
+- [ ] i18n (en/ru) with currency-aware formatting — the face is OFL with full Cyrillic (Inter or
+      Manrope), and coverage is a **build-time test** over the RU string catalogue, not a checklist.
 - [ ] `packages/compliance`: reality check, session/loss/stake limits, and a **UK jurisdiction
       preset** (2.5 s minimum spin, autoplay and turbo disabled), applied at runtime.
+- [ ] **Autoplay**, as part of the compliance work: a controller above the engine that presses on
+      `IDLE` and stops on spin count / loss limit / single-win limit at `ROUND_SETTLED`. The engine
+      is untouched.
+- [ ] **The sim's half of jurisdiction**: refuse a spin before `minSpinIntervalMs`, refuse turbo
+      where forbidden — so the client's compliance layer is built against a server that pushes back.
+- [ ] **Session expiry mid-round**: `SESSION_EXPIRED` with an open round re-authenticates
+      transparently and resumes from `pendingRound`; protocol §5 first, then a sim producer.
+- [ ] **Keyboard + contrast**: a transparent DOM control layer driven by `PanelView` (real buttons,
+      real focus), and an automated WCAG-contrast test over the atlas `PALETTE`.
 
-**Done when:** switching jurisdiction in the debug panel visibly changes game behaviour, and the RU
-build renders in the intended typeface.
+**Done when:** switching jurisdiction in the debug panel visibly changes game behaviour, autoplay
+stops itself at its limits, and the RU build renders in the intended typeface.
 
 ## Block C7 — Dev tools & performance
 
@@ -312,6 +325,9 @@ _3–4 days._
 
 - [ ] `packages/dev-tools`: debug panel — force outcome, fault injection, jurisdiction switch, state
       inspector, exportable event log correlated on `roundId`.
+- [ ] **Round-history panel** beside it, in the same DOM frame: the `history` response, listed
+      verbatim, with `retention` stated honestly (decided 2026-08-19 — a history is a document, so
+      it is DOM, not canvas).
 - [ ] Stripped from production by `__DEV_TOOLS__`; **verify the strip in the built bundle**.
 - [ ] `tools/perf-harness`: scripted fps/memory capture on a throttled profile.
 - [ ] Performance pass against the rules in `CLAUDE.md` — draw calls, allocation in the ticker, atlas
@@ -325,7 +341,12 @@ build contains no debug-panel code.
 _2–3 days._
 
 - [ ] Deploy the client + `mock-rgs` (Vercel / Fly / Railway), with a health endpoint on the server
-      side.
+      side — **same-origin** (decided 2026-08-19): a flag-gated `@fastify/static` serves the built
+      client from the game API's origin, CORS never widens, and an ADR records it.
+- [ ] `@fastify/rate-limit` with a per-IP budget — the moment this server first faces a network that
+      is not `127.0.0.1`.
+- [ ] A **nightly soak** job: the existing `http-soak` with ~5,000 rounds from an environment
+      variable plus a heap-trend assertion; the PR gate keeps 300.
 - [ ] Playwright E2E in CI: fixed seed + forced outcomes — spin, win, feature, reload-and-resume.
 - [ ] README to the structure in the appendix below, GIF above the fold.
 - [ ] `docs/architecture.md` + `docs/round-lifecycle.md` diagrams.

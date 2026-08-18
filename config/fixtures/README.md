@@ -14,6 +14,12 @@ not enforcing.
 | `apps/mock-rgs/illegal-transport.ts` | the HTTP wrapper cannot reach the client's transport | `.dependency-cruiser.cjs` |
 | `apps/mock-rgs/illegal-deep-import.ts` | an app imports a package through its entry point | `.dependency-cruiser.cjs` |
 | `apps/mock-rgs/legal.ts` | the wrapper's allowed imports are *not* flagged | `.dependency-cruiser.cjs` |
+| `packages/platform/illegal-engine.ts` | platform cannot read the engine | `.dependency-cruiser.cjs` |
+| `packages/compliance/illegal-engine.ts` | compliance cannot drive the engine | `.dependency-cruiser.cjs` |
+| `packages/compliance/illegal-pixi.ts` | only renderer/ui may import Pixi | `.dependency-cruiser.cjs` |
+| `packages/compliance/impure.ts` | compliance is held to the purity rules | `eslint.config.mjs` |
+| `packages/dev-tools/illegal-pixi.ts` | only renderer/ui may import Pixi | `.dependency-cruiser.cjs` |
+| `packages/dev-tools/legal.ts` | dev-tools' allowed imports are *not* flagged | `.dependency-cruiser.cjs` |
 
 They are excluded from TypeScript, ESLint and Prettier in normal runs, and `pnpm lint:boundaries`
 scans `packages/` and `apps/`. Nothing here is compiled or shipped.

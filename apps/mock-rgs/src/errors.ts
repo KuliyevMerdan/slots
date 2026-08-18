@@ -68,9 +68,10 @@ export const classifyFrameworkError = (error: unknown): SlotError => {
 
   const detail = message ?? 'the request failed before the simulator saw it';
 
-  // 400/415 is Fastify's own JSON parser refusing the body — the same `SCHEMA_MISMATCH` the
-  // simulator would have produced had the body reached it.
-  if (status === 400 || status === 404 || status === 415) {
+  // 400/415 is Fastify's own JSON parser refusing the body, and 413 is the body-size cap — in
+  // every case a request no honest build of the client produces, and one a retry would only repeat.
+  // The same `SCHEMA_MISMATCH` the simulator would have produced had the body reached it.
+  if (status === 400 || status === 404 || status === 413 || status === 415) {
     return new SlotError('SCHEMA_MISMATCH', detail);
   }
   return new SlotError('UPSTREAM_UNAVAILABLE', detail);

@@ -84,9 +84,9 @@ module.exports = {
     {
       name: 'pure-packages-do-no-io',
       comment:
-        'engine, rgs-sim, game-math and money are pure: no fs, no Pixi, no browser globals. I/O lives behind ports (RgsTransport, platform).',
+        'engine, rgs-sim, game-math, money and compliance are pure: no fs, no Pixi, no browser globals. I/O lives behind ports (RgsTransport, platform).',
       severity: 'error',
-      from: { path: '^packages/(engine|rgs-sim|game-math|money)/src/' },
+      from: { path: '^packages/(engine|rgs-sim|game-math|money|compliance)/src/' },
       to: { path: BROWSER_OR_IO },
     },
     {
@@ -105,6 +105,24 @@ module.exports = {
     mayOnlyDependOn('transport', 'protocol'),
     mayOnlyDependOn('renderer', 'protocol', 'engine', 'money'),
     mayOnlyDependOn('ui', 'protocol', 'money'),
+    /**
+     * The three C6/C7 packages, constrained before they contain any code — so the first import ever
+     * written into them is already policed. The allow-lists are decisions, not guesses (CLAUDE.md,
+     * gaps registry, 2026-08-19): `platform` wraps browser APIs behind ports and needs no game
+     * knowledge; `compliance` is jurisdiction rules as data over money amounts, pure and clock-injected;
+     * `dev-tools` inspects the engine and renders its panel in the DOM.
+     */
+    mayOnlyDependOn('platform', 'protocol'),
+    mayOnlyDependOn('compliance', 'protocol', 'money'),
+    mayOnlyDependOn('dev-tools', 'protocol', 'money', 'engine'),
+    {
+      name: 'pixi-stays-in-renderer-and-ui',
+      comment:
+        'renderer and ui are the only Pixi consumers (CLAUDE.md). platform talks to the browser, compliance is pure rules, dev-tools is a DOM panel — none of them draws.',
+      severity: 'error',
+      from: { path: '^packages/(platform|compliance|dev-tools)/src/' },
+      to: { path: '(^|/)(pixi\\.js|@pixi)(/|$)' },
+    },
     /**
      * The HTTP wrapper is a socket in front of the simulator and nothing more. In particular it may
      * not reach `@slot/transport`: the server implementing a client's transport would invert the

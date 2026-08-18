@@ -13,7 +13,16 @@ import { describe, expect, it } from 'vitest';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ESLINT = path.join(ROOT, 'node_modules/.bin/eslint');
-const FIXTURE = 'config/fixtures/packages/engine/src/impure.ts';
+
+/**
+ * One impure fixture per package that joined PURE_PACKAGES by decision rather than by the original
+ * list — `compliance` is constrained before it has code, and this is what proves the constraint is
+ * wired rather than intended.
+ */
+const FIXTURES = [
+  'config/fixtures/packages/engine/src/impure.ts',
+  'config/fixtures/packages/compliance/src/impure.ts',
+];
 
 interface LintMessage {
   ruleId: string | null;
@@ -36,8 +45,8 @@ function lint(file: string): LintMessage[] {
   return (JSON.parse(stdout) as Array<{ messages: LintMessage[] }>).flatMap((r) => r.messages);
 }
 
-describe('purity rules in the deterministic packages', () => {
-  const messages = lint(FIXTURE);
+describe.each(FIXTURES)('purity rules, proven against %s', (fixture) => {
+  const messages = lint(fixture);
 
   it.each([
     ['Math.random()', /Seeded PRNG only/],
