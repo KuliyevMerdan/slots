@@ -328,6 +328,31 @@ importers:
         specifier: 'catalog:'
         version: 3.2.7(@types/node@20.19.43)(lightningcss@1.33.0)(tsx@4.23.12)(yaml@2.9.0)
 
+  tools/math-sim:
+    dependencies:
+      '@slot/game-math':
+        specifier: workspace:*
+        version: link:../../packages/game-math
+      '@slot/money':
+        specifier: workspace:*
+        version: link:../../packages/money
+      '@slot/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+      '@slot/rgs-sim':
+        specifier: workspace:*
+        version: link:../../packages/rgs-sim
+    devDependencies:
+      '@types/node':
+        specifier: ^20
+        version: 20.19.43
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vitest:
+        specifier: 'catalog:'
+        version: 3.2.7(@types/node@20.19.43)(lightningcss@1.33.0)(tsx@4.23.12)(yaml@2.9.0)
+
 packages:
 
   '@esbuild/aix-ppc64@0.28.2':

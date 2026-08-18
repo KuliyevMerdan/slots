@@ -7,12 +7,17 @@ import { STRIPS } from './strips.js';
 /**
  * Identifies this strips + paytable combination.
  *
+ * **2.0.0 is the S4 tuning**: seven scatters instead of fifteen, a paytable scaled to bring the RTP
+ * from 125% to 96%, and no three-of-a-kind on `L4`. 1.0.0 was never played by anybody, but the
+ * version moved anyway — a client drawing 1.0.0's reels against a 2.0.0 server is exactly the
+ * mismatch this string exists to make loud.
+ *
  * The server sends its own in `GameConfig.mathVersion`. If the two disagree the client is drawing
  * reels the server is not playing, which is `MATH_VERSION_MISMATCH` — `FATAL`, because there is no
  * safe way to present an outcome you cannot reproduce. **Bump this whenever strips, paylines or the
  * paytable change.**
  */
-export const MATH_VERSION = '1.0.0';
+export const MATH_VERSION = '2.0.0';
 
 /**
  * Total stakes, in minor units. Every level is a whole multiple of the payline count, which is what

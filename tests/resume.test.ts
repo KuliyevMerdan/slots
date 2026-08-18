@@ -23,12 +23,11 @@ import type { SymbolAtlas } from '@slot/renderer';
  */
 
 /**
- * A seed whose feature is ten free spins and no retrigger.
+ * A seed whose feature is ten free spins and no retrigger — which is now the ordinary case rather
+ * than a lucky one, since S4 tuned the retrigger back down to something that converges.
  *
- * Chosen deliberately, and this is what determinism is *for*: the same seed replays the same
- * feature, so a resume test is a fixed-length experiment rather than a coin toss. (The strips are
- * untuned — other seeds run to a hundred and fifty free spins, which is a note in the gaps registry
- * and S4's problem, not this test's.)
+ * Still pinned, because that is what determinism is *for*: the same seed replays the same feature,
+ * so a resume test is a fixed-length experiment rather than a coin toss.
  */
 const SEED = 'resume-seed-0';
 const START_BALANCE = 1_000_000 as Minor;

@@ -4,32 +4,31 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-> ⚠️ **The game is a game: it spins, pays, runs its feature, and comes back from a reload.** As of
-> **2026-08-18**, **C0, C1, S0, S1, C2, S2, C3, C4 and C5 have landed** — the workspace, the
+> ⚠️ **The game is a game, and its math is now a designed 96% rather than an accident.** As of
+> **2026-08-18**, **C0, C1, S0, S1, C2, S2, C3, C4, C5 and S4 have landed** — the workspace, the
 > contracts (`protocol`, `money`, `game-math`), `rgs-sim`, the `RgsTransport` seam with
-> `MockTransport`, `HttpTransport` and the retry policy, `engine`, `apps/mock-rgs`, and `renderer`,
-> `ui` and `apps/game-client`: reels, the five-stage spin curve, a pooled symbol layer, payline
-> highlighting, a tiered big-win counter, turbo, skip-anything, free spins with retrigger, and
-> resume. 559 tests, `pnpm check` green. Three `packages/*` remain scaffolded and empty —
-> `platform`, `compliance`, `dev-tools` — and each `src/index.ts` names the block that fills it.
+> `MockTransport`, `HttpTransport` and the retry policy, `engine`, `apps/mock-rgs`, `renderer`, `ui`
+> and `apps/game-client`, and `tools/math-sim` — the RTP report that tuned the strips. 572 tests,
+> `pnpm check` green. Three `packages/*` remain scaffolded and empty — `platform`, `compliance`,
+> `dev-tools` — and each `src/index.ts` names the block that fills it.
 >
 > **`pnpm dev:client` opens a playable slot.** It authenticates, spins, lands on the server's
 > `stops[]`, lights the paylines it was told won, counts the win up, runs the feature and settles.
 > Point it at `apps/mock-rgs` with one environment variable and the same client plays the same game
 > over HTTP.
 >
-> **Two properties are tested rather than claimed.**
+> **Three properties are tested rather than claimed.**
 > [`tests/mash.test.ts`](tests/mash.test.ts) plays 120 rounds through the real engine, transport,
-> simulator and renderer while pressing the button at random, asserting the client's balance equals
-> the server's after every round. [`tests/resume.test.ts`](tests/resume.test.ts) throws the client
-> away at five points mid-feature — during the intro, mid-spin, between spins, deep in, during the
-> outro — rebuilds it from nothing over a surviving store, and asserts the round finishes exactly
-> once, credited exactly once.
+> simulator and renderer while pressing at random, asserting the client's balance equals the
+> server's after every round. [`tests/resume.test.ts`](tests/resume.test.ts) throws the client away
+> at five points mid-feature and rebuilds it, asserting the round finishes and is credited exactly
+> once. And `pnpm math-sim` plays twenty million rounds through the game's own evaluator and prints
+> the RTP, the hit frequency, the volatility and the win distribution — **96.107%**, measured, on the
+> strips that ship.
 >
 > **What is deliberately not there yet:** audio, i18n and the compliance layer (**C6**), the debug
-> panel and the performance pass (**C7**), packaging and the E2E suite (**C8**). The next block is
-> **C6**, with **S3** (the contract suite) and **S4** (the RTP report — which the strips now visibly
-> need) available in parallel.
+> panel and the performance pass (**C7**), packaging, the README and the E2E suite (**C8**). The next
+> block is **C6**, with **S3** (the contract suite) available in parallel.
 >
 > The canon is four documents: `CLAUDE.md` (this file), [`ROADMAP.md`](ROADMAP.md) (the task map),
 > [`RECOMMENDATIONS.md`](RECOMMENDATIONS.md) (the strategic registry) and
@@ -324,6 +323,44 @@ paytable multipliers are integers and every bet level is a whole multiple of the
 is the one place minor units become a decimal string, and it reads the number of minor digits from
 `Intl` rather than assuming two — JPY has none, KWD has three.
 
+### The math, measured — `tools/math-sim`
+
+`pnpm math-sim` plays complete rounds through **the game's own outcome engine** — `rgs-sim`'s
+`resolveStops` over `game-math`'s strips, paytable and award table — and prints what the game
+actually does. One implementation of the math is the only reason the published figure means
+anything; a spreadsheet would be a second one, and the two would disagree the week after they were
+written. The one thing the tool does not reproduce is the *seed plumbing* (a batch of twenty million
+spins has no rounds to replay), and it says so where it does it.
+
+**A round is the unit**: one stake buys the base spin and every free spin it leads to, so the
+feature's return belongs to the round that paid for it. Reporting per-spin RTP with free spins
+counted as spins is the classic way to publish a number nobody can reproduce.
+
+Measured over **20,000,000 rounds** on `MATH_VERSION` 2.0.0 — this is the table the README carries at
+C8:
+
+| Measure | Result | Design |
+| --- | --- | --- |
+| **RTP** | **96.107%** | 96.0% ± 0.5% |
+| — base game | 87.131% | |
+| — feature | 8.976% | |
+| Hit frequency | 43.45% | 25–45% |
+| Volatility (σ per round) | 3.05 | medium |
+| Spins per feature trigger | 110 | 80–250 |
+| Longest feature seen | 70 free spins | ≤ 120 |
+| Max win seen | 304× stake | |
+| Runaway features | 0 | 0 |
+
+**The CLI exits non-zero when the game is out of band**, which makes it a regression test as much as
+a report — and `simulate.test.ts` runs a quarter of a million rounds in CI for the same reason, with
+a wider band because the sampling error at that size is around a third of a percentage point.
+
+**What S4 found is the reason the block exists.** The untuned strips carried fifteen scatters, which
+triggered the feature every fifteenth round and — because a free spin retriggers on the same three
+scatters — made the feature a **supercritical branching process**: features of 155 free spins, and an
+RTP of 125%. Seven scatters and a paytable scaled to match bring it to 96% with a feature that
+converges. The tuning is in the strips and the paytable, both of which now say so in their headers.
+
 ### Math — `packages/game-math`
 
 Strips, paylines and the paytable **as data**, plus a pure evaluator. `evaluate()` reads a grid the
@@ -333,10 +370,15 @@ disagrees with its own outcome. `MATH_VERSION` names this strips-and-paytable co
 
 Two behaviours worth knowing, both tested: a line that starts with wilds is paid the **better** of
 the two readings (wilds as themselves vs. wilds standing in for the first real symbol), and wilds
-never substitute for the scatter. The rules are specified one line at a time in `evaluate.test.ts`;
-what they add up to on a full screen is pinned by 30 handcrafted grids in
+never substitute for the scatter. The rules are specified one line at a time in `evaluate.test.ts` —
+in terms of `pays(symbol, count)` rather than literals, because the rules outlive any particular
+tuning — and what they add up to on a full screen is pinned by 30 handcrafted grids in
 `src/__fixtures__/golden.json` (`pnpm --filter @slot/game-math golden:update` regenerates the
-expectations — for a deliberate math change, never to make a red test green).
+expectations from a **built** `dist/`, for a deliberate math change, never to make a red test green).
+
+`MATH_VERSION` is **2.0.0** as of S4. It moves whenever the strips, paylines or paytable move,
+because a client drawing 1.0.0's reels against a 2.0.0 server is showing the player a different game
+— which is what `MATH_VERSION_MISMATCH` exists for, and what nothing yet checks (see the gaps).
 
 ### Engine — `packages/engine` (the part reviewers actually read)
 
@@ -733,6 +775,7 @@ shape.
 | --- | --- | --- |
 | **Unit** | beside the code, Vitest | Pure logic: evaluator (golden-file grids), money arithmetic, FSM transitions, **the spin curve** |
 | **Renderer, headless** | `packages/renderer`, `packages/ui` | Pixi's scene graph is ordinary JavaScript until something draws: with a faked atlas, the stage's whole event contract runs in Node (`config/vitest.pixi.ts` stubs the two globals Pixi reads on import) |
+| **Math** | `tools/math-sim` | 250k rounds in CI against the design band; 20M on demand for the published figure |
 | **Mash** | `tests/mash.test.ts` | 120 rounds through the real engine, transport, simulator **and renderer**, pressing at random — the client's balance equals the server's after every round |
 | **Resume** | `tests/resume.test.ts` | The client is destroyed and rebuilt at five points mid-feature over a surviving store — the round finishes once, and is credited once |
 | **Engine soak** | `tests/soak.test.ts` | 1,000 seeded rounds incl. features, retries and disconnects, with **no state violations** |
@@ -777,15 +820,19 @@ made visible:_
   engine now makes the consequence concrete: `SESSION_EXPIRED` is `PLAYER`, so `DISMISS` returns to
   `IDLE` and a debited round is simply abandoned. Nothing re-authenticates. Decide before C6, when
   the compliance layer starts ending sessions on purpose.
-- **`limits.maxWin` is an absolute amount, not a multiple of the stake.** Real max-win caps are
-  expressed as N× the stake actually played, so a minimum-stake player and a maximum-stake player do
-  not share a ceiling — under the current shape they do, and the minimum-stake player's cap is
-  effectively unreachable while the maximum-stake player's binds far too early. `rgs-sim` implements
-  the field as specified rather than working around it. Changing it is a wire change, so it belongs
-  in `docs/protocol.md` first; decide before S4 tunes the math against a ceiling that will move.
-- **Nothing compares the two math versions.** `GameConfig.mathVersion` is on the wire, `game-math`
-  exports `MATH_VERSION`, `apps/mock-rgs` now publishes the server's on `GET /ready` — and nothing
-  puts the two side by side. The comparison belongs on the authenticate path and raises
+- **`limits.maxWin` is an absolute amount, not a multiple of the stake — and S4 measured what that
+  costs.** The cap is 5,000× the *largest* bet level, while the largest win in twenty million rounds
+  was 304× the stake played. At the maximum stake the ceiling is therefore roughly sixteen times
+  further away than the game ever reaches; at the minimum stake it is two hundred times further than
+  that again. So the cap is unreachable at every stake, which means `SettleRes.capped` has no
+  producer outside `forceOutcome` and the player-facing "maximum win" is decoration. Real caps are
+  N× the stake actually played. Changing it is a wire change, so it belongs in `docs/protocol.md`
+  first.
+- **Nothing compares the two math versions — and S4 just moved one.** `MATH_VERSION` went to 2.0.0
+  when the strips and paytable were tuned, which is precisely the event this check exists for: a
+  client built before the tuning would draw 1.0.0's reels against a 2.0.0 server and pay out
+  differently. `GameConfig.mathVersion` is on the wire, `game-math` exports `MATH_VERSION`,
+  `apps/mock-rgs` publishes the server's on `GET /ready` — and nothing puts the two side by side. The comparison belongs on the authenticate path and raises
   `MATH_VERSION_MISMATCH`; it is still scheduled in no block. Until it exists, a strip edit ships a
   client drawing reels the server is not playing, and neither `tests/soak.test.ts` nor
   `tests/http.test.ts` would notice, because both halves come from the same workspace. The HTTP path
@@ -816,16 +863,6 @@ made visible:_
 - **The HTTP server has no limits of its own** — no rate limiting, no body-size cap, no request
   timeout. Fine for a dev tool bound to `127.0.0.1`, and exactly the list `apps/rgs` cannot ship
   without (R5/R7). Worth stating so its absence reads as a decision.
-
-**Math — visible now that a feature actually plays**
-
-- **The feature retriggers itself half to death.** Playing the trigger scenario across twenty-four
-  seeds gives features of 10, 20, 30 — and 80, 95, 155 free spins. On untuned strips every reel
-  carries scatters, so a retrigger is roughly as likely as the trigger was, and the tail runs away.
-  That is an RTP problem, a session-length problem and a presentation problem at once (a hundred and
-  fifty free spins is not a feature, it is a wait). **S4** owns the tuning; until it lands,
-  `tests/resume.test.ts` pins a seed whose feature is ten spins so the suite stays a fixed-length
-  experiment rather than a coin toss.
 
 **Simulator (`packages/rgs-sim`) — behaviour the real RGS will have to earn**
 

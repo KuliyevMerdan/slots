@@ -45,12 +45,14 @@ const mayOnlyDependOn = (name, ...allowed) => ({
   to: { path: WORKSPACE, pathNot: only(name, ...allowed) },
 });
 
-/** The same rule for an app. Apps compose packages; they are not composed by anything. */
-const appMayOnlyDependOn = (name, ...allowed) => ({
+/**
+ * The same rule for an app or a tool. Both compose packages; neither is composed by anything.
+ */
+const consumerMayOnlyDependOn = (where, name, ...allowed) => ({
   name: `${name}-deps`,
   comment: `@slot/${name} may only depend on: ${allowed.map((a) => `@slot/${a}`).join(', ')} — see the dependency table in CLAUDE.md.`,
   severity: 'error',
-  from: { path: `^apps/${name}/src/` },
+  from: { path: `^${where}/${name}/src/` },
   to: { path: WORKSPACE, pathNot: only(...allowed) },
 });
 
@@ -108,13 +110,18 @@ module.exports = {
      * not reach `@slot/transport`: the server implementing a client's transport would invert the
      * seam this whole app exists to prove.
      */
-    appMayOnlyDependOn('mock-rgs', 'protocol', 'rgs-sim'),
+    consumerMayOnlyDependOn('apps', 'mock-rgs', 'protocol', 'rgs-sim'),
+    /**
+     * The RTP report reads the math and the outcome engine, and nothing that presents them. A tool
+     * that could reach the renderer would be a tool that could measure something other than the game.
+     */
+    consumerMayOnlyDependOn('tools', 'math-sim', 'protocol', 'money', 'game-math', 'rgs-sim'),
     {
       name: 'apps-import-entry-points-only',
       comment:
-        'An app reaches a package through its entry point, never into its src/ — the same rule the packages live by.',
+        'An app or a tool reaches a package through its entry point, never into its src/ — the same rule the packages live by.',
       severity: 'error',
-      from: { path: '^apps/' },
+      from: { path: '^(apps|tools)/' },
       to: { path: '^packages/[^/]+/src/' },
     },
   ],

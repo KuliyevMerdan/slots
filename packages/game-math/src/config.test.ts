@@ -58,9 +58,19 @@ describe('the strips', () => {
     expect(reelsWithWilds.slice(1, -1).every(Boolean)).toBe(true);
   });
 
-  it('carry scatters on every reel, so the feature can trigger from anywhere', () => {
+  /**
+   * One or two per reel, and the *upper* bound is the load-bearing half.
+   *
+   * Scatters are what trigger the feature and what retrigger it, so their count is the single number
+   * that decides whether the retrigger converges. Fifteen scatters (three a reel) made it a
+   * supercritical branching process — features of 150 free spins and a 125% RTP — which is what S4
+   * found and `tools/math-sim` now guards.
+   */
+  it('carry one or two scatters per reel, so the feature triggers from anywhere and converges', () => {
     for (const strip of STRIPS) {
-      expect(strip.filter((symbol) => symbol === SCATTER).length).toBeGreaterThanOrEqual(2);
+      const scatters = strip.filter((symbol) => symbol === SCATTER).length;
+      expect(scatters).toBeGreaterThanOrEqual(1);
+      expect(scatters).toBeLessThanOrEqual(2);
     }
   });
 });

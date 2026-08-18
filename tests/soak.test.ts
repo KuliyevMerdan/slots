@@ -255,6 +255,11 @@ describe('1,000 rounds through a bad connection', () => {
     await play(run, 1_000);
 
     // Guards against a soak that quietly stopped injecting anything and passed on easy mode.
-    expect(run.sim.state.seq).toBeGreaterThan(2_000);
+    //
+    // A thousand rounds make a thousand spins, a few hundred settles, the retries the faults force,
+    // and whatever free spins the features ask for. The floor moved down in S4: the feature used to
+    // trigger every fifteenth round and now triggers about once in a hundred and ten, so a
+    // fault-free round is simply fewer calls than it used to be.
+    expect(run.sim.state.seq).toBeGreaterThan(1_400);
   }, 120_000);
 });

@@ -26,12 +26,12 @@ named force-outcome scenarios, and the `RgsTransport` seam with `MockTransport`)
 atlas, the sprite pool) and **C4 landed 2026-08-18** (payline highlighting, the tiered big-win
 counter, turbo, skip-anything as a completable timeline, and the paytable re-evaluation assertion)
 and **C5 landed 2026-08-18** (free spins with retrigger, the intro and outro screens, the feature
-counter, preferences through the persistence envelope, and resume proven at five points mid-feature).
-559 tests green.
+counter, preferences through the persistence envelope, and resume proven at five points mid-feature)
+and **S4 landed 2026-08-18** (`tools/math-sim`, and the tuning it forced: 96.107% RTP over twenty
+million rounds, on strips that no longer make the feature a runaway). 572 tests green.
 
 **Next is C6** — the platform layer: responsive layout, audio, i18n and the compliance presets. It is
-also where the feature stops being silent. **S3** (the contract suite) and **S4** (the RTP report,
-which the strips now visibly need — see the Gaps registry on retriggers) can run in parallel.
+also where the feature stops being silent. **S3** (the contract suite) can run in parallel.
 
 ---
 
@@ -56,7 +56,7 @@ contract suite. `#` maps each block back to the phase numbering of the original 
 | **S1** | Fault injection + force outcome + `MockTransport` | S0 | 2 | ✅ (landed 2026-08-18) |
 | **S2** | `apps/mock-rgs` — Fastify wrapper, the real network path | S0 | 2 | ✅ (landed 2026-08-18) |
 | **S3** | The contract suite — one suite, three targets. **The switch-over gate** | S2, R0 | 2 | ☐ |
-| **S4** | `tools/math-sim` — RTP / hit frequency / volatility report | S0 | 8 | ☐ |
+| **S4** | `tools/math-sim` — RTP / hit frequency / volatility report | S0 | 8 | ✅ (landed 2026-08-18) |
 | **R0** | `apps/rgs` skeleton — routes stubbed, `NotImplemented`, wallet seam | C1 | 2 | ☐ |
 | **R1** | Rounds & idempotency on Postgres | R0, S3 | 10 | ☐ |
 | **R2** | Wallet integration behind `WalletProvider` | R1 | 10 | ☐ |
@@ -416,12 +416,25 @@ with `NotImplemented` only — no other kind of failure.
 
 ## Block S4 — `tools/math-sim`
 
-- [ ] Headless CLI importing `rgs-sim` — the same engine the game plays on.
-- [ ] Reports RTP, hit frequency, volatility index, max win, and the win-size distribution.
-- [ ] Reel strips and paytable tuned until RTP converges on the designed figure.
+- [x] Headless CLI importing `rgs-sim` — the same outcome engine the game plays on, over
+      `game-math`'s strips, paytable and award table. A *round* is the unit: one stake buys the base
+      spin and every free spin it leads to.
+- [x] Reports RTP (split base / feature), hit frequency, volatility, max win, spins per trigger,
+      longest feature, and the win-size distribution — with the design targets printed beside the
+      results and a non-zero exit when a row is out of band.
+- [x] Reel strips and paytable tuned until RTP converges on the designed figure: **96.107% over
+      20,000,000 rounds**, `MATH_VERSION` 2.0.0.
 
-**Done when:** `pnpm math-sim --spins 50000000` prints the report and RTP converges within tolerance
-of the design target — and the table goes in the README.
+**Done when:** the report prints and RTP converges within tolerance of the design target — and the
+table goes in the README. ✅ for the measurement (the table is in `CLAUDE.md` until the README exists
+at C8). The headline run is `--spins 20000000` at about 72 seconds; fifty million is the same command
+with a bigger number and no new information — the sampling error is already ±0.07pp at twenty.
+
+**What it found, which is the point of running it:** the untuned strips returned **125%** and
+triggered the feature every fifteenth round, and because a free spin retriggers on the same three
+scatters, the feature was a supercritical branching process — 155 free spins on some seeds. Seven
+scatters instead of fifteen, and a paytable scaled to match, bring it back to a designed 96% with a
+feature that converges.
 
 ## Simulator build order
 

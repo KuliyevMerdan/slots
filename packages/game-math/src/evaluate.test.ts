@@ -7,13 +7,28 @@ import { PAYTABLE } from './paytable.js';
 /**
  * Semantics, one payline at a time.
  *
- * A single line and a 100-unit stake make every expectation checkable by eye against the paytable —
- * which is the point: these tests are the specification of how a win is read. The messy,
- * many-line-at-once behaviour is pinned separately by the golden file.
+ * A single line and a 100-unit stake keep every expectation readable: these tests are the
+ * specification of *how a win is read*, and the messy many-lines-at-once behaviour is pinned
+ * separately by the golden file.
+ *
+ * Amounts are written as `pays(symbol, count) × line bet` rather than as literals. That is not
+ * laziness: the tuned multipliers are S4's and will move again when the math is re-tuned, while the
+ * rules under test here — a run starts on reel one, wilds substitute for anything but the scatter,
+ * a line starting with wilds is paid the better of its two readings, scatters multiply the *total
+ * stake* — do not. What each test pins is the rule; the golden file and `pnpm math-sim` pin the
+ * numbers.
  */
 
 const SINGLE_LINE = [[1, 1, 1, 1, 1]] as const;
 const STAKE = minor(100); // one line × 100 = a line bet of 100
+
+/** The paytable multiplier for `count` of `symbol`, or 0 if that count does not pay. */
+const pays = (symbol: SymbolId, count: number): number =>
+  PAYTABLE.find((entry) => entry.symbol === symbol)?.pays.find((pay) => pay.count === count)
+    ?.multiplier ?? 0;
+
+/** What a line win of `count` × `symbol` is worth on the single-line, 100-unit stake above. */
+const line = (symbol: SymbolId, count: number): number => pays(symbol, count) * 100;
 
 /** `middle` is what lands on the payline; the other rows are filled with non-matching symbols. */
 const grid = (middle: readonly SymbolId[]): SymbolId[][] =>
@@ -38,16 +53,16 @@ describe('line wins', () => {
   it('pays three of a kind', () => {
     const result = run(['L1', 'L1', 'L1', 'H3', 'H1']);
 
-    expect(result.totalWin).toBe(300); // L1 ×3 = 3 × line bet
+    expect(result.totalWin).toBe(line('L1', 3));
     expect(result.wins[0]).toMatchObject({ kind: 'LINE', symbol: 'L1', count: 3, line: 0 });
   });
 
   it('pays four of a kind', () => {
-    expect(run(['L2', 'L2', 'L2', 'L2', 'H1']).totalWin).toBe(800);
+    expect(run(['L2', 'L2', 'L2', 'L2', 'H1']).totalWin).toBe(line('L2', 4));
   });
 
   it('pays five of a kind', () => {
-    expect(run(['H1', 'H1', 'H1', 'H1', 'H1']).totalWin).toBe(25_000);
+    expect(run(['H1', 'H1', 'H1', 'H1', 'H1']).totalWin).toBe(line('H1', 5));
   });
 
   it('reports the winning cells, and only those', () => {
@@ -67,37 +82,43 @@ describe('line wins', () => {
   });
 
   it('stops counting at the first break', () => {
-    expect(run(['L4', 'L4', 'L4', 'H1', 'L4']).totalWin).toBe(100); // L4 ×3, not ×4
+    // Four L4s on the grid but only three in a row, and `L4` does not pay for three — so a break
+    // is worth exactly nothing, which is the strongest form this rule can be asserted in.
+    expect(run(['L4', 'L4', 'L4', 'H1', 'L4']).totalWin).toBe(0);
+    expect(run(['L4', 'L4', 'L4', 'L4', 'H1']).totalWin).toBe(line('L4', 4));
   });
 });
 
 describe('wilds', () => {
   it('substitutes to complete a run', () => {
-    expect(run(['L3', 'L3', 'WILD', 'H1', 'H2']).totalWin).toBe(200); // L3 ×3
+    expect(run(['L3', 'L3', 'WILD', 'H1', 'H2']).totalWin).toBe(line('L3', 3));
   });
 
   it('substitutes in the middle of a longer run', () => {
-    expect(run(['H2', 'H2', 'WILD', 'H2', 'H2']).totalWin).toBe(15_000); // H2 ×5
+    expect(run(['H2', 'H2', 'WILD', 'H2', 'H2']).totalWin).toBe(line('H2', 5));
   });
 
   it('pays the better reading when the line starts with wilds', () => {
     // WILD ×2 pays nothing; WILD WILD standing in for H1 pays five of a kind. The player gets the
     // second reading.
-    expect(run(['WILD', 'WILD', 'H1', 'H1', 'H1']).totalWin).toBe(25_000);
+    expect(run(['WILD', 'WILD', 'H1', 'H1', 'H1']).totalWin).toBe(line('H1', 5));
   });
 
   it('pays as itself when that is worth more', () => {
-    // WILD ×3 = 2000 beats standing in for L4 across four reels = 500.
-    expect(run(['WILD', 'WILD', 'WILD', 'L4', 'H1']).totalWin).toBe(2_000);
+    // Three wilds beat standing in for four L4s — and the test says so in those terms rather than in
+    // numbers, so it keeps meaning that after the next re-tune.
+    expect(line('WILD', 3)).toBeGreaterThan(line('L4', 4));
+    expect(run(['WILD', 'WILD', 'WILD', 'L4', 'H1']).totalWin).toBe(line('WILD', 3));
   });
 
   it('pays the substitution when *that* is worth more', () => {
-    // The mirror case: WILD ×3 = 2000, but standing in for H3 across four reels = 2500.
-    expect(run(['WILD', 'WILD', 'WILD', 'H3', 'H1']).totalWin).toBe(2_500);
+    // The mirror case: four H3s beat three wilds.
+    expect(line('H3', 4)).toBeGreaterThan(line('WILD', 3));
+    expect(run(['WILD', 'WILD', 'WILD', 'H3', 'H1']).totalWin).toBe(line('H3', 4));
   });
 
   it('pays a full line of wilds', () => {
-    expect(run(['WILD', 'WILD', 'WILD', 'WILD', 'WILD']).totalWin).toBe(50_000);
+    expect(run(['WILD', 'WILD', 'WILD', 'WILD', 'WILD']).totalWin).toBe(line('WILD', 5));
   });
 
   it('never substitutes for the scatter', () => {
@@ -130,16 +151,13 @@ describe('scatters', () => {
   it('pays anywhere on the grid, not along a line', () => {
     const result = evaluateScatters(3);
 
-    expect(result.totalWin).toBe(200); // 2 × the total stake
+    expect(result.totalWin).toBe(pays('SCAT', 3) * STAKE); // the *total stake*, not a line bet
     expect(result.wins[0]).toMatchObject({ kind: 'SCATTER', count: 3 });
     expect(result.wins[0]?.line).toBeUndefined();
   });
 
-  it.each([
-    [4, 1_000],
-    [5, 5_000],
-  ])('pays %i scatters', (count, expected) => {
-    expect(evaluateScatters(count).totalWin).toBe(expected);
+  it.each([4, 5])('pays %i scatters', (count) => {
+    expect(evaluateScatters(count).totalWin).toBe(pays('SCAT', count) * STAKE);
   });
 
   it.each([0, 1, 2])('does not pay %i scatters', (count) => {
@@ -158,7 +176,8 @@ describe('scatters', () => {
     });
 
     const scatterWin = result.wins.find((win) => win.kind === 'SCATTER');
-    expect(scatterWin?.amount).toBe(4_000); // 2 × 2000, not 2 × the 100-unit line bet
+    // Against the 2,000 stake, not against the 100-unit line bet it would have on twenty lines.
+    expect(scatterWin?.amount).toBe(pays('SCAT', 3) * 2_000);
   });
 });
 
