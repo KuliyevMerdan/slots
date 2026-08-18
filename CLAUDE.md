@@ -4,32 +4,32 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-> ⚠️ **The game renders, spins, pays and can be mashed through.** As of **2026-08-18**, **C0, C1,
-> S0, S1, C2, S2, C3 and C4 have landed**: the workspace (pnpm + Turborepo, strict TypeScript,
-> enforced dependency boundaries, purity rules, CI), the contracts everything reads — `protocol`,
-> `money`, `game-math` — `rgs-sim`, the pure simulator core, the `RgsTransport` seam with
-> `MockTransport`, `HttpTransport` and the retry policy, `engine`, the headless round FSM,
-> `apps/mock-rgs`, the Fastify wrapper that puts the simulator on a real socket, and `renderer`, `ui`
-> and `apps/game-client` — reels, the five-stage spin curve, a pooled symbol layer, payline
-> highlighting, a tiered big-win counter, turbo, and skip-anything. 531 tests, `pnpm check` green.
-> Three `packages/*` remain scaffolded and empty — `platform`, `compliance`, `dev-tools` — and each
-> `src/index.ts` names the block that fills it.
+> ⚠️ **The game is a game: it spins, pays, runs its feature, and comes back from a reload.** As of
+> **2026-08-18**, **C0, C1, S0, S1, C2, S2, C3, C4 and C5 have landed** — the workspace, the
+> contracts (`protocol`, `money`, `game-math`), `rgs-sim`, the `RgsTransport` seam with
+> `MockTransport`, `HttpTransport` and the retry policy, `engine`, `apps/mock-rgs`, and `renderer`,
+> `ui` and `apps/game-client`: reels, the five-stage spin curve, a pooled symbol layer, payline
+> highlighting, a tiered big-win counter, turbo, skip-anything, free spins with retrigger, and
+> resume. 559 tests, `pnpm check` green. Three `packages/*` remain scaffolded and empty —
+> `platform`, `compliance`, `dev-tools` — and each `src/index.ts` names the block that fills it.
 >
 > **`pnpm dev:client` opens a playable slot.** It authenticates, spins, lands on the server's
-> `stops[]`, lights the paylines it was told won, counts the win up and settles — and survives a
-> reload mid-round, because the in-process simulator persists to `localStorage`. Point it at
-> `apps/mock-rgs` with one environment variable and the same client plays the same game over HTTP.
+> `stops[]`, lights the paylines it was told won, counts the win up, runs the feature and settles.
+> Point it at `apps/mock-rgs` with one environment variable and the same client plays the same game
+> over HTTP.
 >
-> **The interruption contract is real and tested.** [`tests/mash.test.ts`](tests/mash.test.ts) plays
-> a hundred and twenty rounds through the real engine, the real transport, the real simulator and the
-> real renderer while pressing the button at random — mid-spin, mid-count-up, mid-feature — and
-> asserts the client's balance equals the server's after **every** round, including a forced max win
-> mashed from the first frame to the last.
+> **Two properties are tested rather than claimed.**
+> [`tests/mash.test.ts`](tests/mash.test.ts) plays 120 rounds through the real engine, transport,
+> simulator and renderer while pressing the button at random, asserting the client's balance equals
+> the server's after every round. [`tests/resume.test.ts`](tests/resume.test.ts) throws the client
+> away at five points mid-feature — during the intro, mid-spin, between spins, deep in, during the
+> outro — rebuilds it from nothing over a surviving store, and asserts the round finishes exactly
+> once, credited exactly once.
 >
-> **What is deliberately not there yet:** feature screens (**C5** — the intro and outro are still a
-> hold), audio and i18n (**C6**), the debug panel (**C7**), and any measured performance numbers
-> (**C7**). The next block is **C5**, with **S3** (the contract suite) and **S4** (the RTP report)
-> available in parallel.
+> **What is deliberately not there yet:** audio, i18n and the compliance layer (**C6**), the debug
+> panel and the performance pass (**C7**), packaging and the E2E suite (**C8**). The next block is
+> **C6**, with **S3** (the contract suite) and **S4** (the RTP report — which the strips now visibly
+> need) available in parallel.
 >
 > The canon is four documents: `CLAUDE.md` (this file), [`ROADMAP.md`](ROADMAP.md) (the task map),
 > [`RECOMMENDATIONS.md`](RECOMMENDATIONS.md) (the strategic registry) and
@@ -478,6 +478,17 @@ Three details worth knowing:
 - **One counter, two readouts.** The rolling amount is published by the presentation and the client
   feeds it to the HUD, so the number in the banner and the number under `WIN` cannot disagree.
 
+**The feature is the same machinery again** ([`feature.ts`](packages/renderer/src/feature.ts)): an
+intro timeline, an outro that counts the feature's total up, a counter above the reels and a warm
+border that says the rules have changed. Two rules it lives by. **It displays arithmetic the server
+already did** — `FeatureProgress` arrives with `total`, `remaining` and `cumulativeWin` already
+folded, retriggers included, so a retrigger is simply a `total` that grew and the client's whole
+contribution is noticing and announcing it. And **every screen is built from the event that carries
+its data**, never from the phase change: the engine emits `PHASE_CHANGED` *first*, so a banner built
+on the phase announces "0 SPINS" — which is precisely what it did until it was fixed. A phase that
+owes the engine an input and has nothing to show recovers on the next frame with an empty timeline,
+because the one unacceptable outcome is a round that waits forever.
+
 **Turbo is one switch** — `scaleCurve` shortens every duration in the spin curve and the same factor
 scales the presentation. Speed, overshoot and the blur threshold are untouched, because turbo should
 shorten a spin rather than hand the player a different game; and when the compliance layer (C6)
@@ -513,6 +524,17 @@ take, and maps engine phases onto a button label.
   for the next spin, which is how a win presentation is developed at all rather than waited for.
   Both flags are `define`d to literal booleans, so a production build contains neither the flag nor
   the code behind it, and the server refuses `forceOutcome` outside dev mode regardless.
+- **The renderer attaches to a machine already in motion.** The stage cannot be built until
+  `authenticate` has answered — the strips arrive in that response — so a resumed round is announced
+  before anything is listening, and events are not replayed. `GameStage.attach(state)` reads the
+  engine's state once and puts the reels where the round already is. Without it a reload mid-feature
+  hung on motionless reels; with it, the same reload lands on the outcome and plays on.
+- **The client remembers preferences, not the round.** The stake and turbo go through
+  `@slot/protocol`'s `PersistedEnvelope`, and a version mismatch, corrupt JSON or drifted shape is
+  **discarded** rather than repaired — the same rule the simulator's own store obeys. A remembered
+  stake that is no longer on the server's bet ladder is dropped too, because the alternative is a
+  reload that turns into `STAKE_NOT_ALLOWED` on the first spin. Everything else — the balance, the
+  round, the feature — is the server's, and `authenticate` returns it.
 - The loading state is DOM rather than canvas, because it has to be visible before Pixi, the atlas or
   the session exist — and if the boot fails it says why, in words, instead of leaving a black
   rectangle. The 18+/demo notice sits under the canvas on every screen.
@@ -712,6 +734,7 @@ shape.
 | **Unit** | beside the code, Vitest | Pure logic: evaluator (golden-file grids), money arithmetic, FSM transitions, **the spin curve** |
 | **Renderer, headless** | `packages/renderer`, `packages/ui` | Pixi's scene graph is ordinary JavaScript until something draws: with a faked atlas, the stage's whole event contract runs in Node (`config/vitest.pixi.ts` stubs the two globals Pixi reads on import) |
 | **Mash** | `tests/mash.test.ts` | 120 rounds through the real engine, transport, simulator **and renderer**, pressing at random — the client's balance equals the server's after every round |
+| **Resume** | `tests/resume.test.ts` | The client is destroyed and rebuilt at five points mid-feature over a surviving store — the round finishes once, and is credited once |
 | **Engine soak** | `tests/soak.test.ts` | 1,000 seeded rounds incl. features, retries and disconnects, with **no state violations** |
 | **Transport parity** | `tests/http.test.ts` | One round through `MockTransport` and through `HttpTransport`, against identically seeded simulators, **equal field for field** |
 | **Contract** | one suite, three targets | `rgs-sim` in-process · sim over HTTP · `apps/rgs` — the switch-over gate |
@@ -794,6 +817,16 @@ made visible:_
   timeout. Fine for a dev tool bound to `127.0.0.1`, and exactly the list `apps/rgs` cannot ship
   without (R5/R7). Worth stating so its absence reads as a decision.
 
+**Math — visible now that a feature actually plays**
+
+- **The feature retriggers itself half to death.** Playing the trigger scenario across twenty-four
+  seeds gives features of 10, 20, 30 — and 80, 95, 155 free spins. On untuned strips every reel
+  carries scatters, so a retrigger is roughly as likely as the trigger was, and the tail runs away.
+  That is an RTP problem, a session-length problem and a presentation problem at once (a hundred and
+  fifty free spins is not a feature, it is a wait). **S4** owns the tuning; until it lands,
+  `tests/resume.test.ts` pins a seed whose feature is ten spins so the suite stays a fixed-length
+  experiment rather than a coin toss.
+
 **Simulator (`packages/rgs-sim`) — behaviour the real RGS will have to earn**
 
 - **The sim cannot produce an `OPEN` round with no feature.** docs/protocol.md §5 defines that
@@ -843,6 +876,9 @@ made visible:_
 
 **Assets & content**
 
+- **The feature is silent, and so is everything else.** C5 gives the feature a border, a counter and
+  two screens; what tells a player the rules changed in every real slot is the music, and there is no
+  audio layer at all until C6. The gap below is the blocker for it.
 - **Audio has no source, and no licence story.** The art question is answered — the symbol atlas is
   *generated at boot* from shapes and text, so the repository ships no image, licenses nothing and
   attributes nobody, and swapping in real art later replaces one file. Sound cannot be generated as

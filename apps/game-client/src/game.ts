@@ -11,6 +11,7 @@ import { ControlPanel } from '@slot/ui';
 import type { PanelView } from '@slot/ui';
 import { connect } from './transport.js';
 import { newRoundId } from './round-id.js';
+import { loadClientState, saveClientState, stakeFor } from './persistence.js';
 
 /**
  * The wiring site — the one place that knows every piece exists.
@@ -85,6 +86,24 @@ export async function startGame(root: HTMLElement): Promise<Game> {
   root.appendChild(app.canvas);
 
   const config: GameConfig = state.config;
+
+  /**
+   * Preferences survive a reload; the round does not.
+   *
+   * The stake is only adopted when the client came back to an idle table — if `authenticate` handed
+   * back a round in flight, that round has its own stake and the player is mid-way through it.
+   */
+  const remembered = loadClientState(localStorage);
+  const rememberedTurbo = remembered?.turbo ?? false;
+  if (state.phase === 'IDLE') {
+    engine.send({ type: 'SET_STAKE', stake: stakeFor(remembered, config.betLevels) });
+  }
+
+  const remember = (): void => {
+    const current = engine.state;
+    if (!('stake' in current)) return;
+    saveClientState(localStorage, { stake: current.stake, turbo: stage.turbo }, Date.now());
+  };
   const atlas = createSymbolAtlas(app.renderer, symbolsOf(config));
 
   const stage = new GameStage({
@@ -126,12 +145,18 @@ export async function startGame(root: HTMLElement): Promise<Game> {
     },
     onStakeChange: (stake: Minor) => {
       engine.send({ type: 'SET_STAKE', stake });
+      remember();
     },
     onToggleTurbo: (on: boolean) => {
       stage.setTurbo(on);
+      remember();
       render();
     },
   });
+
+  // The session was established before this stage existed, so any round it resumed into was
+  // announced to nobody. Catch up before the first frame — see `GameStage.attach`.
+  stage.attach(engine.state);
 
   const world = new Container();
   stage.view.position.set(0, 0);
@@ -156,6 +181,7 @@ export async function startGame(root: HTMLElement): Promise<Game> {
     );
   };
 
+  stage.setTurbo(rememberedTurbo);
   layout();
   app.renderer.on('resize', layout);
 
@@ -192,11 +218,10 @@ export async function startGame(root: HTMLElement): Promise<Game> {
         if (__ASSERT_MATH__)
           assertWins(config, shownView, engine.state, event.wins, event.totalWin);
         break;
-      case 'FEATURE_PROGRESS':
-        status = `FREE SPINS ${String(event.feature.step)} / ${String(event.feature.total)}`;
-        break;
+      // The feature's own counter lives on the stage, above the reels, where a player looks for it —
+      // so the status line stays out of its way and keeps to what the stage does not say.
       case 'FEATURE_ENDED':
-        status = 'FEATURE COMPLETE';
+        status = '';
         break;
       case 'ROUND_SETTLED':
         win = event.totalWin;

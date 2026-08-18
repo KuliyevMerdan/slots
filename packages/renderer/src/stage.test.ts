@@ -260,6 +260,21 @@ describe('the win presentation', () => {
    * The done-when of this block, at the level that implements it: a skipped presentation must leave
    * exactly what a finished one leaves — the final number, and nothing still lit.
    */
+  /**
+   * A phase that owes the engine an input must never be left without one. Every screen is built from
+   * the event carrying its data, so this cannot happen — and if it ever did, the round would hang
+   * forever, which is why the stage recovers on the next frame instead.
+   */
+  it('never leaves a waiting phase without an answer', () => {
+    const { engine, stage } = build();
+
+    engine.emit({ type: 'PHASE_CHANGED', from: 'STOPPING', to: 'WIN_PRESENTATION' });
+    // No `WINS_PRESENTED`: an ordering nobody produces, and a hang if it were ever produced.
+    for (let frame = 0; frame < 5; frame += 1) stage.update(16.67);
+
+    expect(engine.types).toContain('PRESENTATION_COMPLETE');
+  });
+
   it('leaves the same state whether it is skipped or finished', () => {
     const played = build();
     const skipped = build();
@@ -285,6 +300,7 @@ describe('the win presentation', () => {
     present(engine, 900);
     stage.update(16.67);
     engine.emit({ type: 'SKIPPED', phase: 'WIN_PRESENTATION' });
+    engine.emit({ type: 'PHASE_CHANGED', from: 'WIN_PRESENTATION', to: 'SETTLING' });
     for (let frame = 0; frame < 400; frame += 1) stage.update(16.67);
 
     expect(engine.types).not.toContain('PRESENTATION_COMPLETE');
@@ -320,29 +336,165 @@ describe('the win presentation', () => {
   });
 });
 
-describe('the feature holds (C5 replaces these)', () => {
-  it.each([
-    ['FEATURE_INTRO', 'INTRO_COMPLETE'],
-    ['FEATURE_OUTRO', 'OUTRO_COMPLETE'],
-  ] as const)('answers %s with %s after a hold', (phase, input) => {
+describe('attaching to a round already in motion', () => {
+  /**
+   * The client cannot build a stage until `authenticate` has answered, so a resumed round is
+   * announced before anything is listening. Without `attach`, the reels sit still and the engine
+   * waits forever for a `REELS_STOPPED` nobody will send — which is exactly how a reload mid-feature
+   * used to hang.
+   */
+  it('lands reels the engine targeted before this stage existed', () => {
     const { engine, stage } = build();
+    const stops = [5, 2, 7, 0, 4];
 
-    engine.emit({ type: 'PHASE_CHANGED', from: 'STOPPING', to: phase });
-    stage.update(100);
-    expect(engine.types).not.toContain(input);
+    stage.attach({
+      phase: 'STOPPING',
+      result: { stops, view: viewFor(stops) },
+      stake: 100,
+    } as unknown as EngineState);
+    runToStop(stage, engine);
 
-    stage.update(5_000);
-    expect(engine.types).toContain(input);
+    expect(engine.types).toContain('REELS_STOPPED');
+    expect(stage.reels.grid()).toEqual(viewFor(stops));
   });
 
-  it('drops the pending hold on any other phase change', () => {
+  it('picks the feature back up, counter and all', () => {
+    const { stage } = build();
+
+    stage.attach({
+      phase: 'STOPPING',
+      result: { stops: [0, 0, 0, 0, 0], view: viewFor([0, 0, 0, 0, 0]) },
+      feature: {
+        kind: 'FREE_SPINS',
+        total: 10,
+        remaining: 4,
+        step: 6,
+        cumulativeWin: 900,
+        stakeRef: 100,
+      },
+    } as unknown as EngineState);
+
+    expect(stage.feature.active).toBe(true);
+    expect(stage.feature.counter).toBe('FREE SPIN 7 / 10');
+  });
+
+  it('spins for a round that was debited but never resolved', () => {
+    const { stage } = build();
+
+    stage.attach({ phase: 'SPINNING' } as unknown as EngineState);
+
+    expect(stage.reels.spinning).toBe(true);
+  });
+
+  it('does nothing at an idle table', () => {
+    const { stage } = build();
+
+    stage.attach({ phase: 'IDLE' } as unknown as EngineState);
+
+    expect(stage.reels.spinning).toBe(false);
+    expect(stage.feature.active).toBe(false);
+  });
+});
+
+describe('the feature', () => {
+  const progress = (over: Partial<Record<string, number>> = {}) =>
+    ({
+      kind: 'FREE_SPINS',
+      total: 10,
+      remaining: 7,
+      step: 3,
+      cumulativeWin: 1_200,
+      stakeRef: 100,
+      ...over,
+    }) as never;
+
+  it('plays an intro, and reports it complete', () => {
     const { engine, stage } = build();
 
-    engine.emit({ type: 'PHASE_CHANGED', from: 'STOPPING', to: 'FEATURE_INTRO' });
+    // The engine prepends `PHASE_CHANGED` to the events of a transition, so the phase always
+    // arrives before the data. These tests mirror that order deliberately: building a screen from
+    // the phase rather than from its event is how the intro once announced "0 SPINS".
+    engine.emit({ type: 'PHASE_CHANGED', from: 'WIN_PRESENTATION', to: 'FEATURE_INTRO' });
+    engine.emit({ type: 'FEATURE_AWARDED', total: 10 });
+
+    expect(stage.feature.active).toBe(true);
+    stage.update(100);
+    expect(engine.types).not.toContain('INTRO_COMPLETE');
+
+    stage.update(5_000);
+    expect(engine.types).toContain('INTRO_COMPLETE');
+  });
+
+  it('shows the server’s counter, and never computes one', () => {
+    const { engine, stage } = build();
+
+    engine.emit({ type: 'FEATURE_PROGRESS', feature: progress() });
+
+    expect(stage.feature.counter).toBe('FREE SPIN 4 / 10');
+    // A progress event alone is enough: this is exactly what a mid-feature resume delivers.
+    expect(stage.feature.active).toBe(true);
+  });
+
+  /** A retrigger is a `total` that grew. The server folded the arithmetic; the client notices. */
+  it('announces a retrigger when the total grows mid-feature', () => {
+    const { engine, stage } = build();
+
+    engine.emit({ type: 'FEATURE_AWARDED', total: 10 });
+    engine.emit({ type: 'FEATURE_PROGRESS', feature: progress({ total: 10 }) });
+    expect(stage.feature.announcement).toBeNull();
+
+    engine.emit({ type: 'FEATURE_PROGRESS', feature: progress({ total: 15, remaining: 11 }) });
+
+    expect(stage.feature.announcement).toBe('+5 FREE SPINS');
+    // It rides the spin rather than blocking it, and it does not outlive the round.
+    stage.update(3_000);
+    expect(stage.feature.announcement).toBeNull();
+  });
+
+  it('does not mistake the first award for a retrigger', () => {
+    const { engine, stage } = build();
+
+    engine.emit({ type: 'FEATURE_AWARDED', total: 10 });
+    engine.emit({ type: 'FEATURE_PROGRESS', feature: progress({ total: 10, step: 0 }) });
+
+    expect(stage.feature.announcement).toBeNull();
+  });
+
+  it('counts the feature’s total up in the outro and then puts the screen back', () => {
+    const { engine, stage } = build();
+
+    engine.emit({ type: 'PHASE_CHANGED', from: 'FEATURE_SPINNING', to: 'FEATURE_OUTRO' });
+    engine.emit({ type: 'FEATURE_ENDED', cumulativeWin: 4_500 as never });
+    stage.update(5_000);
+
+    expect(engine.types).toContain('OUTRO_COMPLETE');
+    expect(stage.feature.active).toBe(false);
+  });
+
+  it('leaves nothing behind when the next round starts', () => {
+    const { engine, stage } = build();
+
+    engine.emit({ type: 'FEATURE_PROGRESS', feature: progress() });
+    engine.emit({ type: 'PHASE_CHANGED', from: 'SETTLING', to: 'IDLE' });
+
+    expect(stage.feature.active).toBe(false);
+  });
+
+  it('completes a skipped intro instead of leaving the banner up', () => {
+    const { engine, stage } = build();
+
+    engine.emit({ type: 'PHASE_CHANGED', from: 'WIN_PRESENTATION', to: 'FEATURE_INTRO' });
+    engine.emit({ type: 'FEATURE_AWARDED', total: 10 });
+    stage.update(16.67);
+    // A skip advances the engine, so the phase change follows immediately — as it does in reality.
+    engine.emit({ type: 'SKIPPED', phase: 'FEATURE_INTRO' });
     engine.emit({ type: 'PHASE_CHANGED', from: 'FEATURE_INTRO', to: 'FEATURE_SPINNING' });
     stage.update(5_000);
 
+    // The engine advanced itself, so no completion is owed — and the banner is gone either way.
     expect(engine.types).not.toContain('INTRO_COMPLETE');
+    expect(stage.feature.active).toBe(true);
+    expect(stage.reels.spinning).toBe(true);
   });
 });
 

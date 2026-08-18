@@ -17,4 +17,5 @@ export * from './reels.js';
 export * from './timeline.js';
 export * from './tiers.js';
 export * from './win-presentation.js';
+export * from './feature.js';
 export * from './stage.js';

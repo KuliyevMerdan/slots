@@ -19,7 +19,8 @@
     "@slot/rgs-sim": "workspace:*",
     "@slot/transport": "workspace:*",
     "@slot/ui": "workspace:*",
-    "pixi.js": "catalog:"
+    "pixi.js": "catalog:",
+    "zod": "catalog:"
   },
   "devDependencies": {
     "@types/node": "^20",

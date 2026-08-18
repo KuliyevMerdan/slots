@@ -5,6 +5,7 @@ import type { SymbolAtlas } from './atlas.js';
 import { DEFAULT_CURVE, TURBO_FACTOR, scaleCurve } from './curve.js';
 import type { SpinCurve } from './curve.js';
 import { ReelSet } from './reels.js';
+import { FeatureScreens } from './feature.js';
 import { Timeline } from './timeline.js';
 import { WinPresentation } from './win-presentation.js';
 import { PALETTE, SYMBOL_GAP, SYMBOL_SIZE } from './theme.js';
@@ -45,19 +46,14 @@ export interface GameStageOptions {
   onGridMismatch?: (expected: readonly (readonly string[])[], drawn: readonly string[][]) => void;
 }
 
-/**
- * The feature screens, still a hold rather than a screen.
- *
- * **C5 replaces these**; the win presentation they used to sit beside is real as of C4. They are
- * timelines like everything else, so a skip already completes them correctly — what is missing is
- * something to look at, not something to interrupt.
- */
-const FEATURE_HOLD_MS = { FEATURE_INTRO: 1_200, FEATURE_OUTRO: 1_200 };
+/** Space above the reel frame for the feature counter, which hangs over the top edge. */
+const HEADROOM = SYMBOL_SIZE * 0.55;
 
 export class GameStage {
   readonly view = new Container();
   readonly reels: ReelSet;
   readonly presentation: WinPresentation;
+  readonly feature: FeatureScreens;
 
   readonly #engine: EngineBridge;
   readonly #unsubscribe: () => void;
@@ -72,7 +68,14 @@ export class GameStage {
    * skip has to behave identically whichever is on screen.
    */
   #sequence: { timeline: Timeline; input: EngineInput } | null = null;
+  /** The phase the engine is in, so the stage can tell when it owes an input and has not built one. */
+  #phase: EngineState['phase'] = 'BOOTING';
   #speed = 1;
+  /**
+   * The feature's awarded total, kept for one job only: noticing that it grew, which is a retrigger.
+   * Every other number the feature screens show arrives with the event that needs it.
+   */
+  #featureTotal = 0;
 
   constructor({
     engine,
@@ -107,6 +110,13 @@ export class GameStage {
       ...(onWinAmount === undefined ? {} : { onAmount: onWinAmount }),
     });
 
+    this.feature = new FeatureScreens({
+      width: this.reels.width,
+      height: this.reels.height,
+      currency,
+      ...(locale === undefined ? {} : { locale }),
+    });
+
     const padding = SYMBOL_GAP * 3;
     const frame = new Graphics()
       .roundRect(
@@ -123,9 +133,15 @@ export class GameStage {
       .rect(0, 0, this.reels.width, this.reels.height)
       .fill({ color: PALETTE.reelTrack });
 
-    // The overlay sits above the reels and outside their mask: a payline reads across the whole
+    // Everything is shifted down by the headroom the feature counter needs above the frame. Without
+    // it the counter is drawn outside the stage's own box, and the client's letterbox layout — which
+    // sizes itself from `width`/`height` — clips it against the top of the screen.
+    const content = new Container();
+    content.y = HEADROOM;
+    // The overlays sit above the reels and outside their mask: a payline reads across the whole
     // window, and a big-win plate is not something to clip.
-    this.view.addChild(frame, track, this.reels.view, this.presentation.view);
+    content.addChild(frame, track, this.reels.view, this.presentation.view, this.feature.view);
+    this.view.addChild(content);
     this.#unsubscribe = engine.on((event, state) => {
       this.#handle(event, state);
     });
@@ -136,7 +152,39 @@ export class GameStage {
   }
 
   get height(): number {
-    return this.reels.height + SYMBOL_GAP * 6;
+    return this.reels.height + SYMBOL_GAP * 6 + HEADROOM;
+  }
+
+  /**
+   * Catch up with a machine that is already in motion.
+   *
+   * The client cannot build this stage until `authenticate` has answered — the reel strips arrive in
+   * that response — so on a resumed round the engine has *already* announced where the reels belong
+   * and nobody was listening. Subscribing after the fact is not enough: events are not replayed, and
+   * a renderer that missed them sits on motionless reels while the engine waits for a
+   * `REELS_STOPPED` that will never come. Which is precisely what a reload mid-feature looked like.
+   *
+   * So the stage reads the state once, on attach, and puts itself where the machine already is.
+   * Slammed, because the round happened before the page did.
+   */
+  attach(state: EngineState): void {
+    if ('feature' in state && state.feature !== undefined) {
+      this.#featureTotal = state.feature.total;
+      this.feature.progress(state.feature);
+    }
+
+    if (state.phase === 'SPINNING') {
+      // Debited but never resolved: the engine is re-sending the spin, and its answer will target
+      // reels that are already turning.
+      this.reels.spin(true);
+      return;
+    }
+
+    if ('result' in state) {
+      this.#expected = state.result.view;
+      this.reels.spin(true);
+      this.reels.land(state.result.stops, state.result.view, true);
+    }
   }
 
   /**
@@ -156,12 +204,14 @@ export class GameStage {
 
   /** One frame, delta-time driven throughout. Called from the client's single ticker. */
   update(deltaMs: number): void {
+    this.feature.update(deltaMs);
+
     if (this.reels.update(deltaMs)) {
       this.#assertGrid();
       this.#engine.send({ type: 'REELS_STOPPED' });
     }
 
-    const sequence = this.#sequence;
+    const sequence = this.#sequence ?? this.#recover();
     if (sequence === null) return;
 
     // `advance` reports the frame it *finishes* on; `finished` covers the sequence that had nothing
@@ -174,8 +224,35 @@ export class GameStage {
     this.#engine.send(sequence.input);
   }
 
+  /**
+   * A phase that owes the engine an input, with nothing on screen to produce it.
+   *
+   * Every presentation is built from the event that carries its data — the wins, the spins awarded,
+   * the feature's total — and each of those arrives in the same batch as the phase change, so this
+   * should never fire. It exists because the failure mode if it ever did is the worst one available:
+   * a game that waits forever for an input nobody is going to send. An empty timeline reports itself
+   * complete on the next frame, and the round carries on unpresented rather than not at all.
+   */
+  #recover(): { timeline: Timeline; input: EngineInput } | null {
+    const input: EngineInput | null =
+      this.#phase === 'WIN_PRESENTATION'
+        ? { type: 'PRESENTATION_COMPLETE' }
+        : this.#phase === 'FEATURE_INTRO'
+          ? { type: 'INTRO_COMPLETE' }
+          : this.#phase === 'FEATURE_OUTRO'
+            ? { type: 'OUTRO_COMPLETE' }
+            : null;
+
+    if (input === null) return null;
+
+    const sequence = { input, timeline: new Timeline([]) };
+    this.#sequence = sequence;
+    return sequence;
+  }
+
   destroy(): void {
     this.#unsubscribe();
+    this.feature.destroy();
     this.presentation.destroy();
     this.reels.destroy();
     this.view.destroy({ children: true });
@@ -225,6 +302,37 @@ export class GameStage {
         return;
       }
 
+      case 'FEATURE_AWARDED':
+        // Built here rather than on the phase change, because `PHASE_CHANGED` is emitted *first* and
+        // the number of spins arrives with this event. Building on the phase would show a banner
+        // reading "0 SPINS" — which is exactly what it did.
+        this.#featureTotal = event.total;
+        // Active immediately, not when the intro's first frame runs: the feature has been awarded,
+        // and the border saying so is the answer to "did that just trigger?".
+        this.feature.setActive(true);
+        this.#sequence = {
+          input: { type: 'INTRO_COMPLETE' },
+          timeline: this.feature.intro(event.total, this.#speed),
+        };
+        return;
+
+      case 'FEATURE_PROGRESS': {
+        // A retrigger is a `total` that grew. The server folded the arithmetic; noticing is
+        // presentation, and this is the only place the client is allowed to compare the two.
+        const added = event.feature.total - this.#featureTotal;
+        this.#featureTotal = event.feature.total;
+        this.feature.progress(event.feature);
+        if (added > 0 && this.#featureTotal > added) this.feature.retrigger(added);
+        return;
+      }
+
+      case 'FEATURE_ENDED':
+        this.#sequence = {
+          input: { type: 'OUTRO_COMPLETE' },
+          timeline: this.feature.outro(event.cumulativeWin, this.#speed),
+        };
+        return;
+
       case 'PHASE_CHANGED':
         this.#onPhase(event.to);
         return;
@@ -243,6 +351,7 @@ export class GameStage {
    */
   #onPhase(phase: EngineState['phase']): void {
     this.#sequence = null;
+    this.#phase = phase;
 
     if (phase === 'FEATURE_SPINNING') {
       // A free spin enters this phase without a `SPIN_STARTED` — one round, many spins.
@@ -251,15 +360,13 @@ export class GameStage {
       return;
     }
 
-    if (phase === 'FEATURE_INTRO' || phase === 'FEATURE_OUTRO') {
-      this.#sequence = {
-        input: phase === 'FEATURE_INTRO' ? { type: 'INTRO_COMPLETE' } : { type: 'OUTRO_COMPLETE' },
-        timeline: new Timeline([{ durationMs: FEATURE_HOLD_MS[phase] * this.#speed }]),
-      };
-      return;
+    if (phase === 'IDLE' || phase === 'SPINNING') {
+      this.presentation.clear();
+      // A round that is not a feature must not inherit one: a reload straight after a feature, or a
+      // skipped outro, would otherwise leave the border and the counter on screen forever.
+      this.feature.clear();
+      this.#featureTotal = 0;
     }
-
-    if (phase === 'IDLE' || phase === 'SPINNING') this.presentation.clear();
   }
 
   /**

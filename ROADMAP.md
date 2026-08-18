@@ -24,13 +24,14 @@ named force-outcome scenarios, and the `RgsTransport` seam with `MockTransport`)
 (`apps/mock-rgs`, `HttpTransport`, the HTTP binding — ADR-0004) and **C3 landed 2026-08-18**
 (`renderer`, `ui`, `apps/game-client` — reels on screen, the five-stage spin curve, the generated
 atlas, the sprite pool) and **C4 landed 2026-08-18** (payline highlighting, the tiered big-win
-counter, turbo, skip-anything as a completable timeline, and the paytable re-evaluation assertion).
-531 tests green.
+counter, turbo, skip-anything as a completable timeline, and the paytable re-evaluation assertion)
+and **C5 landed 2026-08-18** (free spins with retrigger, the intro and outro screens, the feature
+counter, preferences through the persistence envelope, and resume proven at five points mid-feature).
+559 tests green.
 
-**Next is C5** — features and resume: free spins with retrigger, intro and outro screens, and a hard
-refresh mid-feature that comes back where it left off. The stage answers `FEATURE_INTRO` and
-`FEATURE_OUTRO` with a hold today, which is the seam C5 replaces. **S3** (the contract suite) and
-**S4** (the RTP report) can run in parallel.
+**Next is C6** — the platform layer: responsive layout, audio, i18n and the compliance presets. It is
+also where the feature stops being silent. **S3** (the contract suite) and **S4** (the RTP report,
+which the strips now visibly need — see the Gaps registry on retriggers) can run in parallel.
 
 ---
 
@@ -47,7 +48,7 @@ contract suite. `#` maps each block back to the phase numbering of the original 
 | **C2** | `engine` FSM + `transport` (retry/backoff/timeout, resume) | C1, S1 | 3 | ✅ (landed 2026-08-18) |
 | **C3** | Reels on screen — Pixi bootstrap, atlas, pool, spin curve | C2 | 4 | ✅ (landed 2026-08-18) |
 | **C4** | Win presentation + interruptibility (slam stop, skip-anything) | C3 | 5 | ✅ (landed 2026-08-18) |
-| **C5** | Features + resume — free spins, retrigger, mid-feature reload | C4, S0 | 6 | ☐ |
+| **C5** | Features + resume — free spins, retrigger, mid-feature reload | C4, S0 | 6 | ✅ (landed 2026-08-18) |
 | **C6** | Platform layer — responsive, audio, i18n, compliance | C4 | 7 | ☐ |
 | **C7** | Dev tools + performance pass | C5, S1 | 8 | ☐ |
 | **C8** | Packaging — deploy, README, Playwright E2E in CI | C6, C7, S4 | 9 | ☐ |
@@ -267,13 +268,22 @@ balance equals the server's after every round.
 
 _3–4 days._
 
-- [ ] Free spins with retrigger; feature intro/outro screens; feature-specific background and music.
-- [ ] Feature state persisted and restored from `pendingRound`.
-- [ ] Feature state written through `protocol`'s `PersistedEnvelope` (the version constant itself is
-      C1 work), plus the test that a `v` mismatch **discards and re-authenticates** rather than
-      best-effort parsing.
+- [x] Free spins with retrigger; feature intro and outro screens; a feature-specific treatment for
+      the reel area (border, counter, cumulative win). **Music is C6's** — there is no audio layer
+      yet, and saying so is more useful than pretending the screen carries the mood alone.
+- [x] Feature state restored from `pendingRound` — which means *not* persisted client-side. The
+      server's round is the authority; the client keeps nothing that could disagree with it, and
+      `GameStage.attach` catches the renderer up with a round that resumed before it existed.
+- [x] Client preferences (stake, turbo) written through `protocol`'s `PersistedEnvelope`, with the
+      test that a `v` mismatch, corrupt JSON or a drifted shape **discards** rather than
+      best-effort parses — plus a remembered stake that is no longer on the server's ladder being
+      dropped rather than sent.
 
-**Done when:** a hard refresh at five arbitrary points mid-feature resumes correctly every time.
+**Done when:** a hard refresh at five arbitrary points mid-feature resumes correctly every time. ✅
+[`tests/resume.test.ts`](tests/resume.test.ts) does exactly that — during the intro, while a free
+spin is landing, between spins, deep into the feature, and during the outro before the credit — by
+destroying the client and rebuilding it over a store that survives, then asserting the round finishes
+and is credited exactly once.
 
 ## Block C6 — Platform layer
 
