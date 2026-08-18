@@ -4,24 +4,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-> ⚠️ **The contracts exist; the game does not.** As of **2026-08-17**, **C0 and C1 have landed**:
-> the workspace (pnpm + Turborepo, strict TypeScript, enforced dependency boundaries, purity rules,
-> CI) and the three packages everything else reads — `protocol`, `money`, `game-math`. 145 tests,
-> `pnpm check` green. The other eight `packages/*` are scaffolded and empty; each `src/index.ts`
+> ⚠️ **The contracts and the server exist; the game does not.** As of **2026-08-18**, **C0, C1 and
+> S0 have landed**: the workspace (pnpm + Turborepo, strict TypeScript, enforced dependency
+> boundaries, purity rules, CI), the three packages everything else reads — `protocol`, `money`,
+> `game-math` — and `rgs-sim`, the pure simulator core that decides outcomes. 251 tests,
+> `pnpm check` green. The other seven `packages/*` are scaffolded and empty; each `src/index.ts`
 > names the block that fills it.
 >
-> **Nothing renders yet.** There is no Pixi, no client, no simulator and no server — the next block
-> is **S0** (the simulator core) with **C2** (engine + transport) behind it.
+> **Nothing renders yet.** There is no Pixi and no client. The simulator plays a complete round —
+> seeded, idempotent, persisted — but only a test harness has ever called it. The next block is
+> **S1** (fault injection, force-outcome scenarios, `MockTransport`), with **C2** (engine +
+> transport) behind it.
 >
 > The canon is four documents: `CLAUDE.md` (this file), [`ROADMAP.md`](ROADMAP.md) (the task map),
 > [`RECOMMENDATIONS.md`](RECOMMENDATIONS.md) (the strategic registry) and
-> [`docs/protocol.md`](docs/protocol.md) (the wire contract, now implemented by
-> `packages/protocol`). Decisions that would surprise a reviewer are in
+> [`docs/protocol.md`](docs/protocol.md) (the wire contract, now implemented by `packages/protocol`
+> and served by `packages/rgs-sim`). Decisions that would surprise a reviewer are in
 > [`docs/adr/`](docs/adr/).
 >
-> Everything below the **Project description** heading describes the shape the code **must take**,
-> not code that exists. Each package/section names the block that brings it into being (`C0`, `S1`,
-> `R2`…). The first block to land is **C0 — Workspace foundations**.
+> Sections below still marked with a block (`C2`, `C3`, `S1`…) describe the shape the code **must
+> take**, not code that exists.
 >
 > **This distinction is load-bearing.** When you implement a block, rewrite its section here in the
 > present tense in the same change ([Rule 0](#rule-0--keep-this-file-updated-after-every-change)) —
@@ -75,7 +77,7 @@ real; everything else is scaffolded and empty, and the block named is the commit
 | `@slot/engine`      | `packages/engine`    | ★ Headless round orchestration + FSM (**no Pixi, no DOM**) | C2   |
 | `@slot/renderer`    | `packages/renderer`  | Pixi layer: reels, symbols, effects                       | C3    |
 | `@slot/ui`          | `packages/ui`        | Pixi UI: buttons, bet selector, HUD, modals               | C3    |
-| `@slot/rgs-sim`     | `packages/rgs-sim`   | ★ Mock server core (pure — runs in a browser or in Node)  | S0    |
+| `@slot/rgs-sim`     | `packages/rgs-sim`   | ★ Mock server core (pure — runs in a browser or in Node)  | ✅ S0 |
 | `@slot/transport`   | `packages/transport` | `RgsTransport` interface + Mock/Http implementations      | C2    |
 | `@slot/platform`    | `packages/platform`  | Audio, storage, visibility, safe-area, device capabilities | C6   |
 | `@slot/compliance`  | `packages/compliance`| Jurisdiction rules, reality check, session/loss/stake limits | C6  |
@@ -89,8 +91,9 @@ Plus `config/` (shared tsconfig, eslint, prettier, vitest presets), `docs/` (`ar
 ### Target protocol surface
 
 **Pinned in [`docs/protocol.md`](docs/protocol.md) (2026-08-16)** — every shape, rule and rejected
-alternative lives there; this is the summary. `packages/protocol` turns it into zod schemas in **C1**.
-Four calls: `authenticate` is read-only, the other three mutate and carry an idempotency key.
+alternative lives there; this is the summary. `packages/protocol` implements it as zod schemas and
+`packages/rgs-sim` serves all four calls. `authenticate` is read-only, the other three mutate and
+carry an idempotency key.
 
 | Call | Key | Purpose |
 | --- | --- | --- |
@@ -112,7 +115,7 @@ export interface RoundResult {
 }
 ```
 
-Six design points that must survive into the implementation:
+Six design points, all of them now load-bearing in `rgs-sim`:
 
 - **`roundId` is generated client-side**, so a retry after a timeout is provably the same round. The
   server returns the original result for a duplicate key rather than spinning again.
@@ -162,6 +165,24 @@ Scoped work uses pnpm filters:
 ```bash
 pnpm --filter @slot/engine test
 ```
+
+### Node is installed under `nvm`, and an agent's `HOME` may not be the real one
+
+Node lives at `/Users/merdan/.nvm/versions/node/v20.19.5/bin` (the `nvm` default alias is `20`,
+matching `engines.node: >=20.19` and `@types/node: ^20`). It is **not** installed system-wide — there
+is no `/opt/homebrew/bin/node`.
+
+Some agent sessions run with `HOME` rewritten to a sandbox instance directory, so `~` does **not**
+resolve to `/Users/merdan`, the `nvm` shim never loads, and every command fails with
+`env: node: No such file or directory` — `pnpm` is on `PATH` but cannot start. Do not conclude Node is
+missing: prepend the absolute path instead.
+
+```bash
+export PATH="/Users/merdan/.nvm/versions/node/v20.19.5/bin:$PATH"; pnpm check
+```
+
+Search `/Users/merdan/...` by absolute path rather than `~/...` when looking for anything else in the
+real home directory.
 
 ## Architecture
 
@@ -355,25 +376,58 @@ Retries always reuse the same `roundId`, which is what makes them safe.
 Implementations: `MockTransport` (calls `rgs-sim` in-process — dev default) and `HttpTransport`
 (`apps/mock-rgs` today, the real RGS later, distinguished by one base URL).
 
-### The simulator is the spec — `packages/rgs-sim` + `apps/mock-rgs`
+### The simulator is the spec — `packages/rgs-sim`
 
-`rgs-sim` is **pure**: given `(state, request)` it returns `(state, response)`. No HTTP, no fs. That
-purity is what lets the same outcome engine serve three consumers — the dev loop, the HTTP path, and
-the 50-million-spin RTP report. One engine behind all three is a far stronger story than three
+`rgs-sim` is **pure**: every handler is `(state, request, context) → (state, response | error)`. No
+HTTP, no fs, no clock of its own — `context` carries the config and an injected `now`. That purity is
+what lets the same outcome engine serve three consumers — the dev loop, the HTTP path (S2) and the
+50-million-spin RTP report (S4). One engine behind all three is a far stronger story than three
 separate hacks, and it means the RTP you publish is the RTP you play.
 
-Required capabilities (**S0–S1**):
+Errors are **returned, not thrown**, so a rejected call still advances the call counter its
+correlation id comes from. `SimServer` is the thin stateful shell that holds the state, validates
+requests against the shared `@slot/protocol` schemas, persists through the store port, and rethrows
+the payload as a `SlotError` for callers who prefer exceptions.
 
-- **Seeded PRNG** — xoshiro128\*\* / PCG32. A given seed replays an identical session.
-- **A server-side round state machine** too: `OPEN → RESOLVED → SETTLED`, persisted.
-- **An idempotency store keyed on `roundId`** — a duplicate key replays the original response.
+| Module | What it owns |
+| --- | --- |
+| `prng.ts` | xoshiro128\*\* seeded from a string, with **rejection sampling** in `nextBelow` — a plain modulo over-represents low stops and would tilt the published RTP. Spin seeds are *derived*, never stored: `(serverSeed, roundId, clientSeed, step)` |
+| `outcome.ts` | Draws the stops, then derives everything else from them. `view`, `wins` and `totalWin` are consequences of `stops`, never inputs — which is what makes the client's dev-build assertion meaningful |
+| `sim.ts` | The four handlers, the round machine `OPEN → RESOLVED → SETTLED`, and the idempotency store |
+| `state.ts` | `SimState` as a zod schema whose inferred type *is* the exported type — the wire discipline, applied to the disk |
+| `store.ts` | The persistence port: `InMemoryStore` and `WebStorageStore` (ADR-0003) |
+| `config.ts` | `MATH_CONFIG` plus the commercial half — bet limits, max win, jurisdiction, `devMode` |
+| `server.ts` | `SimServer` — validation, persistence, `SlotError` |
+
+What it does today (**S0**):
+
+- **Seeded PRNG** — xoshiro128\*\*. Two runs from one seed produce byte-identical round sequences,
+  and that is a test, not a claim.
+- **The round machine**, persisted: a zero-win base round settles atomically, a win goes `RESOLVED`
+  and waits for `settle`, a feature holds the round `OPEN` across its free spins.
+- **Idempotency keyed on `roundId`** (and `(roundId, step)` for free spins): a duplicate replays the
+  stored response — no second spin, no second debit — and a duplicate carrying *different*
+  parameters is `ROUND_CONFLICT`. The comparison is key-order independent, so an honest retry can
+  never be mistaken for a conflict.
+- **Recovery through `pendingRound` alone**, exactly as docs/protocol.md §5 specifies. A reload
+  mid-feature resumes at the next step.
+- **Stake validation and max-win capping** — `STAKE_NOT_ALLOWED`, `INSUFFICIENT_FUNDS` and
+  `SettleRes.capped` all have real producers, so the `PLAYER` error class is testable end to end.
+- **Retrigger arithmetic**, folded server-side. `remaining = total - step` holds through every free
+  spin; the client displays it and never computes it.
+- **A persistence port** with two implementations, in-memory and web-storage. Round history is
+  bounded (`MAX_ROUND_HISTORY`) and only `SETTLED` rounds are ever evicted.
+- **The `forceOutcome` dev gate** — the field is refused unless `GameConfig.devMode`, and refused
+  *before* any other validation, so a tampered request never learns anything else. Explicit `stops[]`
+  work in dev mode; the named scenarios are S1.
+
+Still owed (**S1–S2**):
+
 - **Fault injection**, toggleable at runtime from the debug panel: fixed/jittered latency, per-class
-  error rates, hard disconnect mid-round, slow responses (to exercise the spin timeout).
-- **Force outcome** — a named scenario (`NEAR_MISS`, `FREE_SPINS_TRIGGER`, `MAX_WIN`, `DEAD_SPIN`) or
-  explicit `stops[]`. **Dev builds only, and the server must refuse it unless it is in dev mode** —
-  the gate is server-side, and it is tested.
-- **A persistence adapter interface** with two implementations: in-memory (Node) and `localStorage`
-  (browser), so a page reload genuinely resumes.
+  error rates, hard disconnect mid-round, slow responses (to exercise the spin timeout). Until it
+  exists, the sim has no producer for the `RECOVERABLE` class at all.
+- **Named force-outcome scenarios** — `NEAR_MISS`, `FREE_SPINS_TRIGGER`, `MAX_WIN`, `DEAD_SPIN`.
+- **`apps/mock-rgs`** — the Fastify wrapper that proves the network path.
 
 ### The future backend — `apps/rgs`
 
@@ -454,7 +508,15 @@ made visible:_
   `SESSION_EXPIRED` are pinned, but a `PLAYER` error returns the client to `IDLE` — which, with a
   debited round still `OPEN`, silently abandons the player's money. Either expiry triggers a
   transparent re-authenticate that resumes from `pendingRound`, or the protocol needs a renew call.
-  Decide before C2 maps errors in the transport.
+  `rgs-sim` now produces the code, but deliberately checks expiry on `authenticate` **only** — it
+  will not expire a session mid-feature while the correct behaviour is undecided, because doing so
+  would hide the hole rather than close it. Decide before C2 maps errors in the transport.
+- **`limits.maxWin` is an absolute amount, not a multiple of the stake.** Real max-win caps are
+  expressed as N× the stake actually played, so a minimum-stake player and a maximum-stake player do
+  not share a ceiling — under the current shape they do, and the minimum-stake player's cap is
+  effectively unreachable while the maximum-stake player's binds far too early. `rgs-sim` implements
+  the field as specified rather than working around it. Changing it is a wire change, so it belongs
+  in `docs/protocol.md` first; decide before S4 tunes the math against a ceiling that will move.
 - **Nothing compares the two math versions.** `GameConfig.mathVersion` is on the wire and
   `game-math` now exports `MATH_VERSION`, so both halves exist — but no code puts them side by side.
   The comparison belongs on the authenticate path (the transport is the natural place) and raises
@@ -471,10 +533,12 @@ made visible:_
 
 **Simulator (`packages/rgs-sim`) — behaviour the real RGS will have to earn**
 
-- **Bet limits and max-win capping are unvalidated** (scheduled: **S0**). `GameConfig` carries bet
-  levels and limits, but nothing in the sim rejects a stake outside them (`STAKE_NOT_ALLOWED`) or
-  caps a payout at `limits.maxWin` (`SettleRes.capped`) — so the `PLAYER` error class has no producer
-  and the client's handling of it is untested.
+- **The sim cannot produce an `OPEN` round with no feature.** docs/protocol.md §5 defines that
+  recovery case — "the spin was debited but never resolved" — and the in-process sim has no window
+  in which it can happen: a handler is synchronous, so debit and resolve land in the same call.
+  Only a real RGS that crashes between the two can produce it (R1). The client will implement that
+  branch of recovery against no producer, and the contract suite (S3) has to decide whether to fake
+  one or to mark the case untestable against this target.
 - **Jurisdiction is declared but not enforced.** `GameConfig.jurisdiction` now comes *from* the
   server, which is the right direction, but enforcement still lives entirely in the client's
   `compliance` package (C6). A real regulator requires the *server* to enforce minimum spin duration
@@ -577,4 +641,5 @@ from it:
   `CLAUDE.md` (Rule 0) and the Gaps registry (Rule 1)**.
 - **An ADR for every decision that would surprise a reviewer.** Short, `docs/adr/ADR-000N-*.md`.
   ADR-0001 is the server-authoritative model; ADR-0002 is integer minor units and where the brand
-  lives.
+  lives; ADR-0003 is why the simulator's persistence port takes storage as an argument instead of
+  reaching for `localStorage`.

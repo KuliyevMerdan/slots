@@ -22,7 +22,8 @@
   "dependencies": {
     "@slot/protocol": "workspace:*",
     "@slot/money": "workspace:*",
-    "@slot/game-math": "workspace:*"
+    "@slot/game-math": "workspace:*",
+    "zod": "catalog:"
   },
   "devDependencies": {
     "typescript": "catalog:",

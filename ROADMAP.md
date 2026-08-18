@@ -15,11 +15,13 @@ Check items off as they land. **Every block follows the house pattern:**
 > contract + unit tests green → tick off here + update `CLAUDE.md` (Rule 0) and delete the filled
 > Gaps entries (Rule 1)**
 
-**C0 landed 2026-08-16** (workspace, strict TS, enforced boundaries, purity rules, CI, ADR-0001) and
+**C0 landed 2026-08-16** (workspace, strict TS, enforced boundaries, purity rules, CI, ADR-0001),
 **C1 landed 2026-08-17** (`protocol`, `money`, `game-math` — the contracts everything downstream
-reads, 145 tests green).
+reads) and **S0 landed 2026-08-18** (`rgs-sim` — the pure core that decides outcomes: seeded PRNG,
+the round machine, idempotency, persistence, ADR-0003). 251 tests green.
 
-**Next is S0**, the simulator core: C2 gates on it, because the engine needs something to talk to.
+**Next is S1**, which gives the sim a way to fail on demand and wires `MockTransport` — C2 gates on
+it, because the engine needs something to talk to *and* something to recover from.
 
 ---
 
@@ -40,7 +42,7 @@ contract suite. `#` maps each block back to the phase numbering of the original 
 | **C6** | Platform layer — responsive, audio, i18n, compliance | C4 | 7 | ☐ |
 | **C7** | Dev tools + performance pass | C5, S1 | 8 | ☐ |
 | **C8** | Packaging — deploy, README, Playwright E2E in CI | C6, C7, S4 | 9 | ☐ |
-| **S0** | `rgs-sim` pure core — PRNG, round machine, idempotency, persistence | C1 | 2 | ☐ |
+| **S0** | `rgs-sim` pure core — PRNG, round machine, idempotency, persistence | C1 | 2 | ✅ (landed 2026-08-18) |
 | **S1** | Fault injection + force outcome + `MockTransport` | S0 | 2 | ☐ |
 | **S2** | `apps/mock-rgs` — Fastify wrapper, the real network path | S0 | 2 | ☐ |
 | **S3** | The contract suite — one suite, three targets. **The switch-over gate** | S2, R0 | 2 | ☐ |
@@ -296,27 +298,34 @@ the HTTP path and the 50-million-spin RTP report at once.
 
 ## Block S0 — `rgs-sim` pure core
 
-- [ ] Pure shape: `(state, request) → (state, response)`. No HTTP, no fs, no ambient time.
-- [ ] **Seeded PRNG** — xoshiro128\*\* or PCG32. A seed replays a session identically.
-- [ ] Server-side round machine `OPEN → RESOLVED → SETTLED`, persisted.
-- [ ] **Idempotency store keyed on `roundId`** — duplicate key replays the original response.
-- [ ] Persistence adapter interface with two implementations: in-memory (Node) and `localStorage`
-      (browser), so a page reload genuinely resumes.
-- [ ] Stake validation against `GameConfig` bet levels/limits, and max-win capping — so the `PLAYER`
+- [x] Pure shape: `(state, request) → (state, response)`. No HTTP, no fs, no ambient time.
+- [x] **Seeded PRNG** — xoshiro128\*\*, with rejection sampling so the stop draw carries no modulo
+      bias. Spin seeds are derived from `(serverSeed, roundId, clientSeed, step)`, never stored.
+- [x] Server-side round machine `OPEN → RESOLVED → SETTLED`, persisted.
+- [x] **Idempotency store keyed on `roundId`** — duplicate key replays the original response;
+      a duplicate with different parameters is `ROUND_CONFLICT`.
+- [x] Persistence adapter interface with two implementations: in-memory (Node) and web-storage
+      (browser), so a page reload genuinely resumes — the storage object is injected, never reached
+      for ([ADR-0003](docs/adr/ADR-0003-injected-persistence-port.md)).
+- [x] Stake validation against `GameConfig` bet levels/limits, and max-win capping — so the `PLAYER`
       error class has a real producer.
 
 **Done when:** two runs from the same seed produce byte-identical round sequences, and a replayed
-`roundId` never debits twice.
+`roundId` never debits twice. ✅ Both are tests (`replay.test.ts`), alongside a 200-round soak that
+checks every minor unit is accounted for and a run with every call sent twice. 106 tests in the
+package; 251 across the workspace.
 
 ## Block S1 — Fault injection & force outcome
 
 - [ ] Runtime-toggleable fault injection: fixed/jittered latency (e.g. 80 ms ± 200 ms), per-class
       error rates, hard disconnect mid-round, slow response (to exercise the client's spin timeout).
-- [ ] Force outcome: named scenarios — `NEAR_MISS`, `FREE_SPINS_TRIGGER`, `MAX_WIN`, `DEAD_SPIN` —
-      or explicit `stops[]`.
-- [ ] **Server-side dev-mode gate on `forceOutcome`** — plus the test that a production-mode server
-      refuses a hand-crafted request carrying the field. The stripped client can no longer send it,
-      which is exactly why nothing else would catch a regression there.
+- [ ] Force outcome: the named scenarios — `NEAR_MISS`, `FREE_SPINS_TRIGGER`, `MAX_WIN`,
+      `DEAD_SPIN`. Explicit `stops[]` already works; the scenarios need an outcome search, and the
+      sim refuses them by name until it exists rather than ignoring the field.
+- [x] **Server-side dev-mode gate on `forceOutcome`** — landed with S0, along with the test that a
+      production-mode server refuses a hand-crafted request carrying the field, and the one that
+      proves the refusal comes *before* any other validation. The stripped client can no longer send
+      it, which is exactly why nothing else would catch a regression there.
 - [ ] `MockTransport` wired so `apps/game-client` can run against the sim in-process at zero latency.
 
 **Done when:** the client can be made to fail, hang and disconnect on demand, and each path lands in
