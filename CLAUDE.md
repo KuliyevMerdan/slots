@@ -4,19 +4,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-> ⚠️ **The contracts and the server exist; the game does not.** As of **2026-08-18**, **C0, C1, S0
-> and S1 have landed**: the workspace (pnpm + Turborepo, strict TypeScript, enforced dependency
-> boundaries, purity rules, CI), the three packages everything else reads — `protocol`, `money`,
-> `game-math` — `rgs-sim`, the pure simulator core that decides outcomes and can be made to fail on
-> demand, and the `RgsTransport` seam with `MockTransport` behind it. 317 tests, `pnpm check` green.
-> The other six `packages/*` are scaffolded and empty; each `src/index.ts` names the block that
-> fills it.
+> ⚠️ **The game is playable and invisible.** As of **2026-08-18**, **C0, C1, S0, S1 and C2 have
+> landed**: the workspace (pnpm + Turborepo, strict TypeScript, enforced dependency boundaries,
+> purity rules, CI), the contracts everything reads — `protocol`, `money`, `game-math` — `rgs-sim`,
+> the pure simulator core that decides outcomes and can be made to fail on demand, the
+> `RgsTransport` seam with `MockTransport` and its retry policy, and `engine`, the headless round
+> FSM. 405 tests, `pnpm check` green. The other five `packages/*` are scaffolded and empty; each
+> `src/index.ts` names the block that fills it.
 >
-> **Nothing renders yet.** There is no Pixi and no client. A complete round can be played through
-> the real seam — `tests/wiring.test.ts` does exactly that, including a lost response recovered by
-> retrying the same `roundId` — but nothing draws it. The next block is **C2** (the engine FSM, and
-> the transport's timeout/backoff/retry policy), with **S2** (`apps/mock-rgs`) available in
-> parallel.
+> **Nothing renders yet — and a full session already runs.** [`tests/soak.test.ts`](tests/soak.test.ts)
+> plays a thousand seeded rounds through the real engine, the real transport and the real simulator,
+> then a thousand more through a connection that drops responses and fails wallets, with the money
+> balancing to the minor unit both times. There is no Pixi, no canvas and no client: the next block
+> is **C3** (reels on screen), with **S2** (`apps/mock-rgs`) available in parallel.
 >
 > The canon is four documents: `CLAUDE.md` (this file), [`ROADMAP.md`](ROADMAP.md) (the task map),
 > [`RECOMMENDATIONS.md`](RECOMMENDATIONS.md) (the strategic registry) and
@@ -77,11 +77,11 @@ empty, and the block named is the commitment.
 | `@slot/protocol`    | `packages/protocol`  | ★ Contracts: zod schemas + inferred TS types + error taxonomy | ✅ C1 |
 | `@slot/money`       | `packages/money`     | Branded `Minor` integer units, exact arithmetic, formatting | ✅ C1 |
 | `@slot/game-math`   | `packages/game-math` | Reel strips, paytable, payline evaluator (pure, no I/O)   | ✅ C1 |
-| `@slot/engine`      | `packages/engine`    | ★ Headless round orchestration + FSM (**no Pixi, no DOM**) | C2   |
+| `@slot/engine`      | `packages/engine`    | ★ Headless round orchestration + FSM (**no Pixi, no DOM**) | ✅ C2 |
 | `@slot/renderer`    | `packages/renderer`  | Pixi layer: reels, symbols, effects                       | C3    |
 | `@slot/ui`          | `packages/ui`        | Pixi UI: buttons, bet selector, HUD, modals               | C3    |
 | `@slot/rgs-sim`     | `packages/rgs-sim`   | ★ Mock server core (pure — runs in a browser or in Node)  | ✅ S0 |
-| `@slot/transport`   | `packages/transport` | `RgsTransport` interface + Mock/Http implementations      | ◐ S1  |
+| `@slot/transport`   | `packages/transport` | `RgsTransport` interface + Mock/Http implementations      | ◐ C2  |
 | `@slot/platform`    | `packages/platform`  | Audio, storage, visibility, safe-area, device capabilities | C6   |
 | `@slot/compliance`  | `packages/compliance`| Jurisdiction rules, reality check, session/loss/stake limits | C6  |
 | `@slot/dev-tools`   | `packages/dev-tools` | Debug panel, event log, force-outcome UI                  | C7    |
@@ -312,37 +312,70 @@ expectations — for a deliberate math change, never to make a red test green).
 
 ### Engine — `packages/engine` (the part reviewers actually read)
 
-Zero Pixi imports, runs entirely under Vitest.
+Zero Pixi imports, zero DOM, zero network. Runs entirely under Vitest.
 
 ```
-IDLE
- └▶ SPIN_REQUESTED      (debit optimistic or pending)
-     └▶ SPINNING        (awaiting server; reels already accelerating)
-         └▶ STOPPING    (outcome known, reels decelerating to stops)
-             └▶ WIN_PRESENTATION
-                 ├▶ FEATURE_AWARDED ─▶ FEATURE_INTRO ─▶ FEATURE_SPIN×N ─▶ FEATURE_OUTRO ─┐
-                 └▶ SETTLED ◀─────────────────────────────────────────────────────────────┘
-                     └▶ IDLE
-ERROR (from any state) ─▶ recovery per error class
+BOOTING ─(authenticate)─▶ IDLE ─(PRESS)─▶ SPINNING ─(response)─▶ STOPPING
+                                                                    │
+                                        ┌───────────────────────────┤ (win)
+                                        ▼                           │ (no win)
+                                 WIN_PRESENTATION ──────────────────┤
+                                        │                           │
+              next=FEATURE_SPIN ────────┤                           │
+                                        ▼                           │
+        FEATURE_INTRO ─▶ FEATURE_SPINNING ─▶ STOPPING ─▶ … ─▶ FEATURE_OUTRO
+                                        │                           │
+              next=SETTLE ──────────────┴──────────▶ SETTLING ──────┘
+                                                          │
+                                                          ▼
+                                                        IDLE
+ERROR (from anywhere) ─▶ RETRY | DISMISS | FROZEN, by error class
 ```
 
-- Implement as an **exhaustive discriminated union** with a `switch` TypeScript proves total. A
-  hand-rolled typed FSM (~150 lines) shows more than pulling in XState.
-- Every transition **emits a typed event**; the renderer subscribes. The engine never reaches into
+Two files. [`reduce.ts`](packages/engine/src/reduce.ts) is the machine — pure, total,
+`(state, input) → (state, events, effects)` — and [`engine.ts`](packages/engine/src/engine.ts) is a
+thin driver that performs the effects and publishes the events. Same split as `rgs-sim`, for the
+same reason: all the rules live where a test can drive them a thousand rounds deep without a network.
+
+- **An exhaustive discriminated union**, one shape per phase, with a `switch` TypeScript proves
+  total. Each phase carries exactly what that phase can have — no `result?: RoundResult` dangling
+  off `IDLE` for someone to read by accident.
+- **Every transition emits a typed event**; the renderer subscribes. The engine never reaches into
   the renderer.
-- **Inputs are validated against the current state.** A spin press during `WIN_PRESENTATION` maps to
-  `SKIP`, not a queued second spin. That one rule kills the most common class of slot bug.
+- **Inputs are validated against the current phase.** There is one player input — `PRESS` — and what
+  it means depends on where the machine is. An input a phase cannot service is *rejected*, never
+  queued, and says so via `INPUT_REJECTED` so the debug log can show it was dropped. That single
+  rule kills the most common class of slot bug: the second spin that starts while the first is still
+  paying out.
+- **The engine never computes a balance.** Every phase copies it from the response that carried it.
 
 **The interruption contract lives here, as data:**
 
 | Input during | Effect |
 | --- | --- |
-| `SPINNING` | Slam stop → jump to `STOPPING` with the shortest legal deceleration |
-| `WIN_PRESENTATION` | Skip → all tweens `.progress(1)`, counter snaps to final, state advances |
-| `FEATURE_INTRO` | Skip intro, start the first free spin |
+| `SPINNING` / `FEATURE_SPINNING` | Slam stop → `slam` is set, and rides out on `REELS_TARGETED` |
+| `WIN_PRESENTATION` | Skip → advances to *exactly* the state `PRESENTATION_COMPLETE` would have |
+| `FEATURE_INTRO` / `FEATURE_OUTRO` | Skip → straight to the next free spin, or to the settle |
 
 The renderer **implements** a skip by completing timelines; the engine **decides** that a skip is
-legal. Keep that split — it is why the behaviour stays testable.
+legal. Keep that split — it is why the behaviour stays testable, and it is why the skip test asserts
+that skipping and completing produce an identical state.
+
+**Errors are the taxonomy made into behaviour.** `RECOVERABLE` → `RETRY`, and the retry request is
+*rebuilt from the phase it failed in*, so the `roundId` belongs to the round that is still open and a
+retry structurally cannot mint a new one. `PLAYER` → `DISMISS` back to `IDLE`, no retry offered.
+`FATAL` → `FROZEN`, with no input that leaves it.
+
+**Resume is the same machine, entered halfway.** `AUTHENTICATED` reads `pendingRound` and drops into
+the phase that continues it — re-sending the spin for a round debited but never resolved, or landing
+the reels on a decided outcome and letting the ordinary transitions carry it to the settle. There is
+no separate recovery path to keep in step.
+
+`SlotEngine` takes an `RgsPort` rather than importing `@slot/transport` — the dependency table says
+`engine → protocol, money, game-math`, and any `RgsTransport` satisfies the port structurally. That
+is the third time this shape has earned its place (see [ADR-0003](docs/adr/ADR-0003-injected-persistence-port.md)),
+after the simulator's storage port and `InProcessBackend`: **when a pure package needs something the
+boundary forbids it to import, it takes the shape as an argument.**
 
 ### Renderer + UI — `packages/renderer`, `packages/ui`
 
@@ -391,10 +424,17 @@ and the reason `mock.test.ts` can drive the whole thing with a twenty-line fake.
 test that the two actually meet, so [`tests/wiring.test.ts`](tests/wiring.test.ts) does it at the
 root — standing in for `apps/game-client`, and the seed of the contract suite (S3).
 
-Still owed (**C2**): **timeout, exponential-backoff retry reusing the same `roundId`, and the
-mapping of raw network failures onto the error taxonomy**, so the engine sees classified errors and
-never raw noise. Plus `HttpTransport` (`apps/mock-rgs` today, the real RGS later, distinguished by
-one base URL).
+`withRetry` (**C2**) is the policy, as a decorator so both implementations share one copy of the
+rules. Three of them, and they are the whole point: **only `RECOVERABLE` errors are retried** (a
+`PLAYER` error means retrying changes nothing; a `FATAL` one means hammering the endpoint cannot fix
+a disagreement about reality); **a retry re-sends the identical request**, so the `roundId` is
+unchanged and the server replays rather than re-spins; and **raw network noise never reaches the
+engine** — a rejected `fetch` or an aborted request becomes `UPSTREAM_UNAVAILABLE` here. A server
+that sent `retryAfterMs` wins over the client's own arithmetic, because it knows something the
+client does not. `onRetry` is the seam a debug log or a telemetry reporter hangs on.
+
+Still owed (**S2**): `HttpTransport` — `apps/mock-rgs` today, the real RGS later, distinguished by
+one base URL.
 
 ### The simulator is the spec — `packages/rgs-sim`
 
@@ -546,20 +586,22 @@ made visible:_
   `SESSION_EXPIRED` are pinned, but a `PLAYER` error returns the client to `IDLE` — which, with a
   debited round still `OPEN`, silently abandons the player's money. Either expiry triggers a
   transparent re-authenticate that resumes from `pendingRound`, or the protocol needs a renew call.
-  `rgs-sim` now produces the code, but deliberately checks expiry on `authenticate` **only** — it
-  will not expire a session mid-feature while the correct behaviour is undecided, because doing so
-  would hide the hole rather than close it. Decide before C2 maps errors in the transport.
+  `rgs-sim` produces the code but deliberately checks expiry on `authenticate` **only**, and the
+  engine now makes the consequence concrete: `SESSION_EXPIRED` is `PLAYER`, so `DISMISS` returns to
+  `IDLE` and a debited round is simply abandoned. Nothing re-authenticates. Decide before C6, when
+  the compliance layer starts ending sessions on purpose.
 - **`limits.maxWin` is an absolute amount, not a multiple of the stake.** Real max-win caps are
   expressed as N× the stake actually played, so a minimum-stake player and a maximum-stake player do
   not share a ceiling — under the current shape they do, and the minimum-stake player's cap is
   effectively unreachable while the maximum-stake player's binds far too early. `rgs-sim` implements
   the field as specified rather than working around it. Changing it is a wire change, so it belongs
   in `docs/protocol.md` first; decide before S4 tunes the math against a ceiling that will move.
-- **Nothing compares the two math versions.** `GameConfig.mathVersion` is on the wire and
-  `game-math` now exports `MATH_VERSION`, so both halves exist — but no code puts them side by side.
-  The comparison belongs on the authenticate path (the transport is the natural place) and raises
-  `MATH_VERSION_MISMATCH`; it is scheduled in no block today. Until it exists, a strip edit ships a
-  client drawing reels the server is not playing.
+- **Nothing compares the two math versions.** `GameConfig.mathVersion` is on the wire, `game-math`
+  exports `MATH_VERSION`, and the transport that should put them side by side now exists — and does
+  not. The comparison belongs on the authenticate path and raises `MATH_VERSION_MISMATCH`; it is
+  still scheduled in no block. Until it exists, a strip edit ships a client drawing reels the server
+  is not playing, and `tests/soak.test.ts` would not notice because both halves come from the same
+  workspace.
 
 **Workspace & tooling**
 
@@ -575,10 +617,6 @@ made visible:_
 
 **Simulator (`packages/rgs-sim`) — behaviour the real RGS will have to earn**
 
-- **A dropped response hangs forever, by design, and nothing yet ends the wait.** `MockTransport`
-  models a lost response as a promise that never settles, which is honest — but the timeout that
-  turns it into a `TIMEOUT` is C2's, so today a `dropRate` above zero will hang any caller that is
-  not racing its own timer. The fault is usable; the recovery around it is not built.
 - **The sim cannot produce an `OPEN` round with no feature.** docs/protocol.md §5 defines that
   recovery case — "the spin was debited but never resolved" — and the in-process sim has no window
   in which it can happen: a handler is synchronous, so debit and resolve land in the same call.

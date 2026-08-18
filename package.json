@@ -21,6 +21,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9",
+    "@slot/engine": "workspace:*",
     "@slot/protocol": "workspace:*",
     "@slot/rgs-sim": "workspace:*",
     "@slot/transport": "workspace:*",

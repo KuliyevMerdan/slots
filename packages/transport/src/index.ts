@@ -6,8 +6,9 @@
 //
 // This package may depend on @slot/protocol and nothing else in the workspace, which is why the
 // in-process backend arrives as an injected structural interface instead of an import of
-// @slot/rgs-sim. Timeout, exponential backoff and error classification are block C2; HttpTransport
-// is C2 as well.
+// @slot/rgs-sim. Timeout, exponential backoff and error classification live in retry.ts, as a
+// decorator both implementations share. HttpTransport is still owed (C2/S2).
 
 export * from './transport.js';
 export * from './mock.js';
+export * from './retry.js';

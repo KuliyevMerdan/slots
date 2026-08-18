@@ -18,13 +18,13 @@ Check items off as they land. **Every block follows the house pattern:**
 **C0 landed 2026-08-16** (workspace, strict TS, enforced boundaries, purity rules, CI, ADR-0001),
 **C1 landed 2026-08-17** (`protocol`, `money`, `game-math` — the contracts everything downstream
 reads), **S0 landed 2026-08-18** (`rgs-sim` — the pure core that decides outcomes: seeded PRNG, the
-round machine, idempotency, persistence, ADR-0003) and **S1 landed 2026-08-18** (fault injection,
-the named force-outcome scenarios, and the `RgsTransport` seam with `MockTransport`). 317 tests
-green.
+round machine, idempotency, persistence, ADR-0003), **S1 landed 2026-08-18** (fault injection, the
+named force-outcome scenarios, and the `RgsTransport` seam with `MockTransport`) and **C2 landed
+2026-08-18** (the engine FSM, the retry policy, resume). 405 tests green.
 
-**Next is C2** — the engine FSM, and the transport policy the seam is still missing: timeout,
-exponential-backoff retry on the same `roundId`, and resume from `pendingRound`. **S2**
-(`apps/mock-rgs`) can run in parallel; it needs nothing C2 produces.
+**Next is C3** — reels on screen: the Pixi bootstrap, the atlas, the sprite pool and the spin
+curve. It is the first block that produces something to look at. **S2** (`apps/mock-rgs`) can run in
+parallel and is what `HttpTransport` needs to exist for.
 
 ---
 
@@ -38,7 +38,7 @@ contract suite. `#` maps each block back to the phase numbering of the original 
 | --- | --- | --- | --- | --- |
 | **C0** | Workspace, strict TS, boundary lint, CI, ADR-0001 | — | 0 | ✅ (landed 2026-08-16) |
 | **C1** | `protocol` · `money` · `game-math` — the contracts everything reads | C0 | 1 | ✅ (landed 2026-08-17) |
-| **C2** | `engine` FSM + `transport` (retry/backoff/timeout, resume) | C1, S1 | 3 | ☐ |
+| **C2** | `engine` FSM + `transport` (retry/backoff/timeout, resume) | C1, S1 | 3 | ✅ (landed 2026-08-18) |
 | **C3** | Reels on screen — Pixi bootstrap, atlas, pool, spin curve | C2 | 4 | ☐ |
 | **C4** | Win presentation + interruptibility (slam stop, skip-anything) | C3 | 5 | ☐ |
 | **C5** | Features + resume — free spins, retrigger, mid-feature reload | C4, S0 | 6 | ☐ |
@@ -181,22 +181,29 @@ when C3 and S2 import them.
 
 _4–5 days. The part reviewers actually read. Gates on **S1** for something to talk to._
 
-- [ ] `packages/engine`: the round FSM as an exhaustive discriminated union, total `switch`, typed
+- [x] `packages/engine`: the round FSM as an exhaustive discriminated union, total `switch`, typed
       events out. **Zero Pixi imports.**
-- [ ] Input validation against current state — a spin press during `WIN_PRESENTATION` is a `SKIP`,
-      not a queued spin.
-- [ ] The **interruption contract as data** (slam stop · skip presentation · skip feature intro):
-      the engine decides legality, the renderer will implement completion.
-- [ ] `packages/transport`: `RgsTransport` interface, `MockTransport`, timeout + exponential-backoff
-      retry reusing the same `roundId`, failures mapped onto the error taxonomy.
-- [ ] Resume: reconstruct engine state from `pendingRound`.
-- [ ] Free-spin sequencing incl. retrigger arithmetic.
-- [ ] Tests: every legal transition and rejection of every illegal one · retry with an identical
-      `roundId` produces exactly one debit · resume from each persistable state · skip during every
-      animatable state leaves consistent final state.
+- [x] Input validation against current state — a spin press during `WIN_PRESENTATION` is a `SKIP`,
+      not a queued spin. An input a phase cannot service emits `INPUT_REJECTED` rather than
+      vanishing.
+- [x] The **interruption contract as data** (slam stop · skip presentation · skip feature intro):
+      the engine decides legality, the renderer will implement completion. Skipping and completing
+      are asserted to produce an identical state.
+- [x] `packages/transport`: `RgsTransport` interface, `MockTransport`, timeout + exponential-backoff
+      retry reusing the same `roundId`, failures mapped onto the error taxonomy. `HttpTransport` is
+      left to S2, where there is a server to point it at.
+- [x] Resume: reconstruct engine state from `pendingRound` — the same machine, entered halfway.
+- [x] Free-spin sequencing incl. retrigger arithmetic — forwarded, never recomputed.
+- [x] Tests: every legal transition and rejection of every illegal one (a phase × input table) ·
+      retry with an identical `roundId` produces exactly one debit · resume from each persistable
+      state · skip during every animatable state leaves consistent final state.
 
 **Done when:** a headless Vitest run plays **1,000 seeded rounds** including features, retries and
-disconnects with no state violations — and no canvas anywhere in sight.
+disconnects with no state violations — and no canvas anywhere in sight. ✅
+[`tests/soak.test.ts`](tests/soak.test.ts) does it twice: once clean, once through a connection that
+drops 5% of responses *after* the server acted and fails wallets on top. Every observed phase change
+is checked against a legal-transition table, and the money balances to the minor unit both times.
+405 tests across the workspace.
 
 ## Block C3 — Reels on screen
 
