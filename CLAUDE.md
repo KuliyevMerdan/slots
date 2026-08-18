@@ -4,23 +4,27 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-> ⚠️ **The game is playable, over a network, and invisible.** As of **2026-08-18**, **C0, C1, S0,
-> S1, C2 and S2 have landed**: the workspace (pnpm + Turborepo, strict TypeScript, enforced
-> dependency boundaries, purity rules, CI), the contracts everything reads — `protocol`, `money`,
-> `game-math` — `rgs-sim`, the pure simulator core that decides outcomes and can be made to fail on
-> demand, the `RgsTransport` seam with `MockTransport`, `HttpTransport` and the retry policy,
-> `engine`, the headless round FSM, and `apps/mock-rgs`, the Fastify wrapper that puts the simulator
-> on a real socket. 455 tests, `pnpm check` green. The other five `packages/*` are scaffolded and
-> empty; each `src/index.ts` names the block that fills it.
+> ⚠️ **The game renders, spins and pays — against a simulator you can make fail on demand.** As of
+> **2026-08-18**, **C0, C1, S0, S1, C2, S2 and C3 have landed**: the workspace (pnpm + Turborepo,
+> strict TypeScript, enforced dependency boundaries, purity rules, CI), the contracts everything
+> reads — `protocol`, `money`, `game-math` — `rgs-sim`, the pure simulator core, the `RgsTransport`
+> seam with `MockTransport`, `HttpTransport` and the retry policy, `engine`, the headless round FSM,
+> `apps/mock-rgs`, the Fastify wrapper that puts the simulator on a real socket, and now `renderer`,
+> `ui` and `apps/game-client` — reels on screen, the five-stage spin curve, a pooled symbol layer and
+> a control panel. 497 tests, `pnpm check` green. Three `packages/*` remain scaffolded and empty —
+> `platform`, `compliance`, `dev-tools` — and each `src/index.ts` names the block that fills it.
 >
-> **Nothing renders yet — and a full session already runs, two ways.**
-> [`tests/soak.test.ts`](tests/soak.test.ts) plays a thousand seeded rounds through the real engine,
-> the real transport and the real simulator, then a thousand more through a connection that drops
-> responses and fails wallets, with the money balancing to the minor unit both times.
-> [`tests/http.test.ts`](tests/http.test.ts) plays a round through `MockTransport` and through
-> `HttpTransport` against an identically seeded simulator and asserts the two responses are equal
-> field for field — *"swap the transport URL"* is now a test, not a claim. There is no Pixi, no
-> canvas and no client: the next block is **C3** (reels on screen).
+> **`pnpm dev:client` opens a playable slot.** It authenticates, spins, lands on the server's
+> `stops[]`, settles, and survives a reload mid-round because the in-process simulator persists to
+> `localStorage`. Point it at `apps/mock-rgs` with one environment variable and the same client plays
+> the same game over HTTP — [`tests/http.test.ts`](tests/http.test.ts) asserts the two paths produce
+> equal responses field for field, and the spin curve's landing is proven stop by stop in
+> [`curve.test.ts`](packages/renderer/src/curve.test.ts).
+>
+> **What is deliberately not there yet:** a win presentation (paylines light up in **C4**; today the
+> stage holds for a beat and reports itself done), feature screens (**C5**), audio and i18n (**C6**),
+> the debug panel (**C7**), and any measured performance numbers (**C7**). The next block is **C4**,
+> with **S3** (the contract suite) and **S4** (the RTP report) available in parallel.
 >
 > The canon is four documents: `CLAUDE.md` (this file), [`ROADMAP.md`](ROADMAP.md) (the task map),
 > [`RECOMMENDATIONS.md`](RECOMMENDATIONS.md) (the strategic registry) and
@@ -75,15 +79,15 @@ empty, and the block named is the commitment.
 
 | Package             | Path                 | Role                                                     | Block |
 | ------------------- | -------------------- | -------------------------------------------------------- | ----- |
-| `@slot/game-client` | `apps/game-client`   | The deliverable — Pixi client on Vite                     | C0/C3 |
+| `@slot/game-client` | `apps/game-client`   | The deliverable — Pixi client on Vite                     | ✅ C3 |
 | `@slot/mock-rgs`    | `apps/mock-rgs`      | Fastify wrapper around `rgs-sim` — proves the network path | ✅ S2 |
 | `@slot/rgs`         | `apps/rgs`           | Node.js RGS skeleton — routes stubbed, `NotImplemented`    | R0    |
 | `@slot/protocol`    | `packages/protocol`  | ★ Contracts: zod schemas + inferred TS types + error taxonomy | ✅ C1 |
 | `@slot/money`       | `packages/money`     | Branded `Minor` integer units, exact arithmetic, formatting | ✅ C1 |
 | `@slot/game-math`   | `packages/game-math` | Reel strips, paytable, payline evaluator (pure, no I/O)   | ✅ C1 |
 | `@slot/engine`      | `packages/engine`    | ★ Headless round orchestration + FSM (**no Pixi, no DOM**) | ✅ C2 |
-| `@slot/renderer`    | `packages/renderer`  | Pixi layer: reels, symbols, effects                       | C3    |
-| `@slot/ui`          | `packages/ui`        | Pixi UI: buttons, bet selector, HUD, modals               | C3    |
+| `@slot/renderer`    | `packages/renderer`  | Pixi layer: reels, symbols, spin curve, generated atlas    | ✅ C3 |
+| `@slot/ui`          | `packages/ui`        | Pixi UI: spin button, bet selector, HUD                    | ✅ C3 |
 | `@slot/rgs-sim`     | `packages/rgs-sim`   | ★ Mock server core (pure — runs in a browser or in Node)  | ✅ S0 |
 | `@slot/transport`   | `packages/transport` | `RgsTransport` interface + Mock/Http implementations      | ✅ S2 |
 | `@slot/platform`    | `packages/platform`  | Audio, storage, visibility, safe-area, device capabilities | C6   |
@@ -395,31 +399,85 @@ boundary forbids it to import, it takes the shape as an argument.**
 
 ### Renderer + UI — `packages/renderer`, `packages/ui`
 
-The engine gets you past code review; **the feel gets you the offer.** Budget real time here.
+The engine gets you past code review; **the feel gets you the offer.** This is where the time went.
 
-**Spin curve** — five stages, all delta-time driven, never frame-count driven:
+**The spin curve is pure code with tests**, which is the trick that makes feel reviewable at all.
+[`curve.ts`](packages/renderer/src/curve.ts) is `(motion, dt) → motion` with no Pixi in sight, so
+`curve.test.ts` can assert the things that must be true underneath the animation: every stop on the
+strip is landed **exactly**, at three different frame rates; the five stages run in order; a slam
+lands sooner *on the same stop*; the reel dips backwards before it launches and returns to where it
+started. Five stages, all delta-time driven, never frame-count driven:
 
-1. **Anticipation dip** — a brief hold before acceleration (~60 ms)
+1. **Anticipation dip** — a brief backwards hold before acceleration (~60 ms)
 2. **Acceleration** — ease-in to blur velocity (~200 ms)
-3. **Constant velocity** — blurred symbols
-4. **Deceleration** — ease-out toward the target stop
-5. **Overshoot + settle** — travel ~0.3 symbol past, spring back
+3. **Constant velocity** — blurred symbols, and where a reel waits for its turn
+4. **Deceleration** — ease-out onto a landing computed once, absolutely
+5. **Overshoot + settle** — travel 0.32 symbols past, spring back, land on the integer
 
-Stage 5 is the single detail that separates a slot that feels right from one that doesn't. Stagger
-reel stops ~120–180 ms apart, and add **scatter anticipation**: when reels 1–2 land scatters, reels
-3+ slow dramatically with a rising audio cue. Cheap to build, instantly recognisable to anyone from
-the industry.
+Stage 5 is the single detail that separates a slot that feels right from one that doesn't. Reel stops
+are staggered 140 ms apart, and **scatter anticipation** holds reels 3+ for nearly a second when the
+landed reels could still complete a trigger.
 
-**Performance rules — these are hard constraints, not aspirations:**
+Two things are worth knowing about how the reels are drawn. **The curve's position only increases**
+— that keeps the arithmetic monotonic and the landing exact — while the reel spins *downward*,
+because the strip index is read backwards from the position; the caller pays one line
+(`stripLength - stop`) and the reel comes to rest showing exactly the grid the server sent. And
+**`SCAT` is not a name this package knows**: the anticipation symbol is injected, because
+`renderer → protocol, engine, money` does not include `game-math`.
+
+**The symbol atlas is generated at boot, into one texture** ([`atlas.ts`](packages/renderer/src/atlas.ts)).
+That answers two constraints with one decision. The performance rules want a single texture — one
+draw-call batch for the symbol layer — and motion blur as a *pre-rendered texture swap* rather than a
+`BlurFilter`. And this repository is public, which makes shipped art a licensing question rather than
+a shopping one. Drawing the symbols ourselves means no binary asset, no licence and no attribution,
+while still producing one `RenderTexture` sliced into frames that share a source and therefore batch.
+The blurred variant is a **vertical smear** — a spinning reel blurs along one axis — laid out two
+rows down, because the smear reaches past its own cell and would otherwise ghost into the sharp
+frame. Real art replaces this file and nothing else.
+
+**Performance rules — hard constraints, not aspirations, and all of them hold today:**
 
 - One texture atlas, one draw-call batch for the symbol layer.
-- **Symbol object pool** — allocate `reels × (visible + 2)` sprites at boot; never instantiate during
-  a spin.
-- Motion blur via a **pre-rendered blurred symbol texture** swapped in above a velocity threshold —
-  **not** a Pixi `BlurFilter` (filters break batching and cost a render target).
-- **Zero allocation in the ticker:** no closures, no array literals, no object spreads per frame.
-- Mask reels with a rectangle mask, not a filter.
-- Target **60 fps on a mid-range Android**. Capture the trace; put the numbers in the README.
+- **Symbol object pool** — `reels × (rows + 2)` sprites allocated at boot; nothing is instantiated
+  during a spin.
+- Motion blur by swapping the pre-rendered smeared texture above a velocity threshold.
+- **Zero allocation in the ticker:** no closures, no array literals, no object spreads per frame. The
+  one exception is documented where it lives — `advance` returns a new `ReelMotion` per reel per
+  frame, which is what keeps the curve pure and testable, and is five small objects against a budget
+  that bans per-frame closures.
+- Reels are masked with a rectangle, not a filter.
+- Target **60 fps on a mid-range Android**. The trace and the numbers are **C7**; nothing here claims
+  them yet.
+
+`@slot/ui` is the control surface: spin button, bet selector, balance/win HUD. It takes a **view
+model, not an engine** — `ui → protocol, money` is the whole dependency list — so the client maps
+phases onto `PanelView` and the interruption contract stays in the engine where it is tested. Two
+rules hold throughout: the HUD **never computes money** (every number it shows arrived from the
+server), and the stake is always one of `GameConfig.betLevels`.
+
+### The client — `apps/game-client`
+
+Vite plus about four hundred lines, and **no game rules anywhere in it**. It is the wiring site: the
+one file in the project that imports everything, supplies the arguments each package was designed to
+take, and maps engine phases onto a button label.
+
+- **Which server it talks to is one environment variable.** `VITE_RGS_TRANSPORT=mock` constructs the
+  simulator in the tab — persisted through `WebStorageStore(localStorage)`, so a reload mid-round
+  really does resume through `pendingRound` — and `http` constructs `HttpTransport`. Both are wrapped
+  in `withRetry`, so the retry rules are one implementation.
+- **The browser reaches `apps/mock-rgs` through Vite's dev proxy**, not through CORS. `/rgs`, `/demo`
+  and `/dev` are forwarded, so the client makes same-origin requests in development and the mock
+  server never has to hand out `Access-Control-Allow-Origin: *`.
+- **`roundId` is minted here, as a UUIDv7** — the client-side key that makes a retry provably the same
+  round. The engine takes it as an injected factory because a pure package may not reach for `crypto`.
+- **Both dev gates are wired.** `__ASSERT_MATH__` compares the server's `view` against its own
+  `stops` *and* the grid actually drawn against the grid the server sent, screaming into the console
+  on either mismatch; `__DEV_TOOLS__` currently exposes `window.__slot` for the console and is what
+  C7's debug panel will hang off. Both are `define`d to literal booleans, so a production build
+  contains neither the flag nor the code behind it.
+- The loading state is DOM rather than canvas, because it has to be visible before Pixi, the atlas or
+  the session exist — and if the boot fails it says why, in words, instead of leaving a black
+  rectangle. The 18+/demo notice sits under the canvas on every screen.
 
 ### Transport — `packages/transport`
 
@@ -613,7 +671,8 @@ shape.
 
 | Layer | Where | What it proves |
 | --- | --- | --- |
-| **Unit** | beside the code, Vitest | Pure logic: evaluator (golden-file grids), money arithmetic, FSM transitions |
+| **Unit** | beside the code, Vitest | Pure logic: evaluator (golden-file grids), money arithmetic, FSM transitions, **the spin curve** |
+| **Renderer, headless** | `packages/renderer`, `packages/ui` | Pixi's scene graph is ordinary JavaScript until something draws: with a faked atlas, the stage's whole event contract runs in Node (`config/vitest.pixi.ts` stubs the two globals Pixi reads on import) |
 | **Engine soak** | `tests/soak.test.ts` | 1,000 seeded rounds incl. features, retries and disconnects, with **no state violations** |
 | **Transport parity** | `tests/http.test.ts` | One round through `MockTransport` and through `HttpTransport`, against identically seeded simulators, **equal field for field** |
 | **Contract** | one suite, three targets | `rgs-sim` in-process · sim over HTTP · `apps/rgs` — the switch-over gate |
@@ -679,17 +738,19 @@ made visible:_
   targets. The HTTP one also plays a single round where the soak plays a thousand: the network path
   has no equivalent of `tests/soak.test.ts`, so a fault that only manifests under sustained load over
   a socket has nothing looking for it. S3 is where both are fixed.
-- **Four packages still have no boundary rule.** The dependency table covers `protocol`, `money`,
-  `game-math`, `engine`, `rgs-sim`, `transport`, `renderer`, `ui` and now `apps/mock-rgs` — so
-  `platform`, `compliance`, `dev-tools` and `game-client` are unconstrained: today nothing stops
-  `compliance` importing Pixi or `platform` importing the engine. Decide what each may reach (C6/C7
-  are the natural moments) and add the rules; until then the enforcement story has four holes in it.
+- **Three packages still have no boundary rule.** The dependency table covers `protocol`, `money`,
+  `game-math`, `engine`, `rgs-sim`, `transport`, `renderer`, `ui` and `apps/mock-rgs` — so
+  `platform`, `compliance` and `dev-tools` are unconstrained: today nothing stops `compliance`
+  importing Pixi or `platform` importing the engine. (`apps/game-client` is deliberately
+  unconstrained — it is the wiring site, and it may reach everything.) Decide what each may reach
+  (C6/C7 are the natural moments) and add the rules; until then the enforcement story has three holes
+  in it.
 
-- **A browser cannot call `apps/mock-rgs` yet.** The server sends no CORS headers, so the Vite client
-  on `:5173` talking to `:8787` will be blocked the moment C3 tries it — the parity proven in
-  `tests/http.test.ts` is proven from Node, where the same-origin policy does not apply. Two honest
-  fixes: a Vite dev proxy (client-side, no server change, and what most studios do) or `@fastify/cors`
-  on the mock. Pick one in C3 rather than discovering it while debugging a blank canvas.
+- **The cross-origin question is deferred, not answered.** Development works because Vite proxies
+  `/rgs`, `/demo` and `/dev` to `apps/mock-rgs`, so the browser makes same-origin requests and the
+  server never widens CORS. A *deployed* client (C8) has no proxy: either it is served from the same
+  origin as the RGS, or the RGS grows a real CORS policy. Decide it in C8 rather than at the point a
+  built bundle silently fails against a live server.
 - **The HTTP server has no limits of its own** — no rate limiting, no body-size cap, no request
   timeout. Fine for a dev tool bound to `127.0.0.1`, and exactly the list `apps/rgs` cannot ship
   without (R5/R7). Worth stating so its absence reads as a decision.
@@ -716,20 +777,29 @@ made visible:_
 
 **Client — implied by the domain, built by no block**
 
+- **Nothing in the client can force an outcome.** The simulator honours `forceOutcome` in dev mode
+  and `rgs-sim` ships four named scenarios, but the engine builds every spin request without the
+  field and no UI can set it — so a feature, a near miss or a max win can only be reached by waiting
+  for one. C4 and C5 are about presenting exactly those, which makes the debug panel (C7) a
+  dependency of *developing* them rather than a nicety after them. Either bring the force-outcome
+  control forward or accept that C4/C5 are demoed by luck.
 - **Autoplay does not exist, yet the UK preset disables it.** Every real slot has autoplay, the
   compliance work (C6) assumes it, and no block builds it — including the loss/win-limit stop
   conditions regulators actually care about. Either schedule it or state in the README that it is out
   of scope; the current position is an inconsistency.
 - **No game history / "last rounds" surface.** Regulated markets require a player-visible round
   history, and `roundId` + the persisted round state already make it nearly free.
-- **A capped max win has no presentation.** `SettleRes.capped` says the payout was clipped by
-  `limits.maxWin`, and C4 sequences the win presentation from `result.wins` — which will happily
-  count up to a number the player is not paid. The player has to be told, and in most regulated
-  markets that is a requirement rather than a courtesy.
-- **Accessibility is unaddressed everywhere.** No `prefers-reduced-motion` path (a spinning,
-  flashing canvas is the textbook trigger), no colourblind-safe treatment for win highlighting
-  (currently implied to be colour-only), no screen-reader story for a canvas game — not even an
-  announced balance/win region. This is both a production gap and a genuine review signal.
+- **A capped max win is a status line, not a presentation.** `SettleRes.capped` now reaches the
+  player as the words `MAXIMUM WIN REACHED` under the button, which is better than silence and is not
+  what a regulated market means by telling them. C4 sequences the win presentation from
+  `result.wins` — which will happily count up to a number the player is not paid — so the real
+  treatment belongs there.
+- **Accessibility is unaddressed, and now concretely so.** The reels spin with no
+  `prefers-reduced-motion` path — the spin curve has no reduced variant and the loading spinner only
+  slows down — the symbol set is distinguished by colour *and* glyph but win highlighting (C4) is
+  implied to be colour-only, and a canvas game has no screen-reader story at all: the balance and win
+  are pixels, not an announced region. The HTML shell is the obvious place for a live region, and the
+  curve already takes its timings as data, so neither fix is large. Both are unscheduled.
 - **A `FATAL` error is reported to nobody.** The debug panel exports an event log *locally*; there is
   no telemetry seam, so a schema mismatch in a deployed build is invisible. The fix is a `Telemetry`
   port with a console adapter, called from the error boundary and the FSM's illegal-transition path —
@@ -737,11 +807,11 @@ made visible:_
 
 **Assets & content**
 
-- **No art or audio source is identified.** The plan assumes a texture atlas and an audio sprite;
-  nothing says where they come from. For a **public** portfolio repository this is a licensing
-  question, not a shopping question — the symbols, background, and sound effects must be CC0 or
-  properly licensed, with attribution in the README. Branded clones are out of scope for exactly this
-  reason. Blocks C3–C5 cannot look finished without resolving it.
+- **Audio has no source, and no licence story.** The art question is answered — the symbol atlas is
+  *generated at boot* from shapes and text, so the repository ships no image, licenses nothing and
+  attributes nobody, and swapping in real art later replaces one file. Sound cannot be generated as
+  cheaply: C6 assumes an audio sprite, and for a **public** repository every clip has to be CC0 or
+  properly licensed with attribution in the README. Resolve it before C6, not during.
 - **Font coverage for RU is unverified.** i18n ships en/ru (C6). Many display faces carry no Cyrillic;
   if the chosen face doesn't, a Russian build silently falls back per glyph and the type design
   simply doesn't apply to half the supported languages. Verify the actual `.ttf`/atlas when the face

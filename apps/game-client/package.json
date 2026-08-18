@@ -1,0 +1,30 @@
+{
+  "name": "@slot/game-client",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite",
+    "preview": "vite preview",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run --config ../../config/vitest.package.ts"
+  },
+  "dependencies": {
+    "@slot/engine": "workspace:*",
+    "@slot/game-math": "workspace:*",
+    "@slot/money": "workspace:*",
+    "@slot/protocol": "workspace:*",
+    "@slot/renderer": "workspace:*",
+    "@slot/rgs-sim": "workspace:*",
+    "@slot/transport": "workspace:*",
+    "@slot/ui": "workspace:*",
+    "pixi.js": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vitest": "catalog:"
+  }
+}

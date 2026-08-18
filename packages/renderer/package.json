@@ -17,12 +17,13 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "vitest run --config ../../config/vitest.package.ts"
+    "test": "vitest run --config ../../config/vitest.pixi.ts"
   },
   "dependencies": {
     "@slot/protocol": "workspace:*",
     "@slot/engine": "workspace:*",
-    "@slot/money": "workspace:*"
+    "@slot/money": "workspace:*",
+    "pixi.js": "catalog:"
   },
   "devDependencies": {
     "typescript": "catalog:",

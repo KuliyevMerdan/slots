@@ -7,7 +7,9 @@ packages:
 # A single edit here moves the whole workspace — and drift becomes impossible.
 catalog:
   fastify: ^5
+  pixi.js: ^8
   tsx: ^4
   typescript: ^5
+  vite: ^8
   vitest: ^3
   zod: ^4

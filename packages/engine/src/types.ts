@@ -14,6 +14,9 @@ import type {
   SpinRes,
   Win,
 } from '@slot/protocol';
+// The wire's session — who the player is, in what currency, until when. Aliased because this module
+// already has a `Session`, which is a different thing: the money a phase carries.
+import type { Session as PlayerSession } from '@slot/protocol';
 
 /**
  * The round lifecycle, as a discriminated union.
@@ -153,7 +156,17 @@ export type EngineEffect =
  */
 export type EngineEvent =
   | { readonly type: 'PHASE_CHANGED'; readonly from: Phase; readonly to: Phase }
-  | { readonly type: 'SESSION_READY'; readonly config: GameConfig; readonly balance: Minor }
+  /**
+   * `session` is carried because the client cannot format money without `currency`, and the currency
+   * is the server's — the same rule as the balance. It is published rather than stored in every
+   * phase: it does not change within a session, so a listener captures it once.
+   */
+  | {
+      readonly type: 'SESSION_READY';
+      readonly session: PlayerSession;
+      readonly config: GameConfig;
+      readonly balance: Minor;
+    }
   | { readonly type: 'BALANCE_CHANGED'; readonly balance: Minor }
   | { readonly type: 'STAKE_CHANGED'; readonly stake: Minor }
   | { readonly type: 'SPIN_STARTED'; readonly roundId: RoundId; readonly stake: Minor }

@@ -14,6 +14,8 @@
     "lint": "eslint . && pnpm run lint:boundaries",
     "lint:boundaries": "depcruise packages apps --config .dependency-cruiser.cjs",
     "check": "pnpm run lint && pnpm run build && pnpm run typecheck && pnpm run test && pnpm run test:root && pnpm run format:check",
+    "dev": "turbo run dev --filter=@slot/game-client --filter=@slot/mock-rgs",
+    "dev:client": "pnpm --filter @slot/game-client dev",
     "dev:rgs": "pnpm --filter @slot/mock-rgs dev",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

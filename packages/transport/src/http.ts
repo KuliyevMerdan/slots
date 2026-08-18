@@ -85,7 +85,11 @@ const resolveFetch = (): FetchLike => {
   if (host === undefined) {
     throw new TypeError('HttpTransport needs a fetch implementation: pass one as options.fetch');
   }
-  return host;
+  // Bound, and this is not defensive coding: a browser's `fetch` refuses to run with any receiver
+  // but `window`, so storing it on an instance and calling `this.#fetch(...)` throws "Illegal
+  // invocation". A plain function injected by a test has no such requirement, which is exactly why
+  // this cannot be caught anywhere but in a browser.
+  return host.bind(globalThis) as FetchLike;
 };
 
 /**

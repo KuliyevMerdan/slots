@@ -20,12 +20,15 @@ Check items off as they land. **Every block follows the house pattern:**
 reads), **S0 landed 2026-08-18** (`rgs-sim` — the pure core that decides outcomes: seeded PRNG, the
 round machine, idempotency, persistence, ADR-0003), **S1 landed 2026-08-18** (fault injection, the
 named force-outcome scenarios, and the `RgsTransport` seam with `MockTransport`), **C2 landed
-2026-08-18** (the engine FSM, the retry policy, resume) and **S2 landed 2026-08-18**
-(`apps/mock-rgs`, `HttpTransport`, the HTTP binding — ADR-0004). 455 tests green.
+2026-08-18** (the engine FSM, the retry policy, resume), **S2 landed 2026-08-18**
+(`apps/mock-rgs`, `HttpTransport`, the HTTP binding — ADR-0004) and **C3 landed 2026-08-18**
+(`renderer`, `ui`, `apps/game-client` — reels on screen, the five-stage spin curve, the generated
+atlas, the sprite pool). 497 tests green.
 
-**Next is C3** — reels on screen: the Pixi bootstrap, the atlas, the sprite pool and the spin curve.
-It is the first block that produces something to look at, and the first that has to choose how the
-browser reaches `apps/mock-rgs` (Vite proxy or CORS — see the Gaps registry).
+**Next is C4** — the win presentation and interruptibility: paylines, a tiered big-win counter, turbo,
+and the skip-anything behaviour the engine already decides is legal. The stage currently answers
+`WIN_PRESENTATION` with a placeholder hold, which is the seam C4 replaces. **S3** (the contract suite)
+and **S4** (the RTP report) can run in parallel.
 
 ---
 
@@ -40,7 +43,7 @@ contract suite. `#` maps each block back to the phase numbering of the original 
 | **C0** | Workspace, strict TS, boundary lint, CI, ADR-0001 | — | 0 | ✅ (landed 2026-08-16) |
 | **C1** | `protocol` · `money` · `game-math` — the contracts everything reads | C0 | 1 | ✅ (landed 2026-08-17) |
 | **C2** | `engine` FSM + `transport` (retry/backoff/timeout, resume) | C1, S1 | 3 | ✅ (landed 2026-08-18) |
-| **C3** | Reels on screen — Pixi bootstrap, atlas, pool, spin curve | C2 | 4 | ☐ |
+| **C3** | Reels on screen — Pixi bootstrap, atlas, pool, spin curve | C2 | 4 | ✅ (landed 2026-08-18) |
 | **C4** | Win presentation + interruptibility (slam stop, skip-anything) | C3 | 5 | ☐ |
 | **C5** | Features + resume — free spins, retrigger, mid-feature reload | C4, S0 | 6 | ☐ |
 | **C6** | Platform layer — responsive, audio, i18n, compliance | C4 | 7 | ☐ |
@@ -211,21 +214,29 @@ is checked against a legal-transition table, and the money balances to the minor
 
 _5–6 days._
 
-- [ ] Pixi bootstrap in `apps/game-client` (Vite), texture atlas, asset loading with a real loading
-      state.
-- [ ] `packages/renderer`: reel controller, **symbol object pool** allocated at boot
-      (`reels × (visible + 2)`), rectangle mask (not a filter).
-- [ ] The five-stage spin curve — anticipation dip → acceleration → constant velocity →
-      deceleration → **overshoot and settle**. Delta-time driven throughout.
-- [ ] Staggered reel stops (~120–180 ms) + **scatter anticipation** on reels 3+.
-- [ ] Motion blur by swapping a pre-rendered blurred texture above a velocity threshold — **not** a
+- [x] Pixi bootstrap in `apps/game-client` (Vite), texture atlas, loading state — DOM rather than
+      canvas, because it covers the window before Pixi, the atlas or the session exist.
+- [x] `packages/renderer`: reel controller, **symbol object pool** allocated at boot
+      (`reels × (rows + 2)`), rectangle mask (not a filter).
+- [x] The five-stage spin curve — anticipation dip → acceleration → constant velocity →
+      deceleration → **overshoot and settle**. Delta-time driven throughout, pure, and tested:
+      every stop on the strip is landed exactly, at three frame rates.
+- [x] Staggered reel stops (140 ms) + **scatter anticipation** when the landed reels could still
+      complete a trigger.
+- [x] Motion blur by swapping a pre-rendered smeared texture above a velocity threshold — **not** a
       `BlurFilter`.
-- [ ] `packages/ui`: spin button, bet selector, balance/win HUD.
-- [ ] Wire to engine events; the renderer subscribes and never calls back into the engine's
-      internals.
+- [x] `packages/ui`: spin button, bet selector, balance/win HUD — driven by a view model, never by
+      an engine.
+- [x] Wire to engine events; the renderer subscribes and sends back only the two facts it owns
+      (`REELS_STOPPED`, and the presentation stubs C4 replaces).
+- [x] The art licensing question, answered by removing it: **the atlas is generated at boot**, so the
+      repository ships no image and licenses nothing.
 
 **Done when:** it spins, stops exactly on the server's `stops[]`, and holds 60 fps on a throttled
-mobile profile.
+mobile profile. ✅ for the first two — landing is asserted stop by stop in `curve.test.ts` and the
+drawn grid is compared against the server's view on every spin (`__ASSERT_MATH__`). **The fps claim
+is not made yet:** `tools/perf-harness` and the measured numbers are C7, and until then the README
+says nothing about frame rate.
 
 ## Block C4 — Win presentation & interruptibility
 

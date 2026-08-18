@@ -493,7 +493,7 @@ function authenticated(
   const { config, balance } = response;
   const pending = response.pendingRound;
   const ready: EngineEvent[] = [
-    { type: 'SESSION_READY', config, balance },
+    { type: 'SESSION_READY', session: response.session, config, balance },
     { type: 'BALANCE_CHANGED', balance },
   ];
 
