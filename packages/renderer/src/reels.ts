@@ -44,6 +44,11 @@ export interface ReelSetOptions {
    */
   anticipationSymbol?: string;
   anticipationTrigger?: number;
+  /**
+   * Fired on the frame each reel comes to rest — the audio layer's tick, one per reel, in stagger
+   * order. Presentation only: by the time a reel lands, the outcome was decided long ago.
+   */
+  onReelLanded?: (reel: number) => void;
 }
 
 export class ReelSet {
@@ -66,6 +71,9 @@ export class ReelSet {
    * ticker rules exist to prevent.
    */
   readonly #lit: boolean[][] = [];
+  /** Per-reel rest state from the previous frame — the edge detector `onReelLanded` fires on. */
+  readonly #wasStopped: boolean[] = [];
+  readonly #onReelLanded: ((reel: number) => void) | undefined;
   #emphasised = false;
   #spinning = false;
 
@@ -78,12 +86,14 @@ export class ReelSet {
     gap = SYMBOL_GAP,
     anticipationSymbol = 'SCAT',
     anticipationTrigger = 3,
+    onReelLanded,
   }: ReelSetOptions) {
     this.rows = rows;
     this.#strips = strips;
     this.#curve = { ...DEFAULT_CURVE, ...curve };
     this.#anticipationSymbol = anticipationSymbol;
     this.#anticipationTrigger = anticipationTrigger;
+    this.#onReelLanded = onReelLanded;
     this.#symbolSize = symbolSize;
 
     const cell = symbolSize + gap;
@@ -95,6 +105,8 @@ export class ReelSet {
       this.#motions.push(parked(0));
       this.#window.addChild(reel.view);
       this.#lit.push(new Array<boolean>(rows).fill(false));
+      // Parked reels are at rest; the edge detector must not tick before the first spin.
+      this.#wasStopped.push(true);
       reel.update(0, false);
     });
 
@@ -130,6 +142,7 @@ export class ReelSet {
         { reel, slam: slamRequested, anticipated: false },
         this.#curve,
       );
+      this.#wasStopped[reel] = false;
     }
   }
 
@@ -230,7 +243,15 @@ export class ReelSet {
       });
       this.#motions[index] = next;
       reel.update(next.position, isBlurred(next, this.#curve));
-      if (!isStopped(next)) allStopped = false;
+      if (isStopped(next)) {
+        // The landing edge, once per reel per spin — the audio tick in stagger order.
+        if (this.#wasStopped[index] !== true) {
+          this.#wasStopped[index] = true;
+          this.#onReelLanded?.(index);
+        }
+      } else {
+        allStopped = false;
+      }
     }
 
     if (!allStopped) return false;

@@ -1,7 +1,9 @@
 # Wire protocol
 
 **Status:** decisions pinned **2026-08-16**; implemented by `packages/protocol` (C1), served by
-`packages/rgs-sim` (S0/S1) and carried over HTTP by `apps/mock-rgs` and `HttpTransport` (S2). This
+`packages/rgs-sim` (S0/S1) and carried over HTTP by `apps/mock-rgs` and `HttpTransport` (S2);
+amended **2026-08-19** (C6) — jurisdiction rules travel on the wire (§2.1, D8) and an expiring
+session mid-round has a recovery story (§5, D9). This
 document is the contract; the code is downstream of it. When the wire changes, change this file and
 `packages/protocol` **first**, then the simulator, then the engine, then the UI.
 
@@ -67,8 +69,18 @@ interface GameConfig {
   paylines:     number[][];      // row index per reel
   betLevels:    Minor[];
   limits:       { minStake: Minor; maxStake: Minor; maxWinMultiplier: number };
-  jurisdiction: JurisdictionId;  // the server declares it; the client applies it (C6)
+  jurisdiction: JurisdictionId;       // which regime this session is under
+  jurisdictionRules: JurisdictionRules; // what that regime means, stated per session — D8
   devMode:      boolean;         // whether this server accepts `forceOutcome` at all
+}
+
+interface JurisdictionRules {
+  /** A base-game cycle may not start sooner than this after the previous one. 0 = no floor. */
+  minSpinIntervalMs:      number;
+  turboAllowed:           boolean;
+  autoplayAllowed:        boolean;
+  /** How often play must be interrupted with a reality check. 0 = never. */
+  realityCheckIntervalMs: number;
 }
 ```
 
@@ -79,6 +91,24 @@ different math model than the server is playing, and fail loudly instead of draw
 ceiling expressed in money is a formality at the top bet level and unreachable at the bottom, so the
 same game would have a different maximum win depending on how the player bet. The cap for a round is
 `stake × maxWinMultiplier`, and §3 says when it is applied.
+
+**The rules travel with the config, not just the id** (D8). An id alone would make the client's
+preset table the authority on what a regime means — the same mistake as client-side math, one layer
+up. Instead the server states what it enforces, and the client applies exactly what it was told.
+`JURISDICTION_PRESETS`, exported from `@slot/protocol` beside `JURISDICTIONS`, is the baseline
+meaning of each id — what a server serves unless an operator configuration overrides it per market;
+the wire carries whatever the server actually enforces.
+
+**Enforcement is split by what each side can observe.** The server can see cadence and nothing else:
+a `spin` arriving less than `minSpinIntervalMs` after the previous accepted `spin` is refused with
+`LIMIT_REACHED` (`PLAYER`). Turbo, autoplay and the reality check are presentation facts a server
+cannot observe, so the client's compliance layer is their enforcement point — and the interval is
+what keeps a non-compliant client visible anyway, because turbo's only server-visible effect *is*
+cadence. Three details are deliberate: the interval is measured between **accepted base-game
+`spin` calls** (a free spin is a step inside a round, paced by presentation, not by this rule); an
+idempotent replay is exempt, because replay precedes validation (§4); and a compliant client never
+triggers the refusal at all — it paces the button, so the server-side check exists to catch the
+client that does not.
 
 ### 2.2 `spin`
 
@@ -338,6 +368,21 @@ adding up results it may never have seen.
 what makes a credit from outside the game — or a settle the client never saw the response to —
 visible: reconnecting always re-reads the balance.
 
+**An expiring session mid-round resolves through this same path** (D9). Any authenticated call can
+fail with `SESSION_EXPIRED` — the server checks expiry on every call, not only on `authenticate` —
+and what the client does depends on whether a round is open:
+
+- **No round in flight** → `SESSION_EXPIRED` behaves as any `PLAYER` error: a modal, back to `IDLE`.
+- **A round in flight** → returning to `IDLE` would abandon a debited round, so the client
+  re-authenticates *transparently*: it obtains a fresh token through the same out-of-band lobby seam
+  that issued the first one (§7), calls `authenticate`, and resumes from `pendingRound` exactly as a
+  reload does. The player sees a pause, not a modal.
+
+There is deliberately **no renew call**: three servers would have to carry it, and the recovery path
+above already exists and is tested. One transparent attempt per failure — if the re-authenticate
+itself fails, that failure surfaces as an ordinary error under §6, because a client looping on
+re-auth against a server that keeps refusing is a client hammering an endpoint that already said no.
+
 ---
 
 ## 6. Errors
@@ -364,6 +409,12 @@ already knows both from `GameConfig`, so the distinction buys nothing at the bou
 `FORCE_OUTCOME_REFUSED` is `FATAL` on purpose: a production client cannot send the field, so
 receiving the refusal means the request was tampered with or the build is wrong.
 
+Two codes carry context the table cannot: `SESSION_EXPIRED` is `PLAYER`, but with a round in flight
+the client re-authenticates transparently instead of showing the modal (§5, D9) — the class still
+holds, because retrying *the failed call* changes nothing; what recovers is a different call. And
+`LIMIT_REACHED` has a jurisdictional producer: a `spin` arriving before `minSpinIntervalMs` has
+passed (§2.1).
+
 ---
 
 ## 7. Where the session token comes from
@@ -376,6 +427,11 @@ For the demo, `apps/mock-rgs` exposes `POST /demo/session → { token }` and the
 exposes an equivalent helper. **Both are dev affordances standing in for the operator, not part of
 the game contract** — they are documented here so the auth path is honest rather than fictional.
 `apps/rgs` replaces this with real session validation in **R5**.
+
+Issuing a session **renews** it: asking the demo lobby again extends the running session's
+`expiresAt` rather than wiping the game, exactly as an operator lobby would hand a returning player
+a fresh token onto the same wallet. This is what makes the §5 mid-round recovery playable — the
+fresh token re-attaches to the same balance and the same `pendingRound`.
 
 ---
 
@@ -484,3 +540,22 @@ compute money.
 the client deciding what a player won, which is the one thing ADR-0001 forbids.
 *Rejected:* leaving `FeatureProgress.cumulativeWin` alongside `roundWin`. They would always be the
 same number, and two fields that must agree are a defect waiting for the day they do not.
+
+**D8 — Jurisdiction rules travel on the wire; the id is a name, not the meaning.** (2026-08-19)
+`GameConfig.jurisdictionRules` states what the regime requires — spin cadence, turbo, autoplay, the
+reality check — and both sides apply it: the server enforces the half it can observe (cadence), the
+client's compliance layer applies the rest. `JURISDICTION_PRESETS` in `@slot/protocol` is the
+baseline meaning of each id; an operator config may override per market, and the wire carries what
+is actually enforced.
+*Rejected:* a client-side preset table keyed on the id alone. It makes the client the authority on
+what a regulator requires — a UK session against a server whose idea of UK differs would enforce the
+client's idea, silently. The rules are data the server declares, like everything else it declares.
+
+**D9 — No renew call; an expired session mid-round recovers through `authenticate`.** (2026-08-19)
+§5 defines it: with a round open, the client transparently re-authenticates with a fresh token from
+the lobby seam (§7) and resumes from `pendingRound`; with no round open, `SESSION_EXPIRED` stays an
+ordinary `PLAYER` modal. Expiry is checked on **every** call, so the code finally has a mid-round
+producer.
+*Rejected:* a `renew` call. Three servers would have to carry and test it, and it would exist only
+to avoid a recovery path that already exists, is already tested, and already handles every other
+way a session dies.

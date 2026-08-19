@@ -19,5 +19,10 @@ export const UI_PALETTE = {
   danger: 0xff6b6b,
 } as const;
 
+/**
+ * Inter first — the OFL face the client ships (via `@fontsource/inter`, latin + cyrillic subsets),
+ * chosen because the i18n catalogue includes Russian and a display face without Cyrillic falls back
+ * per glyph. The rest is the system stack the game booted with before the font arrives.
+ */
 export const UI_FONT =
-  '"Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", system-ui, sans-serif';
+  'Inter, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", system-ui, sans-serif';

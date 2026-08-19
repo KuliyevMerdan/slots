@@ -42,6 +42,13 @@ export interface SlotEngineOptions {
   /** Injected: this package may not reach for `crypto`, any more than it may for a clock. */
   newRoundId: RoundIdFactory;
   /**
+   * The lobby seam: how this client gets a fresh token, for the transparent mid-round
+   * re-authenticate (docs/protocol.md §5, D9). The same source `start()`'s token came from —
+   * injected, because tokens are issued out of band (§7) and the engine has no lobby of its own.
+   * Without it, `SESSION_EXPIRED` stays an ordinary `PLAYER` modal in every phase.
+   */
+  renewSession?: () => Promise<string>;
+  /**
    * A development hook: what the next base spin should be forced to, if anything.
    *
    * The client only wires one behind `__DEV_TOOLS__`, and the server refuses the field outside dev
@@ -53,15 +60,17 @@ export interface SlotEngineOptions {
 export class SlotEngine {
   readonly #port: RgsPort;
   readonly #newRoundId: RoundIdFactory;
+  readonly #renewSession: (() => Promise<string>) | undefined;
   readonly #forceOutcome: (() => ForceOutcome | undefined) | undefined;
   readonly #listeners = new Set<EngineListener>();
   #state: EngineState = initialState;
   /** Effects run one at a time, in order — a round is a sequence, not a fan-out. */
   #draining: Promise<void> = Promise.resolve();
 
-  constructor({ port, newRoundId, forceOutcome }: SlotEngineOptions) {
+  constructor({ port, newRoundId, renewSession, forceOutcome }: SlotEngineOptions) {
     this.#port = port;
     this.#newRoundId = newRoundId;
+    this.#renewSession = renewSession;
     this.#forceOutcome = forceOutcome;
   }
 
@@ -93,6 +102,7 @@ export class SlotEngine {
   send(input: EngineInput): EngineState {
     const transition = reduce(this.#state, input, {
       newRoundId: this.#newRoundId,
+      canReauthenticate: this.#renewSession !== undefined,
       ...(this.#forceOutcome === undefined ? {} : { forceOutcome: this.#forceOutcome }),
     });
     this.#state = transition.state;
@@ -137,6 +147,20 @@ export class SlotEngine {
         case 'CALL_SETTLE':
           this.send({ type: 'SETTLE_RESOLVED', response: await this.#port.settle(effect.request) });
           return;
+        case 'CALL_REAUTHENTICATE': {
+          // The reducer only asks for this when `canReauthenticate` was true, which it derives from
+          // this very field — the guard is for a driver bug, not a reachable state.
+          const renew = this.#renewSession;
+          if (renew === undefined) {
+            throw new SlotError('SESSION_EXPIRED', 'no lobby seam to renew the session through');
+          }
+          const token = await renew();
+          this.send({
+            type: 'REAUTHENTICATED',
+            response: await this.#port.authenticate({ token }),
+          });
+          return;
+        }
       }
     } catch (error) {
       this.send({ type: 'CALL_FAILED', error: asSlotError(error) });

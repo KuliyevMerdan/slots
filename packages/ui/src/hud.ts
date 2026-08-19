@@ -80,6 +80,9 @@ export class Readout {
 export interface HudOptions {
   currency: string;
   locale?: string;
+  /** Injectable captions, so the wiring site can localise them (C6, en/ru). */
+  balanceCaption?: string;
+  winCaption?: string;
 }
 
 /** Balance on the left, win on the right — the layout every player already knows how to read. */
@@ -88,10 +91,15 @@ export class Hud {
   readonly balance: Readout;
   readonly win: Readout;
 
-  constructor({ currency, locale = 'en' }: HudOptions) {
-    this.balance = new Readout({ caption: 'BALANCE', currency, locale });
+  constructor({
+    currency,
+    locale = 'en',
+    balanceCaption = 'BALANCE',
+    winCaption = 'WIN',
+  }: HudOptions) {
+    this.balance = new Readout({ caption: balanceCaption, currency, locale });
     this.win = new Readout({
-      caption: 'WIN',
+      caption: winCaption,
       currency,
       locale,
       colour: UI_PALETTE.win,

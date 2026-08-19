@@ -12,8 +12,10 @@ import {
 import type { SpinCurve } from './curve.js';
 import { ReelSet } from './reels.js';
 import { FeatureScreens } from './feature.js';
+import type { FeatureLabels } from './feature.js';
 import { Timeline } from './timeline.js';
 import { WinPresentation } from './win-presentation.js';
+import type { WinLabels } from './win-presentation.js';
 import { PALETTE, SYMBOL_GAP, SYMBOL_SIZE } from './theme.js';
 
 /**
@@ -44,6 +46,10 @@ export interface GameStageOptions {
   anticipationTrigger?: number;
   /** The rolling win amount, for the HUD. Always ends on the final total, skip or no skip. */
   onWinAmount?: (amount: Minor) => void;
+  /** Each reel's landing frame, in stagger order — the audio layer's tick. Passed to `ReelSet`. */
+  onReelLanded?: (reel: number) => void;
+  /** Localised sentences for the screens that speak (C6, en/ru). Defaults are the English ones. */
+  labels?: { feature?: FeatureLabels; win?: WinLabels };
   /**
    * The dev-build assertion (`__ASSERT_MATH__`): the grid drawn versus the grid the server sent.
    * A mismatch means the client is showing the player something other than the committed outcome,
@@ -97,6 +103,8 @@ export class GameStage {
     anticipationTrigger,
     onGridMismatch,
     onWinAmount,
+    onReelLanded,
+    labels,
   }: GameStageOptions) {
     this.#engine = engine;
     this.#onGridMismatch = onGridMismatch;
@@ -109,6 +117,7 @@ export class GameStage {
       ...(curve === undefined ? {} : { curve }),
       ...(anticipationSymbol === undefined ? {} : { anticipationSymbol }),
       ...(anticipationTrigger === undefined ? {} : { anticipationTrigger }),
+      ...(onReelLanded === undefined ? {} : { onReelLanded }),
     });
 
     this.presentation = new WinPresentation({
@@ -117,6 +126,7 @@ export class GameStage {
       currency,
       ...(locale === undefined ? {} : { locale }),
       ...(onWinAmount === undefined ? {} : { onAmount: onWinAmount }),
+      ...(labels?.win === undefined ? {} : { labels: labels.win }),
     });
 
     this.feature = new FeatureScreens({
@@ -124,6 +134,7 @@ export class GameStage {
       height: this.reels.height,
       currency,
       ...(locale === undefined ? {} : { locale }),
+      ...(labels?.feature === undefined ? {} : { labels: labels.feature }),
     });
 
     const padding = SYMBOL_GAP * 3;

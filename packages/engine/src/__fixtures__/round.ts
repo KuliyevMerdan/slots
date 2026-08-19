@@ -10,7 +10,7 @@ import type {
   SettleRes,
   SpinRes,
 } from '@slot/protocol';
-import { SlotError } from '@slot/protocol';
+import { JURISDICTION_PRESETS, SlotError } from '@slot/protocol';
 import { minor } from '@slot/money';
 import { BET_LEVELS, MATH_CONFIG } from '@slot/game-math';
 import type { EngineState, Phase } from '../types.js';
@@ -33,6 +33,7 @@ export const CONFIG: GameConfig = {
   betLevels: [...BET_LEVELS],
   limits: { minStake: minor(20), maxStake: minor(4_000), maxWinMultiplier: 5_000 },
   jurisdiction: 'DEFAULT',
+  jurisdictionRules: JURISDICTION_PRESETS.DEFAULT,
   devMode: false,
 };
 
@@ -175,6 +176,11 @@ export const STATES: Record<Phase, EngineState> = {
     feature: feature({ step: 10, remaining: 0 }),
   },
   SETTLING: { phase: 'SETTLING', ...session, ...round },
+  REAUTHENTICATING: {
+    phase: 'REAUTHENTICATING',
+    resume: { phase: 'SETTLING', ...session, ...round },
+    error: new SlotError('SESSION_EXPIRED', 'fixture'),
+  },
   ERROR: {
     phase: 'ERROR',
     error: new SlotError('SCHEMA_MISMATCH', 'fixture'),

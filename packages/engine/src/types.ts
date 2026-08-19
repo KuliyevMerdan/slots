@@ -38,6 +38,7 @@ export const PHASES = [
   'FEATURE_SPINNING',
   'FEATURE_OUTRO',
   'SETTLING',
+  'REAUTHENTICATING',
   'ERROR',
 ] as const;
 
@@ -102,6 +103,22 @@ export type EngineState =
       Round & { readonly step: number; readonly slam: boolean })
   | ({ readonly phase: 'FEATURE_OUTRO' } & Session & Round)
   | ({ readonly phase: 'SETTLING' } & Session & Round)
+  /**
+   * The session expired under an open round, and the machine is getting a fresh one instead of
+   * abandoning the money (docs/protocol.md §5, D9). Not an error phase: the player sees a pause,
+   * not a modal, and the round in `resume` is still the round being played.
+   */
+  | {
+      readonly phase: 'REAUTHENTICATING';
+      /**
+       * The call phase the expiry interrupted. Re-entered — and its call re-issued — when the fresh
+       * session carries no `pendingRound`; superseded by the server's own account when it does,
+       * because a re-authenticate is a full §5 resume and the server's view wins.
+       */
+      readonly resume: EngineState;
+      /** The `SESSION_EXPIRED` that started this. Kept for telemetry and the status line. */
+      readonly error: SlotError;
+    }
   | {
       readonly phase: 'ERROR';
       readonly error: SlotError;
@@ -128,6 +145,8 @@ export type EngineState =
  */
 export type EngineInput =
   | { readonly type: 'AUTHENTICATED'; readonly response: AuthenticateRes }
+  /** The transparent mid-round re-authenticate answered. Only `REAUTHENTICATING` services it. */
+  | { readonly type: 'REAUTHENTICATED'; readonly response: AuthenticateRes }
   | { readonly type: 'PRESS' }
   | { readonly type: 'SET_STAKE'; readonly stake: Minor }
   /** From the renderer: the reels finished decelerating. */
@@ -155,7 +174,12 @@ export type InputType = EngineInput['type'];
 export type EngineEffect =
   | { readonly type: 'CALL_SPIN'; readonly request: SpinReq }
   | { readonly type: 'CALL_FEATURE_SPIN'; readonly request: FeatureSpinReq }
-  | { readonly type: 'CALL_SETTLE'; readonly request: SettleReq };
+  | { readonly type: 'CALL_SETTLE'; readonly request: SettleReq }
+  /**
+   * Get a fresh token through the lobby seam and `authenticate` with it. Carries no request —
+   * the token is the driver's to obtain, because a pure reducer has no lobby.
+   */
+  | { readonly type: 'CALL_REAUTHENTICATE' };
 
 /* ── events ───────────────────────────────────────────────────────────────────────────────── */
 
@@ -207,6 +231,12 @@ export type EngineEvent =
     }
   /** The player interrupted. The renderer completes its timelines; the engine decided it was legal. */
   | { readonly type: 'SKIPPED'; readonly phase: Phase }
+  /**
+   * The session expired under an open round and the machine is renewing it transparently. Not
+   * `ERROR_RAISED` — nothing is asked of the player — but telemetry wants to count these, and the
+   * status line wants to say why the game paused.
+   */
+  | { readonly type: 'SESSION_RENEWING'; readonly error: SlotError }
   | { readonly type: 'ERROR_RAISED'; readonly error: SlotError; readonly recovery: Recovery }
   | { readonly type: 'ERROR_CLEARED' }
   /** An input the current phase cannot service. Emitted so the debug log can show it was dropped. */

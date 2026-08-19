@@ -33,6 +33,7 @@
     "@slot/renderer": "workspace:*",
     "@slot/rgs-sim": "workspace:*",
     "@slot/transport": "workspace:*",
+    "@slot/ui": "workspace:*",
     "@types/node": "^20",
     "dependency-cruiser": "^16",
     "eslint": "^9",

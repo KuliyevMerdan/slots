@@ -69,14 +69,16 @@ describe('the control panel', () => {
     const presses: number[] = [];
     const stakes: Minor[] = [];
     const turbos: boolean[] = [];
+    const autos: boolean[] = [];
     const panel = new ControlPanel({
       config,
       currency: 'EUR',
       onPress: () => presses.push(1),
       onStakeChange: (stake) => stakes.push(stake),
       onToggleTurbo: (on) => turbos.push(on),
+      onToggleAutoplay: (on) => autos.push(on),
     });
-    return { panel, presses, stakes, turbos };
+    return { panel, presses, stakes, turbos, autos };
   };
 
   const view = (over: Partial<Parameters<ControlPanel['render']>[0]> = {}) => ({
@@ -89,6 +91,9 @@ describe('the control panel', () => {
     status: '',
     turbo: false,
     canToggleTurbo: true,
+    autoplay: false,
+    canToggleAutoplay: true,
+    autoplayRemaining: undefined,
     ...over,
   });
 
@@ -129,6 +134,36 @@ describe('the control panel', () => {
     pill.emit('pointertap');
 
     expect(turbos).toEqual([]);
+  });
+
+  it('reflects an autoplay run and counts it down on the button itself', () => {
+    const { panel } = build();
+
+    panel.render(view({ autoplay: true, autoplayRemaining: 17 }));
+
+    expect(panel.auto.on).toBe(true);
+    const label = (panel.auto.view.children[1] as unknown as { text: string }).text;
+    expect(label).toBe('AUTO 17');
+  });
+
+  it('lets a jurisdiction take autoplay away, exactly as it does turbo', () => {
+    const { panel, autos } = build();
+
+    panel.render(view({ canToggleAutoplay: false }));
+    const pill = panel.auto.view as unknown as { emit: (event: string) => void };
+    pill.emit('pointertap');
+
+    expect(autos).toEqual([]);
+  });
+
+  it('reports an autoplay toggle without starting anything itself', () => {
+    const { panel, autos } = build();
+
+    panel.render(view({ canToggleAutoplay: true }));
+    const pill = panel.auto.view as unknown as { emit: (event: string) => void };
+    pill.emit('pointertap');
+
+    expect(autos).toEqual([true]);
   });
 
   it('reports a press without interpreting it', () => {

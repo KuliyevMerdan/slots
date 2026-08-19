@@ -26,7 +26,7 @@ const NOW = 1_700_000_000_000;
 const LEGAL: Record<Phase, Phase[]> = {
   BOOTING: ['IDLE', 'SPINNING', 'STOPPING', 'ERROR'],
   IDLE: ['SPINNING', 'ERROR'],
-  SPINNING: ['STOPPING', 'ERROR'],
+  SPINNING: ['STOPPING', 'REAUTHENTICATING', 'ERROR'],
   STOPPING: [
     'WIN_PRESENTATION',
     'IDLE',
@@ -45,11 +45,15 @@ const LEGAL: Record<Phase, Phase[]> = {
     'ERROR',
   ],
   FEATURE_INTRO: ['FEATURE_SPINNING', 'ERROR'],
-  FEATURE_SPINNING: ['STOPPING', 'ERROR'],
+  FEATURE_SPINNING: ['STOPPING', 'REAUTHENTICATING', 'ERROR'],
   FEATURE_OUTRO: ['SETTLING', 'ERROR'],
-  SETTLING: ['IDLE', 'ERROR'],
+  SETTLING: ['IDLE', 'REAUTHENTICATING', 'ERROR'],
+  // The transparent mid-round re-authenticate: entered from a call phase, and left either back
+  // into it (no pending round), into the §5 resume (STOPPING for a resolved one, SPINNING for a
+  // debited-unresolved one), or into ERROR when the renewal itself fails.
+  REAUTHENTICATING: ['SPINNING', 'FEATURE_SPINNING', 'SETTLING', 'STOPPING', 'IDLE', 'ERROR'],
   // An error resumes to whatever it interrupted, or is dismissed back to idle.
-  ERROR: ['IDLE', 'SPINNING', 'FEATURE_SPINNING', 'SETTLING'],
+  ERROR: ['IDLE', 'SPINNING', 'FEATURE_SPINNING', 'SETTLING', 'REAUTHENTICATING'],
 };
 
 interface Session {

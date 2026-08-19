@@ -25,6 +25,8 @@ const ClientStateSchema = z.object({
   /** Minor units. Validated against `GameConfig.betLevels` before it is used — the server's ladder. */
   stake: z.int().min(1),
   turbo: z.boolean(),
+  /** Optional because payloads written before C6 lack it — and absent means "sound on". */
+  muted: z.boolean().optional(),
 });
 
 export type ClientState = z.infer<typeof ClientStateSchema>;

@@ -637,10 +637,136 @@ describe('the math version gate', () => {
   });
 });
 
+/* ── the transparent re-authenticate ──────────────────────────────────────────────────────── */
+
+/**
+ * docs/protocol.md §5, D9: a session that expires under an open round renews itself instead of
+ * abandoning the money. The class stays `PLAYER` — retrying the failed call changes nothing — but
+ * with a lobby to ask, the machine asks it, and the round carries on.
+ */
+describe('SESSION_EXPIRED under an open round', () => {
+  const lobby = { newRoundId: () => ROUND_ID, canReauthenticate: true };
+  const renew = (state: EngineState, input: EngineInput) => reduce(state, input, lobby);
+  const expired = new SlotError('SESSION_EXPIRED', 'the session has expired');
+
+  const renewing = (from: EngineState = STATES.SETTLING) =>
+    renew(from, { type: 'CALL_FAILED', error: expired }).state;
+
+  it('renews instead of raising a modal when the failure hit a call phase', () => {
+    const { state, events, effects } = renew(STATES.SPINNING, {
+      type: 'CALL_FAILED',
+      error: expired,
+    });
+
+    expect(state.phase).toBe('REAUTHENTICATING');
+    expect(typesOf(events)).toEqual(['PHASE_CHANGED', 'SESSION_RENEWING']);
+    expect(effects).toEqual([{ type: 'CALL_REAUTHENTICATE' }]);
+  });
+
+  it('stays an ordinary PLAYER modal without a lobby to ask', () => {
+    const { state } = step(STATES.SPINNING, { type: 'CALL_FAILED', error: expired });
+
+    expect(state).toMatchObject({ phase: 'ERROR', recovery: 'DISMISS' });
+  });
+
+  it('stays a modal when no round is open — nothing would be abandoned', () => {
+    const { state } = renew(initialState, { type: 'CALL_FAILED', error: expired });
+
+    expect(state).toMatchObject({ phase: 'ERROR', recovery: 'DISMISS' });
+  });
+
+  it('still shows the HUD numbers while renewing', () => {
+    expect(sessionOf(renewing())).toMatchObject({ balance: BALANCE, stake: STAKE });
+  });
+
+  it('rejects a press while renewing — nothing is asked of the player', () => {
+    const { events } = renew(renewing(), { type: 'PRESS' });
+
+    expect(typesOf(events)).toEqual(['INPUT_REJECTED']);
+  });
+
+  it('resumes from pendingRound when the fresh session reports the round', () => {
+    const fromFeature = renewing(STATES.FEATURE_SPINNING);
+    const { state, events } = renew(fromFeature, {
+      type: 'REAUTHENTICATED',
+      response: authRes({
+        roundId: ROUND_ID,
+        state: 'RESOLVED',
+        stake: STAKE,
+        roundWin: minor(500),
+        capped: false,
+        result: result(500),
+        next: 'SETTLE',
+      }),
+    });
+
+    // Exactly the §5 resume a reload performs: the server's account of the round wins.
+    expect(state.phase).toBe('STOPPING');
+    expect(events).toContainEqual(expect.objectContaining({ type: 'REELS_TARGETED', slam: true }));
+  });
+
+  it('re-drives the interrupted spin when the fresh session carries no round', () => {
+    const fromSpin = renewing(STATES.SPINNING);
+    const { state, events, effects } = renew(fromSpin, {
+      type: 'REAUTHENTICATED',
+      response: authRes(),
+    });
+
+    // The refused spin never happened server-side; the same roundId runs it under the new session.
+    expect(state.phase).toBe('SPINNING');
+    expect(effects).toEqual([{ type: 'CALL_SPIN', request: { roundId: ROUND_ID, stake: STAKE } }]);
+    expect(typesOf(events)).toContain('BALANCE_CHANGED');
+  });
+
+  it('re-drives the settle when the fresh session carries no round — a replay, not a loss', () => {
+    const { state, effects } = renew(renewing(), {
+      type: 'REAUTHENTICATED',
+      response: authRes(),
+    });
+
+    expect(state.phase).toBe('SETTLING');
+    expect(effects).toEqual([{ type: 'CALL_SETTLE', request: { roundId: ROUND_ID } }]);
+  });
+
+  it('holds the math gate on the renewed session too', () => {
+    const { state } = renew(renewing(), {
+      type: 'REAUTHENTICATED',
+      response: { ...authRes(), config: { ...CONFIG, mathVersion: '1.0.0' } },
+    });
+
+    expect(state).toMatchObject({ phase: 'ERROR', recovery: 'FROZEN' });
+  });
+
+  it('offers a retry when the renewal itself fails recoverably', () => {
+    const errored = renew(renewing(), {
+      type: 'CALL_FAILED',
+      error: new SlotError('UPSTREAM_UNAVAILABLE', 'lobby down'),
+    });
+    expect(errored.state).toMatchObject({ phase: 'ERROR', recovery: 'RETRY' });
+
+    const retried = renew(errored.state, { type: 'RETRY' });
+    expect(retried.state.phase).toBe('REAUTHENTICATING');
+    expect(retried.effects).toEqual([{ type: 'CALL_REAUTHENTICATE' }]);
+  });
+
+  it('does not loop: a second expiry during the renewal is the ordinary modal', () => {
+    const { state } = renew(renewing(), { type: 'CALL_FAILED', error: expired });
+
+    expect(state).toMatchObject({ phase: 'ERROR', recovery: 'DISMISS' });
+  });
+
+  it('rejects a REAUTHENTICATED that arrives in any other phase', () => {
+    const { events } = renew(STATES.IDLE, { type: 'REAUTHENTICATED', response: authRes() });
+
+    expect(typesOf(events)).toEqual(['INPUT_REJECTED']);
+  });
+});
+
 /* ── totality ─────────────────────────────────────────────────────────────────────────────── */
 
 const ALL_INPUTS: EngineInput[] = [
   { type: 'AUTHENTICATED', response: authRes() },
+  { type: 'REAUTHENTICATED', response: authRes() },
   { type: 'PRESS' },
   { type: 'SET_STAKE', stake: STAKE },
   { type: 'REELS_STOPPED' },

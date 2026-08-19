@@ -103,6 +103,117 @@
         letter-spacing: 0;
       }
 
+      /* A real button, not a sprite: sound is a platform preference, and a DOM control gets focus,
+         Enter/Space and a place in the accessibility tree for free. */
+      #sound-toggle {
+        position: fixed;
+        top: max(10px, env(safe-area-inset-top));
+        right: max(10px, env(safe-area-inset-right));
+        z-index: 5;
+        padding: 8px 14px;
+        border: 1px solid #2c3860;
+        border-radius: 999px;
+        background: rgba(16, 24, 48, 0.8);
+        color: var(--muted);
+        font: 600 11px/1 inherit;
+        letter-spacing: 0.12em;
+        cursor: pointer;
+      }
+
+      #sound-toggle[aria-pressed='true'] {
+        color: var(--text);
+        border-color: #39d98a;
+      }
+
+      #sound-toggle:focus-visible {
+        outline: 2px solid #39d98a;
+        outline-offset: 2px;
+      }
+
+      /* The reality check: a jurisdiction-mandated pause, so it outranks everything else drawn. */
+      #reality-check {
+        position: fixed;
+        inset: 0;
+        z-index: 20;
+        display: grid;
+        place-content: center;
+        gap: 16px;
+        justify-items: center;
+        background: rgba(4, 8, 20, 0.88);
+        text-align: center;
+      }
+
+      #reality-check[hidden] {
+        display: none;
+      }
+
+      #reality-check h2 {
+        margin: 0;
+        font-size: 15px;
+        letter-spacing: 0.14em;
+      }
+
+      #reality-check p {
+        margin: 0;
+        max-width: 36ch;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.6;
+      }
+
+      #reality-check button {
+        padding: 10px 26px;
+        border: 1px solid #39d98a;
+        border-radius: 999px;
+        background: #39d98a;
+        color: #0b1020;
+        font: 700 13px/1 inherit;
+        letter-spacing: 0.1em;
+        cursor: pointer;
+      }
+
+      #reality-check button:focus-visible {
+        outline: 2px solid var(--text);
+        outline-offset: 2px;
+      }
+
+      /* The keyboard's control panel (dom-controls.ts): the same controls as the Pixi panel, as
+         real buttons. Transparent — the canvas is the visual — until keyboard focus arrives, when
+         the focused control shows itself. Pointer events stay off so mouse players keep using the
+         canvas and never discover an invisible button by accident. */
+      .kbd-controls {
+        position: fixed;
+        bottom: max(48px, calc(env(safe-area-inset-bottom) + 40px));
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        gap: 8px;
+        z-index: 6;
+      }
+
+      .kbd-controls button {
+        padding: 10px 16px;
+        border: 1px solid #39d98a;
+        border-radius: 999px;
+        background: rgba(16, 24, 48, 0.92);
+        color: var(--text);
+        font: 700 12px/1 inherit;
+        letter-spacing: 0.1em;
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      .kbd-controls button:focus-visible {
+        opacity: 1;
+        outline: 2px solid #39d98a;
+        outline-offset: 2px;
+      }
+
+      .kbd-controls button[disabled] {
+        border-color: #2c3860;
+        color: var(--muted);
+      }
+
       /* Present to assistive technology, absent from the layout. Not `display: none` and not
          `visibility: hidden` — either of those removes the element from the accessibility tree,
          which is the one thing this element exists to be in. */
@@ -136,6 +247,21 @@
       slot narrating itself at alert priority would be unusable.
     -->
     <p id="a11y-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
+
+    <!-- Hidden until the client knows WebAudio exists; wired in game.ts, persisted as a preference. -->
+    <button id="sound-toggle" type="button" aria-pressed="true" hidden>SOUND ON</button>
+
+    <!--
+      The reality check (jurisdictionRules.realityCheckIntervalMs). DOM rather than canvas for the
+      same reason the boot screen is: it must block and be readable regardless of what the game is
+      doing — and a real <button> brings focus and Enter/Space with it. Time only, deliberately: a
+      money figure here would be the client summing amounts into a player-facing number (ADR-0001).
+    -->
+    <div id="reality-check" role="dialog" aria-modal="true" aria-labelledby="reality-title" hidden>
+      <h2 id="reality-title">REALITY CHECK</h2>
+      <p id="reality-message">You have been playing for a while.</p>
+      <button id="reality-continue" type="button">CONTINUE</button>
+    </div>
 
     <!-- Play money only. No real money, no payments, no crypto — stated where a player sees it. -->
     <p class="notice">18+ · Demo · Play money only — no real money and no payments</p>

@@ -22,11 +22,36 @@ const OUTRO_MS = 1_800;
 /** How long "+5 FREE SPINS" stays on screen. It rides a spin, so it cannot be a blocking step. */
 const RETRIGGER_MS = 1_400;
 
+/**
+ * Every player-visible sentence this screen can say, injectable so the wiring site can localise
+ * them (C6 ships en/ru). Defaults are the English the screens always had — the renderer knows how
+ * to *say* things, the client decides in which language.
+ */
+export interface FeatureLabels {
+  /** The counter above the reels — "FREE SPIN 3 / 10". */
+  counter(next: number, total: number): string;
+  /** The retrigger flash — "+5 FREE SPINS". */
+  retrigger(added: number): string;
+  introTitle: string;
+  /** The intro's big number — "10 SPINS". */
+  introDetail(total: number): string;
+  outroTitle: string;
+}
+
+export const DEFAULT_FEATURE_LABELS: FeatureLabels = {
+  counter: (next, total) => `FREE SPIN ${String(next)} / ${String(total)}`,
+  retrigger: (added) => `+${String(added)} FREE SPINS`,
+  introTitle: 'FREE SPINS',
+  introDetail: (total) => `${String(total)} SPINS`,
+  outroTitle: 'FEATURE COMPLETE',
+};
+
 export interface FeatureScreensOptions {
   width: number;
   height: number;
   currency: string;
   locale?: string;
+  labels?: FeatureLabels;
 }
 
 export class FeatureScreens {
@@ -34,6 +59,7 @@ export class FeatureScreens {
 
   readonly #currency: string;
   readonly #locale: string;
+  readonly #labels: FeatureLabels;
   readonly #ambience: Graphics;
   readonly #counter: Container;
   readonly #counterText: Text;
@@ -44,9 +70,16 @@ export class FeatureScreens {
   readonly #flash: Text;
   #flashMs = 0;
 
-  constructor({ width, height, currency, locale = 'en' }: FeatureScreensOptions) {
+  constructor({
+    width,
+    height,
+    currency,
+    locale = 'en',
+    labels = DEFAULT_FEATURE_LABELS,
+  }: FeatureScreensOptions) {
     this.#currency = currency;
     this.#locale = locale;
+    this.#labels = labels;
 
     // Ambience: a warm border around the reel area. Cheap, and the player knows instantly that the
     // rules changed — which is the entire job of a feature background.
@@ -176,13 +209,16 @@ export class FeatureScreens {
    */
   progress(feature: FeatureProgress, roundWin: Minor): void {
     this.setActive(true);
-    this.#counterText.text = `FREE SPIN ${String(Math.min(feature.step + 1, feature.total))} / ${String(feature.total)}`;
+    this.#counterText.text = this.#labels.counter(
+      Math.min(feature.step + 1, feature.total),
+      feature.total,
+    );
     this.#counterWin.text = this.#money(roundWin);
   }
 
   /** "+5 FREE SPINS", riding whatever else is on screen. */
   retrigger(added: number): void {
-    this.#flash.text = `+${String(added)} FREE SPINS`;
+    this.#flash.text = this.#labels.retrigger(added);
     this.#flash.visible = true;
     this.#flashMs = RETRIGGER_MS;
   }
@@ -201,8 +237,8 @@ export class FeatureScreens {
         onEnter: () => {
           this.setActive(true);
           this.#banner.visible = true;
-          this.#bannerTitle.text = 'FREE SPINS';
-          this.#bannerDetail.text = `${String(total)} SPINS`;
+          this.#bannerTitle.text = this.#labels.introTitle;
+          this.#bannerDetail.text = this.#labels.introDetail(total);
         },
         onLeave: () => {
           this.#banner.visible = false;
@@ -222,7 +258,7 @@ export class FeatureScreens {
         durationMs: OUTRO_MS * speed,
         onEnter: () => {
           this.#banner.visible = true;
-          this.#bannerTitle.text = 'FEATURE COMPLETE';
+          this.#bannerTitle.text = this.#labels.outroTitle;
         },
         onProgress: (progress) => {
           const shown = Math.round(cumulativeWin * (1 - (1 - progress) ** 3)) as Minor;

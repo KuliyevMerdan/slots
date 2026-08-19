@@ -67,6 +67,12 @@ export const SimStateSchema = z.object({
   token: z.string().min(1),
   session: SessionSchema,
   balance: NonNegativeMinorSchema,
+  /**
+   * When the last accepted base-game `spin` ran — the fact the jurisdiction's pacing rule is
+   * measured against (docs/protocol.md §2.1). Absent until the session's first spin, and only ever
+   * set by an *accepted* spin: a refused call did not start a game cycle.
+   */
+  lastSpinAt: TimestampSchema.optional(),
   /** Oldest first. Bounded — see `MAX_ROUND_HISTORY`. */
   rounds: z.array(SimRoundSchema),
   /**

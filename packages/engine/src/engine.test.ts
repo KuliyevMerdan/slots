@@ -160,6 +160,46 @@ describe('effects', () => {
     expect(engine.state).toMatchObject({ phase: 'ERROR', recovery: 'DISMISS' });
     expect(engine.send({ type: 'DISMISS_ERROR' }).phase).toBe('IDLE');
   });
+
+  /**
+   * The whole §5 mid-round expiry recovery, through the driver: the spin fails `SESSION_EXPIRED`,
+   * the lobby seam hands over a fresh token, `authenticate` runs again, and the same `roundId` is
+   * re-driven under the new session — one press, no modal.
+   */
+  it('renews an expired session through the lobby seam and re-drives the call', async () => {
+    const port = new StubPort();
+    let expired = true;
+    port.spinWith = () => {
+      if (expired) {
+        expired = false;
+        return Promise.reject(new SlotError('SESSION_EXPIRED', 'expired'));
+      }
+      return Promise.resolve(spinRes());
+    };
+
+    const renewSession = vi.fn(() => Promise.resolve('fresh-token'));
+    const engine = new SlotEngine({ port, newRoundId: () => ROUND_ID, renewSession });
+    await engine.start('t');
+
+    engine.send({ type: 'PRESS' });
+    await engine.settled();
+
+    expect(renewSession).toHaveBeenCalledTimes(1);
+    expect(port.calls).toEqual(['authenticate', 'spin', 'authenticate', 'spin']);
+    expect(engine.state.phase).toBe('STOPPING');
+  });
+
+  it('without a lobby seam, an expired session is the ordinary modal', async () => {
+    const port = new StubPort();
+    port.spinWith = () => Promise.reject(new SlotError('SESSION_EXPIRED', 'expired'));
+    const engine = engineOver(port);
+    await engine.start('t');
+
+    engine.send({ type: 'PRESS' });
+    await engine.settled();
+
+    expect(engine.state).toMatchObject({ phase: 'ERROR', recovery: 'DISMISS' });
+  });
 });
 
 describe('events', () => {

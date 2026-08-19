@@ -19,6 +19,10 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run --config ../../config/vitest.package.ts"
   },
+  "dependencies": {
+    "@slot/money": "workspace:*",
+    "@slot/protocol": "workspace:*"
+  },
   "devDependencies": {
     "typescript": "catalog:",
     "vitest": "catalog:"

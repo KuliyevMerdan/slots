@@ -1,3 +1,8 @@
+// The face the type design assumes (OFL, latin + cyrillic — the RU catalogue needs the subsets).
+// Vite inlines the @font-face rules and fingerprints the woff2 files; no CDN is involved.
+import '@fontsource/inter/400.css';
+import '@fontsource/inter/600.css';
+import '@fontsource/inter/700.css';
 import { startGame } from './game.js';
 import { consoleTelemetry, guarded } from './telemetry.js';
 
@@ -22,6 +27,10 @@ async function main(): Promise<void> {
   if (root === null) throw new Error('the page has no #game element to render into');
 
   say('Connecting');
+  // Pixi rasterises text with whatever font is loaded at draw time and caches the result, so the
+  // face must be in before the first Text renders. Bounded: a font that never arrives must not
+  // become a game that never starts.
+  await Promise.race([document.fonts.ready, new Promise((resolve) => setTimeout(resolve, 2_000))]);
   await startGame(root);
 
   boot?.classList.add('done');

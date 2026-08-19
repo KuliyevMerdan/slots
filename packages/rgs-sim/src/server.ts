@@ -43,6 +43,12 @@ import type { SimState } from './state.js';
  * because a pure package cannot sleep and cannot drop a connection.
  */
 
+/**
+ * How long a freshly issued demo session lives. Long enough that expiry never interrupts a dev
+ * loop by accident; short enough to be a real fact rather than a forever.
+ */
+export const DEMO_SESSION_TTL_MS = 12 * 3_600_000;
+
 export type SimDelivery<T> =
   /** Answer with `response`, after waiting `delayMs`. */
   | { readonly kind: 'DELIVER'; readonly delayMs: number; readonly response: T }
@@ -139,6 +145,37 @@ export class SimServer {
   reset(state: SimState): void {
     this.#state = state;
     this.#store.remove(this.#key);
+  }
+
+  /**
+   * The operator's lobby, faked: issue — or **renew** — the demo session (docs/protocol.md §7).
+   *
+   * Renewal is the point. The token re-attaches to the same balance and the same `pendingRound`,
+   * which is what makes the §5 mid-round recovery playable: an expired session re-authenticates
+   * with a token from here and resumes exactly where the round was. Not a wire call, so it does not
+   * advance `seq` — the lobby is outside the game contract.
+   */
+  issueSession(ttlMs: number = DEMO_SESSION_TTL_MS): { token: string } {
+    this.#state = {
+      ...this.#state,
+      session: { ...this.#state.session, expiresAt: this.#now() + ttlMs },
+    };
+    this.#persist();
+    return { token: this.#state.token };
+  }
+
+  /**
+   * End the session now — the producer the expiry path needs on demand.
+   *
+   * A test or the debug panel (C7) calls this mid-round and the next call fails `SESSION_EXPIRED`,
+   * which is otherwise a twelve-hour wait.
+   */
+  expireSession(): void {
+    this.#state = {
+      ...this.#state,
+      session: { ...this.#state.session, expiresAt: this.#now() },
+    };
+    this.#persist();
   }
 
   /**

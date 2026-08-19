@@ -55,7 +55,7 @@ contract suite. `#` maps each block back to the phase numbering of the original 
 | **C3** | Reels on screen — Pixi bootstrap, atlas, pool, spin curve | C2 | 4 | ✅ (landed 2026-08-18) |
 | **C4** | Win presentation + interruptibility (slam stop, skip-anything) | C3 | 5 | ✅ (landed 2026-08-18) |
 | **C5** | Features + resume — free spins, retrigger, mid-feature reload | C4, S0 | 6 | ✅ (landed 2026-08-18) |
-| **C6** | Platform layer — responsive, audio, i18n, compliance | C4 | 7 | ☐ |
+| **C6** | Platform layer — responsive, audio, i18n, compliance | C4 | 7 | ✅ (landed 2026-08-19) |
 | **C7** | Dev tools + performance pass | C5, S1 | 8 | ☐ |
 | **C8** | Packaging — deploy, README, Playwright E2E in CI | C6, C7, S4 | 9 | ☐ |
 | **S0** | `rgs-sim` pure core — PRNG, round machine, idempotency, persistence | C1 | 2 | ✅ (landed 2026-08-18) |
@@ -298,26 +298,43 @@ _4–5 days._
 _The scope below grew on 2026-08-19, when every open gap was given a decided solution — the
 rationale for each line lives in CLAUDE.md's gaps registry._
 
-- [ ] Responsive portrait + landscape with safe-area insets.
-- [ ] `packages/platform`: audio **synthesized at boot with WebAudio** (the atlas decision applied
+- [x] Responsive portrait + landscape with safe-area insets — one letterbox over a vertical stack,
+      with `readSafeAreaInsets` re-read on every resize because a rotated phone moves its notch.
+- [x] `packages/platform`: audio **synthesized at boot with WebAudio** (the atlas decision applied
       to sound — no binary, no licence), iOS unlock-on-first-tap, mute on `visibilitychange`,
-      storage, device capability detection.
-- [ ] i18n (en/ru) with currency-aware formatting — the face is OFL with full Cyrillic (Inter or
-      Manrope), and coverage is a **build-time test** over the RU string catalogue, not a checklist.
-- [ ] `packages/compliance`: reality check, session/loss/stake limits, and a **UK jurisdiction
-      preset** (2.5 s minimum spin, autoplay and turbo disabled), applied at runtime.
-- [ ] **Autoplay**, as part of the compliance work: a controller above the engine that presses on
-      `IDLE` and stops on spin count / loss limit / single-win limit at `ROUND_SETTLED`. The engine
-      is untouched.
-- [ ] **The sim's half of jurisdiction**: refuse a spin before `minSpinIntervalMs`, refuse turbo
-      where forbidden — so the client's compliance layer is built against a server that pushes back.
-- [ ] **Session expiry mid-round**: `SESSION_EXPIRED` with an open round re-authenticates
-      transparently and resumes from `pendingRound`; protocol §5 first, then a sim producer.
-- [ ] **Keyboard + contrast**: a transparent DOM control layer driven by `PanelView` (real buttons,
-      real focus), and an automated WCAG-contrast test over the atlas `PALETTE`.
+      storage that cannot throw, device capability detection. Every module takes its browser object
+      as an argument, so the whole package tests headless in Node.
+- [x] i18n (en/ru) with currency-aware formatting — the face is **Inter** (OFL, via
+      `@fontsource/inter`, latin + cyrillic subsets) and coverage is a build-time test: `fontkit`
+      walks every character of both catalogues against the shipped woff2 at every shipped weight.
+- [x] `packages/compliance`: reality check, session/loss/stake limits, and the **UK preset**
+      (2.5 s minimum spin, autoplay and turbo disabled) — but the preset table lives in
+      `@slot/protocol` and the *rules travel on the wire* (`GameConfig.jurisdictionRules`, D8): the
+      plan's client-side preset table would have made the client the authority on what a regulator
+      requires, and the plan was wrong.
+- [x] **Autoplay**: a controller above the engine that presses on `IDLE` and stops on spin count /
+      single-win limit / loss limit / feature trigger. The engine is untouched — it cannot tell an
+      autoplay press from a player's, which was the point.
+- [x] **The sim's half of jurisdiction**: a spin arriving before `minSpinIntervalMs` is refused
+      (`LIMIT_REACHED`), measured between accepted spins so idempotent replays are exempt. "Refuse
+      turbo" resolved to its enforceable half: turbo is presentation a server cannot observe, and
+      its only server-visible effect *is* cadence — pinned in docs/protocol.md §2.1.
+- [x] **Session expiry mid-round**: expiry is checked on **every** call (the producer), and
+      `SESSION_EXPIRED` under an open round re-authenticates transparently through the lobby seam
+      and resumes from `pendingRound` — a new `REAUTHENTICATING` phase, one attempt per failure.
+      Protocol §5/D9 first, then the sim, then the engine, proved end-to-end in
+      `tests/wiring.test.ts` against a session killed mid-feature.
+- [x] **Keyboard + contrast**: a DOM control layer driven by the same `PanelView` (real buttons,
+      visible on `:focus-visible`), and a WCAG-AA contrast suite over both palettes in CI — which
+      failed on its first run: SCAT and H3 carried white glyphs at 1.98:1 and 2.26:1, and their
+      fills are darker for it.
 
-**Done when:** switching jurisdiction in the debug panel visibly changes game behaviour, autoplay
-stops itself at its limits, and the RU build renders in the intended typeface.
+**Done when:** switching jurisdiction visibly changes game behaviour, autoplay stops itself at its
+limits, and the RU build renders in the intended typeface. ✅ — with one honest asterisk: the
+jurisdiction switch is a server-config change today (`createSimConfig({ jurisdiction: 'UK' })`), and
+the debug-panel toggle that flips it live is C7's, where the panel itself lands. Autoplay's stops
+and the UK pacing are asserted in `autoplay.test.ts` and `policy.test.ts`; the RU typeface is
+enforced by the glyph-coverage test rather than promised.
 
 ## Block C7 — Dev tools & performance
 

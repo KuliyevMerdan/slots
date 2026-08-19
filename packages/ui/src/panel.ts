@@ -28,18 +28,43 @@ export interface PanelView {
   status: string;
   /** Turbo is a presentation preference, so the client owns it and the panel only reflects it. */
   turbo: boolean;
-  /** A jurisdiction may forbid turbo outright (C6); until then it is always available. */
+  /** A jurisdiction may forbid turbo outright — `jurisdictionRules.turboAllowed`, applied above. */
   canToggleTurbo: boolean;
+  /** An autoplay run is active. The controller lives above the engine; this only reflects it. */
+  autoplay: boolean;
+  /** Off where the jurisdiction forbids it (`autoplayAllowed`), and while nothing could start one. */
+  canToggleAutoplay: boolean;
+  /** Spins left in the active run — rendered on the AUTO button itself. `undefined` when idle. */
+  autoplayRemaining: number | undefined;
 }
+
+/** The panel's fixed captions, injectable so the wiring site can localise them (C6, en/ru). */
+export interface PanelLabels {
+  bet: string;
+  balance: string;
+  win: string;
+  turbo: string;
+  auto: string;
+}
+
+export const DEFAULT_PANEL_LABELS: PanelLabels = {
+  bet: 'BET',
+  balance: 'BALANCE',
+  win: 'WIN',
+  turbo: 'TURBO',
+  auto: 'AUTO',
+};
 
 export interface ControlPanelOptions {
   config: GameConfig;
   currency: string;
   locale?: string;
   width?: number;
+  labels?: PanelLabels;
   onPress: () => void;
   onStakeChange: (stake: Minor) => void;
   onToggleTurbo: (on: boolean) => void;
+  onToggleAutoplay: (on: boolean) => void;
 }
 
 export class ControlPanel {
@@ -47,34 +72,46 @@ export class ControlPanel {
   readonly button: SpinButton;
   readonly bet: BetSelector;
   readonly turbo: ToggleButton;
+  readonly auto: ToggleButton;
   readonly hud: Hud;
 
   readonly #status: Text;
   readonly #width: number;
   readonly #plate: Graphics;
+  readonly #labels: PanelLabels;
 
   constructor({
     config,
     currency,
     locale = 'en',
     width = 760,
+    labels = DEFAULT_PANEL_LABELS,
     onPress,
     onStakeChange,
     onToggleTurbo,
+    onToggleAutoplay,
   }: ControlPanelOptions) {
     this.#width = width;
+    this.#labels = labels;
 
-    this.hud = new Hud({ currency, locale });
+    this.hud = new Hud({
+      currency,
+      locale,
+      balanceCaption: labels.balance,
+      winCaption: labels.win,
+    });
     this.hud.layout(width);
 
     this.bet = new BetSelector({
       levels: config.betLevels,
       currency,
       locale,
+      caption: labels.bet,
       onChange: onStakeChange,
     });
     this.button = new SpinButton({ onPress });
-    this.turbo = new ToggleButton({ label: 'TURBO', onToggle: onToggleTurbo });
+    this.turbo = new ToggleButton({ label: labels.turbo, onToggle: onToggleTurbo });
+    this.auto = new ToggleButton({ label: labels.auto, onToggle: onToggleAutoplay });
 
     this.#status = new Text({
       text: '',
@@ -101,6 +138,10 @@ export class ControlPanel {
       width - 24 - this.turbo.width,
       barTop + (barHeight - this.turbo.height) / 2,
     );
+    this.auto.view.position.set(
+      width - 24 - this.turbo.width - 12 - this.auto.width,
+      barTop + (barHeight - this.auto.height) / 2,
+    );
     this.#status.position.set(width / 2, barTop + barHeight + 10);
 
     this.view.addChild(
@@ -109,6 +150,7 @@ export class ControlPanel {
       this.bet.view,
       this.button.view,
       this.turbo.view,
+      this.auto.view,
       this.#status,
     );
   }
@@ -129,6 +171,12 @@ export class ControlPanel {
     this.bet.stake = model.stake;
     this.turbo.on = model.turbo;
     this.turbo.enabled = model.canToggleTurbo;
+    this.auto.on = model.autoplay;
+    this.auto.enabled = model.canToggleAutoplay;
+    this.auto.label =
+      model.autoplayRemaining === undefined
+        ? this.#labels.auto
+        : `${this.#labels.auto} ${String(model.autoplayRemaining)}`;
     this.hud.balance.amount = model.balance;
 
     if (model.win === undefined) {

@@ -10,6 +10,7 @@
 // The spin curve is pure and lives in curve.ts, which is why the feel of the reels has tests at all.
 
 export * from './theme.js';
+export * from './contrast.js';
 export * from './curve.js';
 export * from './atlas.js';
 export * from './reel.js';

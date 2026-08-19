@@ -12,6 +12,9 @@ const view = (over: Partial<PanelView> = {}): PanelView => ({
   status: '',
   turbo: false,
   canToggleTurbo: true,
+  autoplay: false,
+  canToggleAutoplay: true,
+  autoplayRemaining: undefined,
   ...over,
 });
 

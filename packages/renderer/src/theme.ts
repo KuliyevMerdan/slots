@@ -24,13 +24,17 @@ export const PALETTE = {
  * One colour per symbol, and the reason the placeholder art reads at a glance: value is encoded as
  * hue, so a screen of low symbols looks different from a screen of high ones before you can read a
  * single glyph. Real art replaces the atlas, not this idea.
+ *
+ * Every fill keeps ≥ 3:1 contrast against `PALETTE.glyph` — WCAG AA for large text, enforced by
+ * `tests/contrast.test.ts`. SCAT and H3 were originally brighter (0xf2a03f, 0xc9a227) and failed at
+ * 1.98:1 and 2.26:1; the test is what found them, which is the argument for having it.
  */
 export const SYMBOL_STYLE: Record<string, { fill: number; edge: number; glyph: string }> = {
   WILD: { fill: 0x7b3ff2, edge: 0xc9a7ff, glyph: 'W' },
-  SCAT: { fill: 0xf2a03f, edge: 0xffe0a7, glyph: 'S' },
+  SCAT: { fill: 0xc06a10, edge: 0xffe0a7, glyph: 'S' },
   H1: { fill: 0xd8324b, edge: 0xff9aa8, glyph: 'H1' },
   H2: { fill: 0xdb6a1f, edge: 0xffc48f, glyph: 'H2' },
-  H3: { fill: 0xc9a227, edge: 0xffe98f, glyph: 'H3' },
+  H3: { fill: 0xa07d12, edge: 0xffe98f, glyph: 'H3' },
   L1: { fill: 0x2f7f5b, edge: 0x8fe0bc, glyph: 'L1' },
   L2: { fill: 0x2f5f9f, edge: 0x9fc8ff, glyph: 'L2' },
   L3: { fill: 0x4a4f78, edge: 0xb0b6e0, glyph: 'L3' },
@@ -54,6 +58,9 @@ export const WIN_PALETTE = {
   amount: 0xffffff,
 } as const;
 
-/** The type face. A system stack, so the repository ships no font and licences no font. */
+/**
+ * Inter first — the OFL face the client ships (via `@fontsource/inter`, latin + cyrillic subsets),
+ * because the i18n catalogue includes Russian and a face without Cyrillic falls back per glyph.
+ */
 export const FONT_STACK =
-  '"Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", system-ui, sans-serif';
+  'Inter, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", system-ui, sans-serif';

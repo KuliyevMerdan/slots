@@ -11,9 +11,12 @@
     "test": "vitest run --config ../../config/vitest.package.ts"
   },
   "dependencies": {
+    "@fontsource/inter": "^5.3.0",
+    "@slot/compliance": "workspace:*",
     "@slot/engine": "workspace:*",
     "@slot/game-math": "workspace:*",
     "@slot/money": "workspace:*",
+    "@slot/platform": "workspace:*",
     "@slot/protocol": "workspace:*",
     "@slot/renderer": "workspace:*",
     "@slot/rgs-sim": "workspace:*",
@@ -23,7 +26,9 @@
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@types/fontkit": "^2.0.9",
     "@types/node": "^20",
+    "fontkit": "^2.0.4",
     "typescript": "catalog:",
     "vite": "catalog:",
     "vitest": "catalog:"

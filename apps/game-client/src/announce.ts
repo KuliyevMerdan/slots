@@ -1,5 +1,7 @@
 import { format } from '@slot/money';
 import type { PanelView } from '@slot/ui';
+import { STRINGS } from './i18n.js';
+import type { Strings } from './i18n.js';
 
 /**
  * The screen-reader story for a game made of pixels.
@@ -21,21 +23,13 @@ import type { PanelView } from '@slot/ui';
  * are dropped.
  */
 
-/** What the machine is doing, in words a player can act on rather than a phase name. */
-const ACTIVITY: Record<PanelView['action'], string> = {
-  SPIN: 'ready to spin',
-  STOP: 'spinning',
-  SKIP: 'showing the win',
-  RETRY: 'connection problem, press to retry',
-  OK: 'press to continue',
-  FROZEN: 'the game has stopped and needs a reload',
-};
-
 export interface AnnouncerOptions {
   currency: string;
   locale?: string;
   /** The live region. Absent in a test, or if the shell was cut down. */
   region: { textContent: string | null } | null;
+  /** The sentence's words. Defaults to English, which is also what the tests pin. */
+  strings?: Strings;
 }
 
 export interface Announcer {
@@ -43,21 +37,41 @@ export interface Announcer {
   announce(view: PanelView): string | null;
 }
 
-export function createAnnouncer({ currency, locale, region }: AnnouncerOptions): Announcer {
+export function createAnnouncer({
+  currency,
+  locale,
+  region,
+  strings = STRINGS.en,
+}: AnnouncerOptions): Announcer {
   const money = (amount: number): string =>
     format(amount as never, { currency, ...(locale === undefined ? {} : { locale }) });
   let last: string | null = null;
 
+  /**
+   * What the machine is doing, in words a player can act on rather than a phase name — keyed on the
+   * localised button label, because the label *is* the view model's word for the phase.
+   */
+  const activity: Record<string, string> = {
+    [strings.actionSpin]: strings.readyToSpin,
+    [strings.actionStop]: strings.spinning,
+    [strings.actionSkip]: strings.showingWin,
+    [strings.actionRetry]: strings.retryHint,
+    [strings.actionOk]: strings.continueHint,
+    [strings.actionFrozen]: strings.frozenHint,
+  };
+
   return {
     announce(view) {
       const parts = [
-        `balance ${money(view.balance)}`,
-        `stake ${money(view.stake)}`,
-        ...(view.win === undefined || view.win === 0 ? [] : [`win ${money(view.win)}`]),
+        `${strings.balanceWord} ${money(view.balance)}`,
+        `${strings.stakeWord} ${money(view.stake)}`,
+        ...(view.win === undefined || view.win === 0
+          ? []
+          : [`${strings.winWord} ${money(view.win)}`]),
         // The status line is the server's own words when something went wrong, so it is worth more
         // than the generic activity — but the activity still says what to do about it.
         ...(view.status === '' ? [] : [view.status.toLowerCase()]),
-        ACTIVITY[view.action],
+        ...(activity[view.action] === undefined ? [] : [activity[view.action]]),
       ];
 
       const sentence = parts.join(', ');

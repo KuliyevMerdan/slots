@@ -108,6 +108,20 @@ const rejected = <T>(
   error: errorPayload(state.seq, code, message, roundId),
 });
 
+/**
+ * `SESSION_EXPIRED` when the session has, `null` when it is still good.
+ *
+ * Checked on **every** call, not only `authenticate` — that is what gives the client's mid-round
+ * recovery (docs/protocol.md §5, D9) a real producer: a feature spin or a settle that fails this
+ * way is exactly the case the transparent re-authenticate exists for. Before C6 the check lived on
+ * `authenticate` alone, deliberately, because the recovery story did not exist yet and a `PLAYER`
+ * error mid-round would have abandoned a debited round; now the story exists, the producer does too.
+ */
+const expiredSession = <T>(state: SimState, context: SimContext): SimOutcome<T> | null =>
+  context.now >= state.session.expiresAt
+    ? rejected(state, 'SESSION_EXPIRED', 'the session has expired — re-authenticate')
+    : null;
+
 /* ── forceOutcome ─────────────────────────────────────────────────────────────────────────────
  * Gate two of two (docs/protocol.md §8). Gate one is the client, which cannot even send the field
  * outside a dev build — this one exists precisely to catch a regression in that one, so it is
@@ -182,13 +196,8 @@ export function authenticate(
     return rejected(next, 'SESSION_EXPIRED', 'the token is not valid for this session');
   }
 
-  // Expiry is checked here and nowhere else, deliberately. A `PLAYER` error returns the client to
-  // `IDLE`, which would abandon a debited round if it fired mid-feature — the protocol has no
-  // renew call and no resume-after-expiry story yet, and inventing one in the simulator would hide
-  // the hole rather than close it. It is logged in the gaps registry; R5 decides it.
-  if (context.now >= next.session.expiresAt) {
-    return rejected(next, 'SESSION_EXPIRED', 'the session has expired — re-authenticate');
-  }
+  const expired = expiredSession<AuthenticateRes>(next, context);
+  if (expired !== null) return expired;
 
   const open = findOpenRound(next);
 
@@ -209,6 +218,12 @@ export function authenticate(
 export function spin(state: SimState, request: SpinReq, context: SimContext): SimOutcome<SpinRes> {
   const next = bump(state);
   const { config } = context;
+
+  // Session first: an expired caller is not authenticated at all, and every answer below — including
+  // a replay — is for callers who are.
+  const expired = expiredSession<SpinRes>(next, context);
+  if (expired !== null) return expired;
+
   const fingerprint = canonical([
     request.stake,
     request.clientSeed ?? null,
@@ -217,9 +232,10 @@ export function spin(state: SimState, request: SpinReq, context: SimContext): Si
 
   const spinSeed = deriveSpinSeed(next.serverSeed, request.roundId, request.clientSeed, 0);
 
-  // Idempotency first, before any validation: a retry of a round that already happened must replay
+  // Idempotency next, before any validation: a retry of a round that already happened must replay
   // it, not re-litigate whether it should have been allowed. A stake that has since fallen outside
-  // the limits does not retroactively un-spin a spin the player already saw.
+  // the limits does not retroactively un-spin a spin the player already saw — and the pacing rule
+  // below never sees a replay, which is what keeps an honest retry from being refused as too fast.
   const known = findRound(next, request.roundId);
   if (known !== undefined) {
     if (known.fingerprint !== fingerprint) {
@@ -231,6 +247,20 @@ export function spin(state: SimState, request: SpinReq, context: SimContext): Si
       );
     }
     return { ok: true, state: next, response: known.spin };
+  }
+
+  // The jurisdiction's half of the wire's pacing rule (docs/protocol.md §2.1): a base-game cycle may
+  // not start sooner than `minSpinIntervalMs` after the last accepted one. `LIMIT_REACHED` — a
+  // compliant client paces the button and never sees this; the check exists to catch the one that
+  // does not, because turbo's only server-visible effect is cadence.
+  const interval = config.jurisdictionRules.minSpinIntervalMs;
+  if (interval > 0 && next.lastSpinAt !== undefined && context.now - next.lastSpinAt < interval) {
+    return rejected(
+      next,
+      'LIMIT_REACHED',
+      `this jurisdiction requires ${interval}ms between spins`,
+      request.roundId,
+    );
   }
 
   let forced: number[] | undefined;
@@ -330,7 +360,13 @@ export function spin(state: SimState, request: SpinReq, context: SimContext): Si
       : {}),
   };
 
-  return { ok: true, state: withRound({ ...next, balance }, round), response };
+  return {
+    ok: true,
+    // `lastSpinAt` moves only here, on acceptance: a refused call did not start a game cycle, so it
+    // does not push the next legal one further away.
+    state: withRound({ ...next, balance, lastSpinAt: context.now }, round),
+    response,
+  };
 }
 
 /**
@@ -355,6 +391,9 @@ export function featureSpin(
 ): SimOutcome<FeatureSpinRes> {
   const next = bump(state);
   const { config } = context;
+
+  const expired = expiredSession<FeatureSpinRes>(next, context);
+  if (expired !== null) return expired;
 
   const round = findRound(next, request.roundId);
   if (round === undefined) {
@@ -475,12 +514,14 @@ export function featureSpin(
 export function settle(
   state: SimState,
   request: SettleReq,
-  // Unused, and that is the news: with the ceiling applied on the way in, settling is a credit and
-  // a state change, with nothing left to compute. The parameter stays so the four handlers keep one
-  // shape — the dispatcher in server.ts calls them uniformly.
-  _context: SimContext,
+  // Only the clock is read, and only for the session check: with the ceiling applied on the way in,
+  // settling is a credit and a state change, with nothing left to compute.
+  context: SimContext,
 ): SimOutcome<SettleRes> {
   const next = bump(state);
+
+  const expired = expiredSession<SettleRes>(next, context);
+  if (expired !== null) return expired;
 
   const round = findRound(next, request.roundId);
   if (round === undefined) {
@@ -548,9 +589,13 @@ const summaryOf = (round: SimRound): RoundSummary => ({
 export function history(
   state: SimState,
   request: HistoryReq,
-  _context: SimContext,
+  context: SimContext,
 ): SimOutcome<HistoryRes> {
   const next = bump(state);
+
+  const expired = expiredSession<HistoryRes>(next, context);
+  if (expired !== null) return expired;
+
   const limit = request.limit ?? DEFAULT_HISTORY_LIMIT;
 
   const rounds = next.rounds

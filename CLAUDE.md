@@ -4,37 +4,42 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-> ⚠️ **The game is a game, its math is a designed 96%, and a server now passes or fails one suite.**
-> As of **2026-08-18**, **C0, C1, S0, S1, C2, S2, C3, C4, C5, S4 and S3 have landed** — the
+> ⚠️ **The game is a game, its math is a designed 96%, and the platform layer is real.**
+> As of **2026-08-19**, **C0, C1, S0, S1, C2, S2, C3, C4, C5, S4, S3 and C6 have landed** — the
 > workspace, the contracts (`protocol`, `money`, `game-math`), `rgs-sim`, the `RgsTransport` seam
 > with `MockTransport`, `HttpTransport` and the retry policy, `engine`, `apps/mock-rgs`, `renderer`,
-> `ui` and `apps/game-client`, `tools/math-sim` — the RTP report that tuned the strips — and
-> `tests/contract/`, the switch-over gate. 693 tests, `pnpm check` green. Three `packages/*` remain
-> scaffolded and empty — `platform`, `compliance`, `dev-tools` — but no longer unconstrained: as of
-> 2026-08-19 each has a dependency rule, fixtures that prove it fires, and (`compliance`) a place in
-> `PURE_PACKAGES`, so the first import ever written into them is already policed. Each
-> `src/index.ts` names the block that fills it and the imports it is allowed.
+> `ui` and `apps/game-client`, `tools/math-sim` — the RTP report that tuned the strips —
+> `tests/contract/`, the switch-over gate, and now `packages/platform` and `packages/compliance`:
+> jurisdiction rules travel **on the wire** (`GameConfig.jurisdictionRules`, D8), the sim enforces
+> the half it can see (spin cadence, `LIMIT_REACHED`), a session that expires under an open round
+> **re-authenticates transparently** and resumes from `pendingRound` (§5, D9, the engine's
+> `REAUTHENTICATING` phase), autoplay runs above an untouched engine and stops at its limits, audio
+> is synthesized at boot, the client speaks en/ru under a glyph-coverage test, a DOM control layer
+> gives the keyboard the same panel, and both palettes hold WCAG AA in CI. 801 tests, `pnpm check`
+> green. One `packages/*` remains scaffolded and empty — `dev-tools` (C7) — with its dependency
+> rule, fixtures and named block already in place.
 >
 > **`pnpm dev:client` opens a playable slot.** It authenticates, spins, lands on the server's
-> `stops[]`, lights the paylines it was told won, counts the win up, runs the feature and settles.
-> Point it at `apps/mock-rgs` with one environment variable and the same client plays the same game
-> over HTTP.
+> `stops[]`, lights the paylines it was told won, counts the win up, runs the feature and settles —
+> with sound, in the session's language, under the session's jurisdiction rules. Point it at
+> `apps/mock-rgs` with one environment variable and the same client plays the same game over HTTP.
 >
-> **Four properties are tested rather than claimed.**
+> **Five properties are tested rather than claimed.**
 > [`tests/mash.test.ts`](tests/mash.test.ts) plays 120 rounds through the real engine, transport,
 > simulator and renderer while pressing at random, asserting the client's balance equals the
 > server's after every round. [`tests/resume.test.ts`](tests/resume.test.ts) throws the client away
 > at five points mid-feature and rebuilds it, asserting the round finishes and is credited exactly
-> once. And `pnpm math-sim` plays twenty million rounds through the game's own evaluator and prints
-> the RTP, the hit frequency, the volatility and the win distribution — **96.107%**, measured, on the
-> strips that ship. And `pnpm test:contract` plays the whole of
-> [`docs/protocol.md`](docs/protocol.md) — lifecycle, idempotent replay, `pendingRound` recovery,
-> every error class — against **every registered target**, naming in its own output the one target
-> it could not run.
+> once. [`tests/wiring.test.ts`](tests/wiring.test.ts) kills the session mid-feature and asserts the
+> round still comes home, credited once, with no error screen. `pnpm math-sim` plays twenty million
+> rounds through the game's own evaluator and prints the RTP, the hit frequency, the volatility and
+> the win distribution — **96.107%**, measured, on the strips that ship. And `pnpm test:contract`
+> plays the whole of [`docs/protocol.md`](docs/protocol.md) — lifecycle, idempotent replay,
+> `pendingRound` recovery, every error class — against **every registered target**, naming in its
+> own output the one target it could not run.
 >
-> **What is deliberately not there yet:** audio, i18n and the compliance layer (**C6**), the debug
-> panel and the performance pass (**C7**), packaging, the README and the E2E suite (**C8**). The next
-> block is **C6**; **R0** — the `apps/rgs` skeleton — is available in parallel and is what fills the
+> **What is deliberately not there yet:** the debug panel, the round-history panel and the
+> performance pass (**C7**), packaging, the README and the E2E suite (**C8**). The next block is
+> **C7**; **R0** — the `apps/rgs` skeleton — is available in parallel and is what fills the
 > contract suite's third target.
 >
 > The canon is four documents: `CLAUDE.md` (this file), [`ROADMAP.md`](ROADMAP.md) (the task map),
@@ -101,8 +106,8 @@ empty, and the block named is the commitment.
 | `@slot/ui`          | `packages/ui`        | Pixi UI: spin button, bet selector, HUD                    | ✅ C3 |
 | `@slot/rgs-sim`     | `packages/rgs-sim`   | ★ Mock server core (pure — runs in a browser or in Node)  | ✅ S0 |
 | `@slot/transport`   | `packages/transport` | `RgsTransport` interface + Mock/Http implementations      | ✅ S2 |
-| `@slot/platform`    | `packages/platform`  | Audio, storage, visibility, safe-area, device capabilities | C6   |
-| `@slot/compliance`  | `packages/compliance`| Jurisdiction rules, reality check, session/loss/stake limits | C6  |
+| `@slot/platform`    | `packages/platform`  | Audio, storage, visibility, safe-area, device capabilities | ✅ C6 |
+| `@slot/compliance`  | `packages/compliance`| Jurisdiction rules, reality check, session/loss/stake limits | ✅ C6 |
 | `@slot/dev-tools`   | `packages/dev-tools` | Debug panel, event log, force-outcome UI                  | C7    |
 | —                   | `tools/math-sim`     | RTP / volatility / hit-frequency simulation CLI           | S4    |
 | —                   | `tools/perf-harness` | Scripted fps / memory capture                             | C7    |
@@ -159,6 +164,16 @@ Six design points, all of them now load-bearing in `rgs-sim`:
 - **One round is one stake, one debit and one credit.** Free spins are *steps* inside that round,
   keyed `(roundId, step)`, so a disconnect on spin 7 of 10 resumes at spin 7. Retrigger arithmetic is
   the server's; `feature.total` / `feature.remaining` arrive already folded.
+- **Jurisdiction rules travel on the wire** (`GameConfig.jurisdictionRules`, D8): the id names the
+  regime, the rules object *is* the regime, and each side enforces what it can observe — the server
+  refuses a spin arriving before `minSpinIntervalMs` (`LIMIT_REACHED`), the client's compliance layer
+  applies turbo, autoplay and the reality check, which a server cannot see. `JURISDICTION_PRESETS`
+  in `@slot/protocol` is the baseline meaning of each id; an operator config may override.
+- **An expiring session mid-round recovers through `authenticate`** (§5, D9). Expiry is checked on
+  every call, so the code has a producer; with a round open the client renews transparently through
+  the lobby seam and resumes from `pendingRound`, with no round open it stays a `PLAYER` modal.
+  There is deliberately no renew call, and the demo lobby **renews** on re-issue — the fresh token
+  re-attaches to the same balance and the same round.
 
 ## Commands
 
@@ -284,9 +299,9 @@ looking.
 
 ### Purity rules for `engine`, `rgs-sim`, `game-math`, `money`, `compliance`
 
-These five packages are pure and deterministic — `compliance` by decision before it has code
-(2026-08-19): a reality check or a session limit is a pure function of an injected clock, or it is
-untestable. `Math.random()`, `Date.now()`, argless `new Date()`
+These five packages are pure and deterministic — `compliance` included, and its code keeps the
+promise made before it existed: a reality check or a session limit is a pure function of an injected
+clock, or it is untestable. `Math.random()`, `Date.now()`, argless `new Date()`
 and `fetch` are **lint errors** inside them ([`eslint.config.mjs`](eslint.config.mjs)), `window` /
 `document` / `localStorage` are lint errors *and* type errors (no `DOM` lib), and
 [`tests/purity.test.ts`](tests/purity.test.ts) proves those rules fire. In addition to the import
@@ -326,7 +341,7 @@ does not get to change client behaviour:
 | Class | Codes | Client behaviour |
 | --- | --- | --- |
 | `RECOVERABLE` | `TIMEOUT` · `UPSTREAM_UNAVAILABLE` · `WALLET_UNAVAILABLE` · `RATE_LIMITED` | Exponential backoff retry **with the same `roundId`**; reconnect overlay |
-| `PLAYER` | `INSUFFICIENT_FUNDS` · `STAKE_NOT_ALLOWED` · `SESSION_EXPIRED` · `LIMIT_REACHED` | Modal, return to `IDLE`, **no retry** |
+| `PLAYER` | `INSUFFICIENT_FUNDS` · `STAKE_NOT_ALLOWED` · `SESSION_EXPIRED` · `LIMIT_REACHED` | Modal, return to `IDLE`, **no retry** — except `SESSION_EXPIRED` under an open round, which renews transparently and resumes (§5, D9) |
 | `FATAL` | `SCHEMA_MISMATCH` · `UNKNOWN_ROUND` · `ROUND_CONFLICT` · `ILLEGAL_TRANSITION` · `FORCE_OUTCOME_REFUSED` · `MATH_VERSION_MISMATCH` | Freeze the reels, error screen, offer reload |
 
 ### Money — `packages/money`
@@ -419,6 +434,7 @@ BOOTING ─(authenticate)─▶ IDLE ─(PRESS)─▶ SPINNING ─(response)─�
                                                           ▼
                                                         IDLE
 ERROR (from anywhere) ─▶ RETRY | DISMISS | FROZEN, by error class
+REAUTHENTICATING (SESSION_EXPIRED under an open round) ─▶ back into the round, via §5
 ```
 
 Two files. [`reduce.ts`](packages/engine/src/reduce.ts) is the machine — pure, total,
@@ -454,6 +470,17 @@ that skipping and completing produce an identical state.
 *rebuilt from the phase it failed in*, so the `roundId` belongs to the round that is still open and a
 retry structurally cannot mint a new one. `PLAYER` → `DISMISS` back to `IDLE`, no retry offered.
 `FATAL` → `FROZEN`, with no input that leaves it.
+
+**`SESSION_EXPIRED` is context-aware** (§5, D9). Under an open call phase — and only when the driver
+was given a lobby seam (`renewSession`, injected because tokens are issued out of band) — the
+machine enters `REAUTHENTICATING`: the driver fetches a fresh token, authenticates, and the response
+resolves the round the way a reload would. `pendingRound` present → the ordinary §5 resume, server's
+account wins. Absent → the interrupted phase is re-entered and its call re-driven: a refused spin
+runs fresh under the new session, a lost settle replays idempotently. One transparent attempt per
+failure — a failure *during* the renewal takes the ordinary error path (a `RECOVERABLE` one is
+retryable through the same machinery, because `effectFor(REAUTHENTICATING)` is
+`CALL_REAUTHENTICATE`). The math gate runs on the renewed session too: the server behind the fresh
+token may not be the server the round started on. With no open round, or no lobby, the modal stands.
 
 **The math versions meet on the authenticate path, and disagreeing freezes the game.**
 `GameConfig.mathVersion` says what the server pays on; `@slot/game-math`'s `MATH_VERSION` says what
@@ -567,8 +594,25 @@ because the one unacceptable outcome is a round that waits forever.
 
 **Turbo is one switch** — `scaleCurve` shortens every duration in the spin curve and the same factor
 scales the presentation. Speed, overshoot and the blur threshold are untouched, because turbo should
-shorten a spin rather than hand the player a different game; and when the compliance layer (C6)
-forbids turbo in a jurisdiction there is exactly one thing for it to refuse.
+shorten a spin rather than hand the player a different game — and now that a jurisdiction *does*
+forbid it (`jurisdictionRules.turboAllowed`, the UK preset), there is exactly one thing to refuse:
+the client boots with turbo off regardless of the remembered preference and the toggle is disabled,
+visibly, because a control that vanishes reads as a bug and one that is off reads as a rule.
+
+**Every player-visible sentence is injectable.** `FeatureLabels`, `WinLabels` (renderer) and
+`PanelLabels` (ui) default to the English the screens always had; the client passes the session's
+catalogue (en/ru — see the client's i18n) and the packages never learn which language they speak.
+The typeface is Inter (OFL, latin + cyrillic subsets via `@fontsource/inter`), first in both
+`FONT_STACK`s, because the RU catalogue needs Cyrillic and a face without it falls back per glyph.
+
+**Contrast is a test, not luck.** `contrast.ts` implements the WCAG 2.1 arithmetic (exported —
+the debug panel will want the same numbers), and [`tests/contrast.test.ts`](tests/contrast.test.ts)
+holds every text-on-surface pair in both palettes to AA. It failed on its first run: SCAT and H3
+carried white glyphs at 1.98:1 and 2.26:1, and their fills in `SYMBOL_STYLE` are darker for it.
+
+**`onReelLanded` is the audio layer's seam** — fired once per reel on its landing frame, in stagger
+order, from the same edge `update()` already detects. Presentation only: by the time a reel lands,
+the outcome was decided long ago.
 
 **`prefers-reduced-motion` is a different switch, and it wins.** Turbo is a preference about pace and
 keeps every stage of the spin; `reducedMotionCurve` removes the stages — no backwards dip, no
@@ -582,17 +626,18 @@ stage in a zero-length frame is `0 / 0` — a reel position of `NaN` is a consid
 accessibility outcome than a fast one. `GameStage` resolves the two preferences in one place, so the
 precedence is a fact rather than an ordering convention.
 
-`@slot/ui` is the control surface: spin button, bet selector, turbo toggle, balance/win HUD. It takes
-a **view model, not an engine** — `ui → protocol, money` is the whole dependency list — so the client
-maps phases onto `PanelView` and the interruption contract stays in the engine where it is tested.
-Two rules hold throughout: the HUD **never computes money** (every number it shows arrived from the
-server), and the stake is always one of `GameConfig.betLevels`.
+`@slot/ui` is the control surface: spin button, bet selector, turbo and **autoplay** toggles (the
+AUTO pill renders the run's remaining count on itself), balance/win HUD. It takes a **view model,
+not an engine** — `ui → protocol, money` is the whole dependency list — so the client maps phases
+onto `PanelView` and the interruption contract stays in the engine where it is tested. Two rules
+hold throughout: the HUD **never computes money** (every number it shows arrived from the server),
+and the stake is always one of `GameConfig.betLevels`.
 
 ### The client — `apps/game-client`
 
-Vite plus about four hundred lines, and **no game rules anywhere in it**. It is the wiring site: the
-one file in the project that imports everything, supplies the arguments each package was designed to
-take, and maps engine phases onto a button label.
+Vite plus the wiring site, and **no game rules anywhere in it**: the one place in the project that
+imports everything, supplies the arguments each package was designed to take, and maps engine phases
+onto a button label.
 
 - **Which server it talks to is one environment variable.** `VITE_RGS_TRANSPORT=mock` constructs the
   simulator in the tab — persisted through `WebStorageStore(localStorage)`, so a reload mid-round
@@ -617,12 +662,40 @@ take, and maps engine phases onto a button label.
   before anything is listening, and events are not replayed. `GameStage.attach(state)` reads the
   engine's state once and puts the reels where the round already is. Without it a reload mid-feature
   hung on motionless reels; with it, the same reload lands on the outcome and plays on.
-- **The client remembers preferences, not the round.** The stake and turbo go through
+- **The client remembers preferences, not the round.** The stake, turbo and mute go through
   `@slot/protocol`'s `PersistedEnvelope`, and a version mismatch, corrupt JSON or drifted shape is
   **discarded** rather than repaired — the same rule the simulator's own store obeys. A remembered
   stake that is no longer on the server's bet ladder is dropped too, because the alternative is a
-  reload that turns into `STAKE_NOT_ALLOWED` on the first spin. Everything else — the balance, the
-  round, the feature — is the server's, and `authenticate` returns it.
+  reload that turns into `STAKE_NOT_ALLOWED` on the first spin — and a remembered turbo is dropped
+  where the jurisdiction forbids it, because the rules outrank the preference. Everything else —
+  the balance, the round, the feature — is the server's, and `authenticate` returns it.
+- **The jurisdiction's rules are applied where each one lives.** The pacing gate holds the spin
+  button for the remainder of `minSpinIntervalMs` (a timer wakes the render when the window opens —
+  the server enforces the same rule, so a client that got this wrong would be told with
+  `LIMIT_REACHED`); the reality check is a DOM dialog that interrupts only on the way into `IDLE`,
+  states **minutes played and no money** (ADR-0001), and stops autoplay before it opens; autoplay
+  itself is `AutoplayController` — it presses like a player, folds each round through
+  `@slot/compliance`, respects the same pacing, and the AUTO pill counts it down.
+- **Audio is wired at the seams the packages expose.** Cues play on engine events (press, feature
+  award, win — tiered through the same `tierFor` the banner uses, so the fanfare and the plate
+  cannot disagree) and on the renderer's `onReelLanded` ticks; visibility mutes through
+  `watchVisibility`; the first gesture unlocks the context (`attachUnlock`); the sound toggle is a
+  real DOM button, persisted as a preference, hidden where WebAudio does not exist.
+- **The client speaks en/ru** ([`i18n.ts`](apps/game-client/src/i18n.ts)): the locale arrives in the
+  launch URL (`?lang=ru`, the operator's word — §7) with `navigator.language` as the demo fallback,
+  and one catalogue feeds the panel labels, the renderer's screens, the announcer, the DOM shell and
+  `<html lang>`. Money is formatted by `@slot/money` through `Intl`, never by the catalogue.
+  Coverage is enforced, not promised: `i18n.test.ts` walks every character of both catalogues —
+  plural forms sampled — against the shipped Inter woff2 files with `fontkit`, at every shipped
+  weight, so a new string with a missing glyph fails CI.
+- **The keyboard gets the same panel** ([`dom-controls.ts`](apps/game-client/src/dom-controls.ts)):
+  real `<button>`s rendered from the same `PanelView` the Pixi panel renders — spin, bet up/down,
+  turbo, autoplay — transparent until `:focus-visible`, because the canvas is the visual and this is
+  its shadow in the accessibility tree. Handlers reach the same engine inputs, so a keyboard press
+  is indistinguishable from a pointer press by the time it arrives.
+- **The letterbox respects the notch.** `layout()` re-reads `readSafeAreaInsets` on every resize
+  (rotation arrives as a resize and moves the notch) and centres the stage inside what remains;
+  portrait and landscape come out of the same vertical stack.
 - **Failures are reported through a seam, not to the console directly.**
   [`telemetry.ts`](apps/game-client/src/telemetry.ts) is an interface, a console adapter and a guard;
   wiring Sentry or an operator's collector later means constructing a different object at boot. Four
@@ -739,6 +812,18 @@ What it does today (**S0**):
   *before* any other validation, so a tampered request never learns anything else. Explicit `stops[]`
   work in dev mode; the named scenarios are S1.
 
+And since **C6**, the policy surface — the sim pushes back, so the client's compliance layer was
+built against a server that does:
+
+- **Session expiry is checked on every call**, not only `authenticate` — which is what gives the §5
+  mid-round recovery a producer. `SimServer.issueSession()` is the faked lobby and it **renews**:
+  the token re-attaches to the same balance and `pendingRound`. `expireSession()` kills the session
+  on demand, for tests and the debug panel (C7).
+- **The pacing rule**: a `spin` arriving before `jurisdictionRules.minSpinIntervalMs` has passed is
+  refused with `LIMIT_REACHED`, measured between *accepted* spins (`SimState.lastSpinAt`) so an
+  idempotent replay is exempt and a refused call does not push the window. Free spins are not paced
+  — a step inside a round is presentation-paced, per §2.1.
+
 And since **S1**:
 
 - **Named force-outcome scenarios** (`scenarios.ts`) — `NEAR_MISS`, `FREE_SPINS_TRIGGER`, `MAX_WIN`,
@@ -799,7 +884,9 @@ The binding is pinned in [docs/protocol.md §2.7](docs/protocol.md) and argued i
 `/dev/*` — fault injection, session reset, a state summary — is what the debug panel (C7) drives and
 what lets the contract suite *demand* a failure rather than wait for one; it is mounted only
 when `devRoutes` is on, and `apps/rgs` will not have it. `POST /demo/session` is not gated, because a
-server you cannot obtain a token for is not a server (docs/protocol.md §7). Configuration is
+server you cannot obtain a token for is not a server (docs/protocol.md §7) — and issuing **renews**
+the running session rather than wiping it, which is what makes the §5 mid-round expiry recovery
+playable over HTTP. Configuration is
 environment, validated with a schema like anything else that crosses a boundary — a mistyped server
 seed silently changes every outcome the session produces.
 
@@ -828,17 +915,60 @@ one at a time without a big-bang cutover.
 between operator and game provider. Stubbing it in R0 costs an hour and shows you know the industry
 shape.
 
-### Platform, compliance, dev-tools
+### Platform — `packages/platform`
 
-- **`platform`** — audio (synthesized at boot with WebAudio — the atlas decision applied to sound;
-  iOS unlock-on-first-tap, mute on `visibilitychange`), storage, visibility, safe-area insets,
-  device capability detection. Everything the browser makes awkward, behind one boring interface.
-- **`compliance`** — jurisdiction presets as **data**, applied at runtime: reality check, session /
-  loss / stake limits, and a **UK preset** (2.5 s minimum spin duration, autoplay and turbo
-  disabled). Switching jurisdiction in the debug panel must visibly change game behaviour.
+Everything the browser makes awkward, behind one boring interface — and every module takes its
+browser object as an argument (the ADR-0003 shape), which is why the whole package tests headless in
+Node with fakes a few lines long.
+
+- **Audio is synthesized at boot** (`audio.ts`) — the atlas decision applied to sound. Seven cues
+  from oscillator math and seeded noise (press click, per-reel stop ticks, win fanfares that grow a
+  note per tier, a warm feature pad): no binary asset, no licence, no attribution, and real audio
+  replaces this module and nothing else. The synthesis is pure `Float32Array` arithmetic with its
+  own tests; `SlotAudio` wraps a structural `AudioContextPort`, resumes a suspended context on the
+  first gesture (`attachUnlock` — the iOS story), and holds the player's mute and the tab's
+  visibility as *separate* flags so returning to the tab restores the player's own choice.
+- **`watchVisibility`** — the visibilitychange port; the client wires it to `setHidden`.
+- **`safeStorage`** — storage that cannot throw: probes with one write, falls back to memory, and
+  swallows quota errors mid-session. A preference that fails to save must never take the game down.
+- **`readSafeAreaInsets`** — the CSS `env(safe-area-inset-*)` probe, measured on demand because a
+  rotated phone moves its notch; the client re-reads it on every resize.
+- **`detectCapabilities`** — pixel ratio, touch, coarse pointer, reduced motion, WebAudio, cores.
+  Facts only; nothing here decides anything with them.
+
+### Compliance — `packages/compliance`
+
+Pure functions of an injected clock (it is in `PURE_PACKAGES`), applying the
+`JurisdictionRules` that arrive **on the wire** — the preset table itself lives in `@slot/protocol`
+(`JURISDICTION_PRESETS`), because an id alone would have made the client's table the authority on
+what a regulator requires (D8).
+
+- **Pacing** (`pacing.ts`) — `canSpin` / `spinDelay` / `nextSpinAllowedAt`: the client half of the
+  wire's `minSpinIntervalMs` rule. A compliant client paces the button and never triggers the
+  server's refusal.
+- **Reality check** (`reality.ts`) — schedule arithmetic: due one interval after play began and one
+  after each acknowledgement. Deliberately **time-only**: the overlay states minutes played, never
+  money, because money the player sees comes from the server (ADR-0001).
+- **Limits** (`limits.ts`) — session time / net loss / single-stake trackers over server-sent
+  amounts. The one sanctioned aggregation of money on the client: the sums exist to *stop play*,
+  never to describe or pay it.
+- **Autoplay decisions** (`autoplay.ts`) — `afterRound` folds one settled round and answers with a
+  stop reason: `COMPLETE`, `WIN_LIMIT`, `LOSS_LIMIT`, `FEATURE` — or `NOT_ALLOWED` where the
+  jurisdiction forbids the run outright.
+
+The **controller** that presses lives in the client (`apps/game-client/src/autoplay.ts`), above the
+engine: it sends `PRESS` on an idle table, folds rounds on the event that carries the credit (not on
+the phase change — `ROUND_SETTLED` arrives *after* `PHASE_CHANGED`, the same ordering lesson the
+feature banner learned), stops on any error, and paces its own presses through the same
+`spinDelay` a human press obeys. The engine cannot tell the difference, which is the demonstration
+that the FSM's input contract is right.
+
+### Dev-tools
+
 - **`dev-tools`** — debug panel (force outcome, fault injection, jurisdiction switch, state
   inspector, exportable event log correlated on `roundId`), **stripped from production by the
   `__DEV_TOOLS__` Vite define**. Verify the strip in the bundle; a debug panel that ships is a bug.
+  Fills in C7.
 
 ### Testing layers
 
@@ -851,6 +981,8 @@ shape.
 | **Resume** | `tests/resume.test.ts` | The client is destroyed and rebuilt at five points mid-feature over a surviving store — the round finishes once, and is credited once |
 | **Engine soak** | `tests/soak.test.ts` | 1,000 seeded rounds incl. features, retries and disconnects, with **no state violations** |
 | **Transport parity** | `tests/http.test.ts` | One round through `MockTransport` and through `HttpTransport`, against identically seeded simulators, **equal field for field** |
+| **Contrast** | `tests/contrast.test.ts` | Every text-on-surface pair both palettes can produce holds WCAG 2.1 AA — found two failures the day it was written |
+| **Glyph coverage** | `apps/game-client` (`i18n.test.ts`) | Every character of both string catalogues has a glyph in the shipped Inter woff2, at every shipped weight |
 | **Network soak** | `tests/http-soak.test.ts` | 300 rounds over a real socket, a faulty-line run, and a shutdown with a hundred abandoned responses in flight — the failures that only exist on a connection |
 | **Contract** | `tests/contract/`, one suite per target | `rgs-sim` in-process · sim over HTTP · `apps/rgs` (registered, unavailable until R0) — the switch-over gate |
 | **E2E** | Playwright, in CI | Fixed seed + forced outcomes: spin, win, feature, resume after reload |
@@ -911,23 +1043,11 @@ bullet between the two.**_
 **Protocol — pinned in [`docs/protocol.md`](docs/protocol.md); what the pinning exposed**
 
 _The six questions that lived here (the settle call, the feature contract, balance refresh, the
-session token, the `Ws` transport, the persistence version) were answered on 2026-08-16 — the answers
-and their rejected alternatives are in `docs/protocol.md` §11. What is left is what those decisions
-made visible:_
+session token, the `Ws` transport, the persistence version) were answered on 2026-08-16, and the
+session-expiry question that followed them was answered on 2026-08-19 and built the same day (§5,
+D8, D9 — jurisdiction rules on the wire, no renew call, transparent mid-round re-authenticate)._
 
-- **An expiring session has no story mid-round.** `session.expiresAt` and the `PLAYER` code
-  `SESSION_EXPIRED` are pinned, but a `PLAYER` error returns the client to `IDLE` — which, with a
-  debited round still `OPEN`, silently abandons the player's money. Either expiry triggers a
-  transparent re-authenticate that resumes from `pendingRound`, or the protocol needs a renew call.
-  `rgs-sim` produces the code but deliberately checks expiry on `authenticate` **only**, and the
-  engine now makes the consequence concrete: `SESSION_EXPIRED` is `PLAYER`, so `DISMISS` returns to
-  `IDLE` and a debited round is simply abandoned. Nothing re-authenticates.
-  **Decision (2026-08-19, build in C6):** no renew call — three servers would have to carry it, and
-  the recovery path already exists. `SESSION_EXPIRED` becomes context-aware in the engine: with a
-  round open, the client transparently re-authenticates (a fresh token through the same lobby seam
-  that issued the first one) and the machine resumes from `pendingRound` exactly as a reload does;
-  with no round open it stays a `PLAYER` modal. Document in `docs/protocol.md` §5 first, then teach
-  `rgs-sim` to expire sessions mid-round so the path has a producer.
+- (none)
 
 **Workspace & tooling**
 
@@ -968,15 +1088,12 @@ made visible:_
   **Decision (2026-08-19):** stays exactly so — splitting a synchronous handler to fake the window
   would test fiction. `TargetHandle.strand()` gets its first real implementation in the `apps/rgs`
   target (R1), where a transaction boundary genuinely separates the debit from the resolve.
-- **Jurisdiction is declared but not enforced.** `GameConfig.jurisdiction` now comes *from* the
-  server, which is the right direction, but enforcement still lives entirely in the client's
-  `compliance` package (C6). A real regulator requires the *server* to enforce minimum spin duration
-  and autoplay limits; the sim has no policy surface at all, so the UK preset remains a UI convention
-  rather than a rule until R5.
-  **Decision (2026-08-19, build in C6):** the sim gains a minimal policy surface *alongside* the
-  client half, so `compliance` is built against a server that pushes back: refuse a `spin` arriving
-  before `minSpinIntervalMs` has passed (the injected clock keeps it pure and testable) and refuse
-  turbo where the jurisdiction forbids it. Regulator-grade enforcement stays R5.
+- **The sim's policy surface is minimal, and regulator-grade enforcement is R5's.** Since C6 the sim
+  refuses a spin arriving before `minSpinIntervalMs` (`LIMIT_REACHED`) and expires sessions on every
+  call — the two rules the client's compliance layer is built against. What a real regulator also
+  requires of the *server* — enforced autoplay limits, acknowledged reality checks, a full
+  jurisdiction rule set behind an operator configuration — has no producer anywhere and belongs to
+  `apps/rgs` (R5).
 
 **Real RGS (`apps/rgs`) — the whole surface**
 
@@ -992,14 +1109,6 @@ made visible:_
 
 **Client — implied by the domain, built by no block**
 
-- **Autoplay does not exist, yet the UK preset disables it.** Every real slot has autoplay, the
-  compliance work (C6) assumes it, and no block builds it — including the loss/win-limit stop
-  conditions regulators actually care about.
-  **Decision (2026-08-19, build in C6):** build it, as part of the compliance work — a preset that
-  disables a feature that does not exist is a test without a subject. An autoplay controller sits
-  *above* the engine: it sends `PRESS` on `IDLE`, decrements its counter and evaluates its stop
-  conditions (spin count, loss limit, single-win-over-N× limit) on `ROUND_SETTLED`. The engine is
-  untouched — which is itself the demonstration that the FSM's input contract is right.
 - **Round history has a server but no screen.** `history` is on the wire, the simulator serves it and
   the contract suite holds every target to it — and nothing in `apps/game-client` shows it to a
   player. It wants the debug panel's frame (C7) or a panel of its own (C8). The other half is
@@ -1010,41 +1119,26 @@ made visible:_
   document, and DOM gives it scroll, focus order and a screen-reader story for free while spending
   nothing from the ticker budget. It lists the `history` response verbatim and states `retention`
   honestly. Built beside the debug panel, whose frame it shares.
-- **Accessibility is started, not finished.** `prefers-reduced-motion` is honoured (the reels go to
-  the outcome without the travel) and the HTML shell carries a polite live region the client keeps in
-  step with the panel. What is still missing: the region announces state but nothing is *operable*
-  from the keyboard — the spin button is a Pixi sprite, so a player who cannot use a pointer cannot
-  play. Win highlighting is a ring plus a dim, which happens to survive colour blindness, and nothing
-  verifies that. Both want C6, alongside i18n.
-  **Decision (2026-08-19, build in C6):** a transparent DOM control layer — real `<button>`s
-  overlaid on the canvas, driven by the same `PanelView` the Pixi panel renders — so focus,
-  `:focus-visible`, Enter/Space and the accessibility tree arrive for free and Pixi stays purely
-  visual. Contrast stops being luck: an automated WCAG-contrast test over the atlas `PALETTE`
-  constants, in CI.
+- **The reality check offers CONTINUE and nothing else.** Regulated markets require the pause to
+  also offer a way *out* — quit the game, show the session's elapsed time on demand — and the demo's
+  dialog has one button, because "exit" in an operator-embedded game is the lobby's affordance and
+  there is no lobby. When C8 packages the demo behind a real URL, the dialog should gain an honest
+  second action (reload to the landing page, if nothing else). The dialog also moves focus in but
+  does not trap it — C7 polish, alongside the panel work.
+- **Autoplay's plan is fixed at the wiring site.** `{ spins: 25, stopOnFeature: true }` — the stop
+  conditions regulators care about (loss limit, single-win limit) are implemented and tested in
+  `@slot/compliance` but nothing lets a player *set* them, and the same is true of the session
+  limits (`limits.ts` has trackers and no settings surface). Both want the debug panel's frame (C7)
+  for a picker, honestly labelled as player-protection settings.
 
 **Assets & content**
 
-- **The feature is silent, and so is everything else.** C5 gives the feature a border, a counter and
-  two screens; what tells a player the rules changed in every real slot is the music, and there is
-  no audio layer at all until C6. The blocker below is now decided: this is scheduling, not
-  research.
-- **Audio has no source, and no licence story.** The art question is answered — the symbol atlas is
-  *generated at boot* from shapes and text, so the repository ships no image, licenses nothing and
-  attributes nobody, and swapping in real art later replaces one file. Sound cannot be generated as
-  cheaply: C6 assumed an audio sprite, and for a **public** repository every clip has to be CC0 or
-  properly licensed with attribution in the README.
-  **Decision (2026-08-19, build in C6):** the atlas answer, applied to sound — synthesize at boot
-  with WebAudio (oscillators and shaped noise: reel-stop ticks, tiered win cadences, a feature pad).
-  No binary asset, no licence, no attribution, and "real audio replaces this module and nothing
-  else" becomes the README's symmetric sentence to the art one. Fallback if the synthesized set
-  disappoints: Kenney's CC0 packs, attributed in the README out of courtesy.
-- **Font coverage for RU is unverified.** i18n ships en/ru (C6). Many display faces carry no Cyrillic;
-  if the chosen face doesn't, a Russian build silently falls back per glyph and the type design
-  simply doesn't apply to half the supported languages.
-  **Decision (2026-08-19, build in C6):** pick an OFL face with full Cyrillic (Inter or Manrope) and
-  make coverage a test, not a checklist item — a build-time check (fontkit/opentype.js) walks every
-  character in the RU string catalogue and asserts the face has a glyph for it, so a new string with
-  a missing glyph fails CI rather than falling back per glyph in front of a player.
+- **The audio set is functional, not designed.** Seven synthesized cues cover the moments that need
+  sound (press, reel stops, tiered wins, the feature), and "real audio replaces `audio.ts` and
+  nothing else" is now true — but nobody with ears has tuned them, there is no feature *music* (a
+  pad plays once at the trigger; nothing loops), and no count-up tick plays under the rolling
+  counter although the cue exists. A pass with taste is C8 polish; the fallback if synthesis never
+  satisfies remains Kenney's CC0 packs, attributed in the README out of courtesy.
 
 ## Rules
 

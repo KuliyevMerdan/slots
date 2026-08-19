@@ -168,6 +168,70 @@ describe('faults, end to end', () => {
 });
 
 /**
+ * The §5 mid-round expiry recovery, against the real simulator (docs/protocol.md §5, D9).
+ *
+ * The engine's own tests prove the machine against a stub; this proves the whole seam — the sim
+ * expires the session mid-feature, the transport carries the `SESSION_EXPIRED`, the engine renews
+ * through the same lobby that issued the boot token, and the feature resumes at the step it was on.
+ */
+describe('a session that expires mid-feature', () => {
+  it('renews transparently and finishes the round, credited once', async () => {
+    const sim = simulator(true);
+    const transport = new MockTransport({ backend: sim, sleep: async () => {} });
+
+    // One forced trigger, so the round deterministically owes free spins — the same one-shot shape
+    // the client wires behind `__DEV_TOOLS__`, permitted here because the sim is in devMode.
+    let force: { scenario: 'FREE_SPINS_TRIGGER' } | undefined = { scenario: 'FREE_SPINS_TRIGGER' };
+    let renewals = 0;
+    const engine = new SlotEngine({
+      port: transport,
+      newRoundId: () => roundId(70),
+      forceOutcome: () => {
+        const outcome = force;
+        force = undefined;
+        return outcome;
+      },
+      renewSession: () => {
+        renewals += 1;
+        return Promise.resolve(sim.issueSession().token);
+      },
+    });
+
+    await engine.start(sim.issueSession().token);
+    expect(engine.state.phase).toBe('IDLE');
+
+    engine.send({ type: 'PRESS' });
+    await engine.settled();
+
+    // Drive the round; the first time the feature is about to ask for a spin, kill the session
+    // under it. The next `featureSpin` fails SESSION_EXPIRED and the machine must renew, resume
+    // from `pendingRound` and carry the feature home — with no ERROR phase ever observed.
+    let expiredOnce = false;
+    for (let guard = 0; guard < 60 && engine.state.phase !== 'IDLE'; guard += 1) {
+      const phase = engine.state.phase;
+      if (phase === 'FEATURE_INTRO' && !expiredOnce) {
+        expiredOnce = true;
+        sim.expireSession();
+      }
+      if (phase === 'STOPPING') engine.send({ type: 'REELS_STOPPED' });
+      else if (phase === 'WIN_PRESENTATION') engine.send({ type: 'PRESENTATION_COMPLETE' });
+      else if (phase === 'FEATURE_INTRO') engine.send({ type: 'INTRO_COMPLETE' });
+      else if (phase === 'FEATURE_OUTRO') engine.send({ type: 'OUTRO_COMPLETE' });
+      await engine.settled();
+      expect(engine.state.phase).not.toBe('ERROR');
+    }
+
+    expect(expiredOnce).toBe(true);
+    expect(renewals).toBeGreaterThanOrEqual(1);
+    expect(engine.state.phase).toBe('IDLE');
+
+    // One round, one settle, and both sides agree on the money.
+    expect(sim.state.rounds.filter((round) => round.state === 'SETTLED')).toHaveLength(1);
+    expect(engine.state.phase === 'IDLE' && engine.state.balance).toBe(sim.state.balance);
+  });
+});
+
+/**
  * The versions meet here, and nowhere else.
  *
  * `GameConfig.mathVersion` says what the server pays on; `@slot/game-math`'s `MATH_VERSION` says

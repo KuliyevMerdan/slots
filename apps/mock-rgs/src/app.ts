@@ -183,10 +183,11 @@ export function buildApp({
    * The operator's lobby, faked (docs/protocol.md §7).
    *
    * Not behind `devRoutes`: without it there is no way to obtain a token at all, and a server you
-   * cannot authenticate against is not a server. `apps/rgs` replaces this with real session
-   * validation in R5.
+   * cannot authenticate against is not a server. Issuing **renews** — the fresh token re-attaches
+   * to the same balance and `pendingRound`, which is what makes the §5 mid-round expiry recovery
+   * playable over HTTP. `apps/rgs` replaces this with real session validation in R5.
    */
-  app.post('/demo/session', () => ({ token: sim.state.token }));
+  app.post('/demo/session', () => sim.issueSession());
 
   if (devRoutes) registerDevRoutes(app, sim);
 

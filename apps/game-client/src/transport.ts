@@ -1,12 +1,6 @@
 import type { RgsTransport } from '@slot/transport';
 import { HttpTransport, MockTransport, withRetry } from '@slot/transport';
-import {
-  SimServer,
-  WebStorageStore,
-  createSimConfig,
-  createSimState,
-  mintDemoToken,
-} from '@slot/rgs-sim';
+import { SimServer, WebStorageStore, createSimConfig, createSimState } from '@slot/rgs-sim';
 import type { Minor } from '@slot/protocol';
 
 /**
@@ -57,8 +51,11 @@ function inProcess(): Connection {
 
   return {
     kind: 'mock',
+    // `issueSession` renews: asking for a token extends the running session, so the engine's
+    // transparent mid-round re-authenticate (docs/protocol.md §5) works in-process exactly as it
+    // does against the demo lobby endpoint over HTTP.
     transport: withRetry(new MockTransport({ backend: sim })),
-    token: () => Promise.resolve(mintDemoToken(SEED)),
+    token: () => Promise.resolve(sim.issueSession().token),
   };
 }
 

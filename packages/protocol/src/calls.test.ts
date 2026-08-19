@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { CALLS, SettleResSchema, SpinReqSchema, SpinResSchema } from './calls.js';
-import { GameConfigSchema } from './config.js';
+import {
+  GameConfigSchema,
+  JURISDICTIONS,
+  JURISDICTION_PRESETS,
+  JurisdictionRulesSchema,
+} from './config.js';
 import { FeatureProgressSchema } from './round.js';
 
 const ROUND_ID = '0192f0c4-6b7a-7c3d-8f21-2b1c9d4e5f60';
@@ -20,6 +25,12 @@ const gameConfig = {
   betLevels: [50, 100],
   limits: { minStake: 50, maxStake: 10_000, maxWinMultiplier: 5_000 },
   jurisdiction: 'DEFAULT',
+  jurisdictionRules: {
+    minSpinIntervalMs: 0,
+    turboAllowed: true,
+    autoplayAllowed: true,
+    realityCheckIntervalMs: 0,
+  },
   devMode: false,
 };
 
@@ -126,8 +137,46 @@ describe('game config', () => {
       'minStake above maxStake',
       { ...gameConfig, limits: { minStake: 999, maxStake: 100, maxWinMultiplier: 5_000 } },
     ],
+    [
+      'a negative spin-interval floor',
+      {
+        ...gameConfig,
+        jurisdictionRules: { ...gameConfig.jurisdictionRules, minSpinIntervalMs: -1 },
+      },
+    ],
+    [
+      'a config with no jurisdiction rules — the id alone is a name, not a regime',
+      (({ jurisdictionRules: _, ...rest }) => rest)(gameConfig),
+    ],
   ])('rejects %s', (_label, config) => {
     expect(GameConfigSchema.safeParse(config).success).toBe(false);
+  });
+});
+
+describe('jurisdiction presets', () => {
+  it('covers every jurisdiction id, and each preset parses', () => {
+    expect(Object.keys(JURISDICTION_PRESETS).sort()).toEqual([...JURISDICTIONS].sort());
+    for (const preset of Object.values(JURISDICTION_PRESETS)) {
+      expect(JurisdictionRulesSchema.parse(preset)).toEqual(preset);
+    }
+  });
+
+  it('UK is the 2021 GB slots rules in miniature', () => {
+    expect(JURISDICTION_PRESETS.UK).toEqual({
+      minSpinIntervalMs: 2_500,
+      turboAllowed: false,
+      autoplayAllowed: false,
+      realityCheckIntervalMs: 3_600_000,
+    });
+  });
+
+  it('DEFAULT restricts nothing — the unregulated demo regime', () => {
+    expect(JURISDICTION_PRESETS.DEFAULT).toEqual({
+      minSpinIntervalMs: 0,
+      turboAllowed: true,
+      autoplayAllowed: true,
+      realityCheckIntervalMs: 0,
+    });
   });
 });
 

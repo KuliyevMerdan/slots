@@ -166,6 +166,11 @@ export class ToggleButton {
     this.#draw();
   }
 
+  /** Mutable for the same reason the spin button's is: AUTO shows how many spins remain. */
+  set label(text: string) {
+    if (this.#label.text !== text) this.#label.text = text;
+  }
+
   set enabled(value: boolean) {
     if (this.#enabled === value) return;
     this.#enabled = value;

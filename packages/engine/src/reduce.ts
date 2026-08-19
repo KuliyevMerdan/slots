@@ -48,6 +48,14 @@ export interface ReduceContext {
    * sequencing would buy a second dev affordance nobody has asked for yet.
    */
   forceOutcome?: () => ForceOutcome | undefined;
+  /**
+   * Whether the driver has a lobby seam to renew an expired session through.
+   *
+   * `SESSION_EXPIRED` under an open round only enters the transparent re-authenticate when this is
+   * true; without a lobby there is no fresh token to ask for, and the honest behaviour is the
+   * ordinary `PLAYER` modal rather than a call the driver cannot make (docs/protocol.md §5, D9).
+   */
+  canReauthenticate?: boolean;
 }
 
 /** `{ forceOutcome }` only when there is one — the field must be absent, not undefined, on the wire. */
@@ -124,6 +132,10 @@ const effectFor = (state: EngineState): EngineEffect | undefined => {
       };
     case 'SETTLING':
       return { type: 'CALL_SETTLE', request: { roundId: state.roundId } };
+    // Re-driving a re-authentication is asking the lobby again — which is what makes a RECOVERABLE
+    // failure *during* the renewal retryable through the ordinary error machinery.
+    case 'REAUTHENTICATING':
+      return { type: 'CALL_REAUTHENTICATE' };
     default:
       return undefined;
   }
@@ -513,7 +525,7 @@ export function sessionOf(
   state: EngineState,
 ): { config: EngineStateConfig; balance: Minor; stake: Minor } | undefined {
   if (state.phase === 'BOOTING') return undefined;
-  if (state.phase === 'ERROR') return sessionOf(state.resume);
+  if (state.phase === 'ERROR' || state.phase === 'REAUTHENTICATING') return sessionOf(state.resume);
   return { config: state.config, balance: state.balance, stake: state.stake };
 }
 
@@ -539,6 +551,21 @@ type EngineStateConfig = Extract<EngineState, { phase: 'IDLE' }>['config'];
  * `@slot/game-math`, not config from the wire. An injected version is a gate the wiring site can
  * forget to connect, and a safety check nobody notices is missing is worse than none.
  */
+/**
+ * The math-version gate, shared by the boot path and the mid-round re-authenticate: a session is a
+ * session, and neither way of getting one may present outcomes this build cannot reproduce.
+ */
+const mathGate = (state: EngineState, mathVersion: string): Transition | null =>
+  mathVersion === MATH_VERSION
+    ? null
+    : raise(
+        state,
+        new SlotError(
+          'MATH_VERSION_MISMATCH',
+          `this build implements math ${MATH_VERSION}; the server is paying on ${mathVersion}`,
+        ),
+      );
+
 function authenticated(
   state: EngineState,
   response: Extract<EngineInput, { type: 'AUTHENTICATED' }>['response'],
@@ -548,15 +575,8 @@ function authenticated(
   // Before anything else, including a round already in flight: a client that cannot reproduce the
   // server's math must not present its outcomes, and continuing a resumed round would be presenting
   // one immediately.
-  if (config.mathVersion !== MATH_VERSION) {
-    return raise(
-      state,
-      new SlotError(
-        'MATH_VERSION_MISMATCH',
-        `this build implements math ${MATH_VERSION}; the server is paying on ${config.mathVersion}`,
-      ),
-    );
-  }
+  const gate = mathGate(state, config.mathVersion);
+  if (gate !== null) return gate;
 
   const pending = response.pendingRound;
   const ready: EngineEvent[] = [
@@ -621,11 +641,93 @@ function authenticated(
   );
 }
 
+/* ── the transparent re-authenticate (docs/protocol.md §5, D9) ────────────────────────────── */
+
+/**
+ * `SESSION_EXPIRED` under an open round becomes a renewal, not a modal — *when* the failure hit a
+ * phase whose call can be re-driven and the driver has a lobby to ask. One transparent attempt per
+ * failure: a failure while already `REAUTHENTICATING` falls through to the ordinary error path,
+ * because a client looping on re-auth is a client hammering a server that already said no.
+ */
+function sessionExpired(
+  state: EngineState,
+  error: SlotError,
+  context: ReduceContext,
+): Transition | null {
+  if (error.code !== 'SESSION_EXPIRED') return null;
+  if (context.canReauthenticate !== true) return null;
+  if (state.phase === 'REAUTHENTICATING' || effectFor(state) === undefined) return null;
+
+  return move(
+    state,
+    { phase: 'REAUTHENTICATING', resume: state, error },
+    [{ type: 'SESSION_RENEWING', error }],
+    [{ type: 'CALL_REAUTHENTICATE' }],
+  );
+}
+
+function reauthenticating(
+  state: Extract<EngineState, { phase: 'REAUTHENTICATING' }>,
+  input: EngineInput,
+): Transition {
+  if (input.type !== 'REAUTHENTICATED') return rejectInput(state, input);
+
+  const { response } = input;
+
+  // The same gate as the boot path: the server behind the fresh session may not be the server the
+  // round started on, and a version that moved mid-round freezes the game mid-round.
+  const gate = mathGate(state, response.config.mathVersion);
+  if (gate !== null) return gate;
+
+  // The server reported a round in flight: its account wins, and the ordinary §5 resume carries it —
+  // this is exactly what a reload would do with the same response.
+  if (response.pendingRound !== undefined) return authenticated(state, response);
+
+  // No pending round. Either the failed call never ran (a spin refused at the door) or it ran to
+  // completion and the round settled (a lost settle response). Re-entering the interrupted phase and
+  // re-driving its call resolves both: the spin runs fresh under the new session, the settle
+  // replays idempotently — and a round the server genuinely does not know ends in `UNKNOWN_ROUND`,
+  // which is the truth, stated by the server.
+  const ready: EngineEvent[] = [
+    {
+      type: 'SESSION_READY',
+      session: response.session,
+      config: response.config,
+      balance: response.balance,
+    },
+    { type: 'BALANCE_CHANGED', balance: response.balance },
+  ];
+
+  const resume = state.resume;
+  switch (resume.phase) {
+    case 'SPINNING':
+    case 'FEATURE_SPINNING':
+    case 'SETTLING': {
+      const resumed: EngineState = {
+        ...resume,
+        config: response.config,
+        balance: response.balance,
+      };
+      const effect = effectFor(resumed);
+      return move(state, resumed, ready, effect === undefined ? [] : [effect]);
+    }
+    default:
+      // `sessionExpired` only enters this phase from a call phase; a resume point without a call is
+      // a disagreement with our own construction, and improvising on it is what FATAL is for.
+      return raise(
+        state,
+        illegal('re-authenticated with no pending round and no call to re-drive'),
+      );
+  }
+}
+
 /* ── the reducer ──────────────────────────────────────────────────────────────────────────── */
 
 export function reduce(state: EngineState, input: EngineInput, context: ReduceContext): Transition {
   // Two inputs any phase must answer the same way.
-  if (input.type === 'CALL_FAILED') return raise(state, input.error);
+  if (input.type === 'CALL_FAILED') {
+    return sessionExpired(state, input.error, context) ?? raise(state, input.error);
+  }
   if (input.type === 'AUTHENTICATED') return authenticated(state, input.response);
 
   switch (state.phase) {
@@ -647,6 +749,8 @@ export function reduce(state: EngineState, input: EngineInput, context: ReduceCo
       return featureOutro(state, input);
     case 'SETTLING':
       return settling(state, input);
+    case 'REAUTHENTICATING':
+      return reauthenticating(state, input);
     case 'ERROR':
       return errored(state, input);
   }

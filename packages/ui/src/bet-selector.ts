@@ -18,6 +18,8 @@ export interface BetSelectorOptions {
   onChange: (stake: Minor) => void;
   width?: number;
   height?: number;
+  /** Injectable so the wiring site can localise it (C6, en/ru). */
+  caption?: string;
 }
 
 export class BetSelector {
@@ -43,6 +45,7 @@ export class BetSelector {
     onChange,
     width = 190,
     height = 62,
+    caption = 'BET',
   }: BetSelectorOptions) {
     this.#levels = levels;
     this.#currency = currency;
@@ -57,7 +60,7 @@ export class BetSelector {
       .stroke({ width: 2, color: UI_PALETTE.panelEdge });
 
     this.#caption = new Text({
-      text: 'BET',
+      text: caption,
       style: new TextStyle({
         fontFamily: UI_FONT,
         fontSize: 12,

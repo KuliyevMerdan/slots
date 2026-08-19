@@ -1,4 +1,4 @@
-import { GameConfigSchema } from '@slot/protocol';
+import { GameConfigSchema, JURISDICTION_PRESETS } from '@slot/protocol';
 import { describe, expect, it } from 'vitest';
 import { BET_LEVELS, MATH_CONFIG, MATH_VERSION } from './config.js';
 import { PAYLINES } from './paylines.js';
@@ -29,6 +29,7 @@ describe('the math half of GameConfig', () => {
       betLevels: BET_LEVELS,
       limits: { minStake: 20, maxStake: 4_000, maxWinMultiplier: 5_000 },
       jurisdiction: 'DEFAULT',
+      jurisdictionRules: JURISDICTION_PRESETS.DEFAULT,
       devMode: false,
     });
 

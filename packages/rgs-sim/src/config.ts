@@ -1,4 +1,5 @@
-import type { GameConfig, JurisdictionId, Minor } from '@slot/protocol';
+import type { GameConfig, JurisdictionId, JurisdictionRules, Minor } from '@slot/protocol';
+import { JURISDICTION_PRESETS } from '@slot/protocol';
 import { BET_LEVELS, MATH_CONFIG } from '@slot/game-math';
 
 /**
@@ -34,6 +35,12 @@ export const SIM_MAX_WIN_MULTIPLIER = 5_000;
 export interface SimConfigOptions {
   gameId?: string;
   jurisdiction?: JurisdictionId;
+  /**
+   * What the declared jurisdiction requires. Defaults to the protocol's baseline preset for the id —
+   * overriding it is the operator-configuration seam (docs/protocol.md D8), and what lets a test
+   * pin one rule without impersonating a whole regime.
+   */
+  jurisdictionRules?: JurisdictionRules;
   /** Whether this server honours `forceOutcome`. Never true in production — docs/protocol.md §8. */
   devMode?: boolean;
   minStake?: Minor;
@@ -44,6 +51,7 @@ export interface SimConfigOptions {
 export const createSimConfig = ({
   gameId = SIM_GAME_ID,
   jurisdiction = 'DEFAULT',
+  jurisdictionRules = JURISDICTION_PRESETS[jurisdiction],
   devMode = false,
   minStake = firstBetLevel,
   maxStake = lastBetLevel,
@@ -57,5 +65,6 @@ export const createSimConfig = ({
   betLevels: [...BET_LEVELS],
   limits: { minStake, maxStake, maxWinMultiplier },
   jurisdiction,
+  jurisdictionRules: { ...jurisdictionRules },
   devMode,
 });

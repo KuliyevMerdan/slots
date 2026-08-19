@@ -3,14 +3,62 @@ import { PositiveMinorSchema, SymbolIdSchema } from './primitives.js';
 
 /**
  * Regulated behaviour is **data, not branching**. The server declares which regime the session is
- * under; the client applies the preset (`@slot/compliance`). Server-side enforcement is R5 — until
- * then this field is a declaration, not a guarantee.
+ * under *and what that regime means* — the rules travel with the config (docs/protocol.md §2.1,
+ * D8), the server enforces the half it can observe (spin cadence), and the client's compliance
+ * layer (`@slot/compliance`) applies the rest.
  */
 export const JURISDICTIONS = ['DEFAULT', 'UK'] as const;
 
 export type JurisdictionId = (typeof JURISDICTIONS)[number];
 
 export const JurisdictionIdSchema = z.enum(JURISDICTIONS);
+
+/**
+ * What a jurisdiction requires, as data on the wire.
+ *
+ * The id names the regime; this object *is* the regime, and it is deliberately the thing both sides
+ * read. An id alone would make the client's preset table the authority on what a regulator requires
+ * — the same mistake as client-side math, one layer up (D8).
+ */
+export const JurisdictionRulesSchema = z.object({
+  /**
+   * A base-game cycle may not start sooner than this after the previous one. 0 = no floor.
+   *
+   * The one rule the server can enforce itself: a `spin` arriving early is `LIMIT_REACHED`. A free
+   * spin is a step inside a round and is paced by presentation, not by this rule — and an
+   * idempotent replay is exempt, because replay precedes validation (docs/protocol.md §4).
+   */
+  minSpinIntervalMs: z.int().min(0),
+  turboAllowed: z.boolean(),
+  autoplayAllowed: z.boolean(),
+  /** How often play must be interrupted with a reality check. 0 = never. */
+  realityCheckIntervalMs: z.int().min(0),
+});
+
+export type JurisdictionRules = z.infer<typeof JurisdictionRulesSchema>;
+
+/**
+ * The baseline meaning of each jurisdiction id — what a server serves unless an operator
+ * configuration overrides it per market. The wire carries whatever the server actually enforces;
+ * the client applies what arrives, never this table.
+ *
+ * The UK preset is the 2021 GB slots rules in miniature: a 2.5 s minimum game cycle, no turbo, no
+ * autoplay, and an hourly reality check.
+ */
+export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionRules> = {
+  DEFAULT: {
+    minSpinIntervalMs: 0,
+    turboAllowed: true,
+    autoplayAllowed: true,
+    realityCheckIntervalMs: 0,
+  },
+  UK: {
+    minSpinIntervalMs: 2_500,
+    turboAllowed: false,
+    autoplayAllowed: false,
+    realityCheckIntervalMs: 3_600_000,
+  },
+};
 
 /**
  * What a symbol pays, per matching count. `LINE` pays multiply the **line bet**; `SCATTER` pays
@@ -72,6 +120,7 @@ export const GameConfigSchema = z
     betLevels: z.array(PositiveMinorSchema).min(1),
     limits: LimitsSchema,
     jurisdiction: JurisdictionIdSchema,
+    jurisdictionRules: JurisdictionRulesSchema,
     /** Whether this server will honour `forceOutcome` at all. Never true in production. */
     devMode: z.boolean(),
     // Currency is deliberately *not* here: it belongs to the player's wallet, so it arrives once in

@@ -4,6 +4,7 @@ import { format } from '@slot/money';
 import { Timeline } from './timeline.js';
 import type { TimelineStep } from './timeline.js';
 import { tierFor } from './tiers.js';
+import type { WinTierId } from './tiers.js';
 import type { ReelSet } from './reels.js';
 import { FONT_STACK, SYMBOL_SIZE, WIN_PALETTE } from './theme.js';
 
@@ -45,7 +46,17 @@ export interface WinPresentationOptions {
    * **final** total before the presentation ends, always, including when it is skipped.
    */
   onAmount?: (amount: Minor) => void;
+  labels?: WinLabels;
 }
+
+/** The banner's one sentence, injectable for the same reason the feature's are (C6, en/ru). */
+export interface WinLabels {
+  tier(id: WinTierId): string;
+}
+
+export const DEFAULT_WIN_LABELS: WinLabels = {
+  tier: (id) => `${id} WIN`,
+};
 
 export interface PresentationInput {
   wins: readonly Win[];
@@ -67,6 +78,7 @@ export class WinPresentation {
   readonly #paylines: readonly (readonly number[])[];
   readonly #currency: string;
   readonly #locale: string;
+  readonly #labels: WinLabels;
   readonly #onAmount: ((amount: Minor) => void) | undefined;
 
   readonly #lines = new Graphics();
@@ -75,11 +87,19 @@ export class WinPresentation {
   readonly #bannerAmount: Text;
   readonly #lineAmount: Text;
 
-  constructor({ reels, paylines, currency, locale = 'en', onAmount }: WinPresentationOptions) {
+  constructor({
+    reels,
+    paylines,
+    currency,
+    locale = 'en',
+    onAmount,
+    labels = DEFAULT_WIN_LABELS,
+  }: WinPresentationOptions) {
     this.#reels = reels;
     this.#paylines = paylines;
     this.#currency = currency;
     this.#locale = locale;
+    this.#labels = labels;
     this.#onAmount = onAmount;
 
     this.#lineAmount = new Text({
@@ -159,7 +179,7 @@ export class WinPresentation {
         this.#reels.setEmphasis(everyPosition);
         if (tier !== null) {
           this.#banner.visible = true;
-          this.#bannerTier.text = `${tier.id} WIN`;
+          this.#bannerTier.text = this.#labels.tier(tier.id);
         }
       },
       onProgress: (progress) => {
