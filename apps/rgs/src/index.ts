@@ -12,6 +12,9 @@
 
 export * from './http/app.js';
 export * from './http/errors.js';
+export * from './observability/metrics.js';
+export * from './observability/observer.js';
+export * from './observability/tracing.js';
 export * from './errors.js';
 export * from './config.js';
 export * from './domain/rounds.js';

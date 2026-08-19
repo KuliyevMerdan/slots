@@ -174,6 +174,16 @@ export class PostgresRoundStore implements RoundStore {
     return last === null || last === undefined ? undefined : last;
   }
 
+  async countByState(): Promise<Record<StoredRound['state'], number>> {
+    // count(*) crosses the wire as text — pg's bigint discipline — hence the explicit Number.
+    const result = await this.#pool.query<{ state: StoredRound['state']; n: string }>(
+      'select state, count(*) as n from rounds group by state',
+    );
+    const counts: Record<StoredRound['state'], number> = { OPEN: 0, RESOLVED: 0, SETTLED: 0 };
+    for (const row of result.rows) counts[row.state] = Number(row.n);
+    return counts;
+  }
+
   /** Drain the pool — tests and orderly shutdowns; the process exit path never waits on it. */
   async close(): Promise<void> {
     await this.#pool.end();

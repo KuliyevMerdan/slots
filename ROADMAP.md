@@ -63,8 +63,16 @@ store with memory and Postgres twins held to one contract (Postgres rather than 
 buckets answering `RATE_LIMITED` with `retryAfterMs`. The contract suite gained the two
 PLAYER-class cases that run against **all three targets**: mid-round expiry → renewal → resume
 credited once, and the pacing refusal with its idempotent-replay exemption.
+**R6 landed 2026-08-19**: observability as three seams (ADR-0008) — one structured line per game
+call with the `roundId` on it and the domain's swallowed money-side failures made loud at the
+failure site through the `RgsObserver` port; OTel spans (`@opentelemetry/api` as the seam, the
+SDK only in `main.ts`) keyed `rgs.round_id`, wallet spans nested by the `tracedWallet` decorator;
+a hand-rolled metrics registry on `GET /metrics` with the round-state gauge asked of the store at
+scrape time; `/ready` probing the store and the wallet (by refusal) and naming the check that
+failed. The gate — one `roundId` retrieves the round's full story across logs, traces and
+metrics — is a test over the real HTTP binding.
 **Next is C8** — packaging: the deploy, the README, rate limiting on `mock-rgs`, the nightly soak
-and the E2E suite. **R6** (observability) is the R-block now unblocked; **R7** gates only on R6.
+and the E2E suite. **R7** (production readiness) is the last R-block, now unblocked.
 
 ---
 
@@ -96,7 +104,7 @@ contract suite. `#` maps each block back to the phase numbering of the original 
 | **R3** | Double-entry ledger in integer minor units | R2 | 10 | ✅ (landed 2026-08-19) |
 | **R4** | Server RNG + provably-fair seed commit/reveal | R1 | 10 | ✅ (landed 2026-08-19) |
 | **R5** | Sessions, auth, limits — the `PLAYER` error class for real | R1 | 10 | ✅ (landed 2026-08-19) |
-| **R6** | Observability — structured logs, metrics, OTel on `roundId` | R1 | 10 | ☐ |
+| **R6** | Observability — structured logs, metrics, OTel on `roundId` | R1 | 10 | ✅ |
 | **R7** | Production readiness — config validation, load test, deploy | R3, R6 | 10 | ☐ |
 
 **Legend:** ☐ not started · ◐ in progress · ✅ landed (add the date, as `✅ (landed 2026-09-04)`).
@@ -703,12 +711,31 @@ against **all three targets**, because the sims already enforced what `apps/rgs`
 
 ## Block R6 — Observability
 
-- [ ] Structured logs (pino) with a correlation ID **and `roundId` on every line**.
-- [ ] OpenTelemetry traces spanning authenticate → spin → wallet → settle.
-- [ ] Metrics: spin latency histogram, error rate by class, round-state gauges.
-- [ ] Liveness + readiness endpoints (readiness pings the database and the wallet).
+- [x] Structured logs (pino) with a correlation ID **and `roundId` on every line** — one access
+      line per answered game call (call, `roundId`, duration), one enriched line per refusal
+      (code, class, `roundId`); Fastify's own request lines are off because ours say more. The
+      domain speaks through the `RgsObserver` port (ADR-0008): the two money-side failures
+      ADR-0005 swallows by design — the undeliverable rollback, the lost ledger entry — are now
+      `error`-level events **at the failure site**, `roundId` and correlation id attached.
+- [x] OpenTelemetry traces — `@opentelemetry/api` as the seam (the injected-shape pattern,
+      industry-maintained), one SERVER span per call, `tracedWallet` decorating the provider with
+      nested CLIENT spans, `rgs.round_id` on every span; the SDK + OTLP exporter register in
+      `main.ts` only when `OTEL_EXPORTER_OTLP_ENDPOINT` names a collector.
+- [x] Metrics — hand-rolled registry (the R5 token-bucket argument), Prometheus text on
+      `GET /metrics`: `rgs_call_duration_seconds{call}`, `rgs_errors_total{call,code,class}`,
+      `rgs_calls_total`, `rgs_money_write_failures_total{kind}`, and `rgs_rounds{state}` asked of
+      the store at scrape time (`countByState`, both twins, contract-tested) — an `OPEN` count
+      that stays high is the stranded-round alarm, and it survives restarts because the store
+      answers, not a process-local counter.
+- [x] Liveness + readiness — `/health` unchanged; `/ready` runs the composition's named probes
+      (the store via its own count query; the wallet **by refusal** — a `WalletError` for the
+      probe id proves the wire answers) and turns 503 naming the failing check.
 
 **Done when:** one `roundId` retrieves the full story of a round across logs, traces and metrics.
+✅ — [`observability/story.test.ts`](apps/rgs/src/observability/story.test.ts) composes exactly as
+`main.ts` does, plays real rounds over the real HTTP binding, and retrieves one round's story
+from all three surfaces by its `roundId` alone — then makes the swallowed money-side failures
+loud, correlation id intact.
 
 ## Block R7 — Production readiness
 

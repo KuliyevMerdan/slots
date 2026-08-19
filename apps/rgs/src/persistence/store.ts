@@ -112,6 +112,12 @@ export interface RoundStore {
    * this, idempotent replays exempt by construction because a replay opens nothing.
    */
   lastOpenedAt(playerId: string): Promise<number | undefined>;
+  /**
+   * How many rounds sit in each state, whole store — the round-state gauge's read (R6), and what
+   * `/ready` pings the database with. Asked at scrape time because the store is the only party
+   * whose answer survives a restart: an `OPEN` count that stays high is the stranded-round alarm.
+   */
+  countByState(): Promise<Record<RoundState, number>>;
   /** How many settled rounds this store keeps at all — the wire's `history.retention`. */
   readonly retention: number;
 }

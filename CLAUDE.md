@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project status
 
 > ⚠️ **The game is a game, its math is a designed 96%, and the real RGS plays it against a real wallet seam.**
-> As of **2026-08-19**, **C0, C1, S0, S1, C2, S2, C3, C4, C5, S4, S3, C6, C7, R0, R1, R2, R3, R4 and R5 have landed** — the
+> As of **2026-08-19**, **C0, C1, S0, S1, C2, S2, C3, C4, C5, S4, S3, C6, C7, R0, R1, R2, R3, R4, R5 and R6 have landed** — the
 > workspace, the contracts (`protocol`, `money`, `game-math`), `rgs-sim`, the `RgsTransport` seam
 > with `MockTransport`, `HttpTransport` and the retry policy, `engine`, `apps/mock-rgs`, `renderer`,
 > `ui` and `apps/game-client`, `tools/math-sim` — the RTP report that tuned the strips —
@@ -57,10 +57,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > store's own `lastOpenedAt` — replay-exempt, free spins unpaced — and the game routes sit behind
 > per-token and per-IP token buckets answering `RATE_LIMITED` with `retryAfterMs`. The contract
 > suite gained the mid-round expiry → renew → resume case and the pacing case, both running
-> against **all three targets**. The contract suite's third target runs the whole suite over the
-> full production chain — client→HTTP→rgs→HTTP→wallet — its fault case enacted by refusing the
-> *real* wallet, and the §5 stranded round runs against the one target that can honestly produce
-> it. 1008 tests locally, 1031 in CI, `pnpm check` green.
+> against **all three targets**. **The server is observable since R6** (ADR-0008): one structured
+> line per game call with the `roundId` on it, the domain's swallowed money-side failures
+> (ADR-0005's undeliverable rollback and lost ledger entry) made **loud at the failure site**
+> through the `RgsObserver` port — `roundId` and correlation id attached, counted by a metric an
+> alert can fire on; OTel spans (`@opentelemetry/api` as the seam, the SDK registered only in
+> `main.ts` when `OTEL_EXPORTER_OTLP_ENDPOINT` names a collector) keyed `rgs.round_id` with
+> wallet spans nested by the `tracedWallet` decorator; a hand-rolled metrics registry on
+> `GET /metrics` — call-latency histogram, error rate by class, and a round-state gauge the store
+> itself answers at scrape time (`countByState`, both twins, contract-tested — a high `OPEN`
+> count is the stranded-round alarm, restart-proof); and `/ready` probing the store and the
+> wallet (by refusal: a `WalletError` proves the wire answers) and naming the check that failed.
+> The R6 gate is a test over the real HTTP binding: one `roundId` retrieves the round's full
+> story across logs, traces and metrics. The contract suite's third target runs the whole suite
+> over the full production chain — client→HTTP→rgs→HTTP→wallet — its fault case enacted by
+> refusing the *real* wallet, and the §5 stranded round runs against the one target that can
+> honestly produce it. 1020 tests locally, 1044 in CI, `pnpm check` green.
 >
 > **`pnpm dev:client` opens a playable slot.** It authenticates, spins, lands on the server's
 > `stops[]`, lights the paylines it was told won, counts the win up, runs the feature and settles —
@@ -82,8 +94,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > §5 stranded-round case runs against the one target that can honestly produce it.
 >
 > **What is deliberately not there yet:** packaging, the README, rate limiting on `mock-rgs`, the
-> nightly soak and the E2E suite (**C8**). The next block is **C8**; **R6** (observability) is
-> the R-block now unblocked, and **R7** waits only on R6.
+> nightly soak and the E2E suite (**C8**). The next block is **C8**; **R7** (production
+> readiness) is the last R-block, now unblocked.
 >
 > The canon is four documents: `CLAUDE.md` (this file), [`ROADMAP.md`](ROADMAP.md) (the task map),
 > [`RECOMMENDATIONS.md`](RECOMMENDATIONS.md) (the strategic registry) and
@@ -140,7 +152,7 @@ empty, and the block named is the commitment.
 | ------------------- | -------------------- | -------------------------------------------------------- | ----- |
 | `@slot/game-client` | `apps/game-client`   | The deliverable — Pixi client on Vite                     | ✅ C3 |
 | `@slot/mock-rgs`    | `apps/mock-rgs`      | Fastify wrapper around `rgs-sim` — proves the network path | ✅ S2 |
-| `@slot/rgs`         | `apps/rgs`           | Node.js RGS — rounds & idempotency on Postgres (in-memory twin); wallet over HTTP behind the R0 seam (docs/wallet-api.md); double-entry ledger + reconciliation (R3); per-round commit/reveal on a CSPRNG (R4); real sessions on a bearer binding + operator surface + pacing + rate limits (R5) | ✅ R5 |
+| `@slot/rgs`         | `apps/rgs`           | Node.js RGS — rounds & idempotency on Postgres (in-memory twin); wallet over HTTP behind the R0 seam (docs/wallet-api.md); double-entry ledger + reconciliation (R3); per-round commit/reveal on a CSPRNG (R4); real sessions on a bearer binding + operator surface + pacing + rate limits (R5); logs/traces/metrics joined on `roundId` + dependency-probing readiness (R6) | ✅ R6 |
 | `@slot/protocol`    | `packages/protocol`  | ★ Contracts: zod schemas + inferred TS types + error taxonomy | ✅ C1 |
 | `@slot/money`       | `packages/money`     | Branded `Minor` integer units, exact arithmetic, formatting | ✅ C1 |
 | `@slot/game-math`   | `packages/game-math` | Reel strips, paytable, payline evaluator — and, since R1, the outcome engine (PRNG + stops-first derivation) both servers draw from | ✅ C1 |
@@ -984,12 +996,13 @@ playable over HTTP. Configuration is
 environment, validated with a schema like anything else that crosses a boundary — a mistyped server
 seed silently changes every outcome the session produces.
 
-### The real RGS — `apps/rgs` (R0 laid it out; R1 made it play; R2 made the wallet real; R3 made the money auditable; R4 made the outcomes provable; R5 made the sessions real)
+### The real RGS — `apps/rgs` (R0 laid it out; R1 made it play; R2 made the wallet real; R3 made the money auditable; R4 made the outcomes provable; R5 made the sessions real; R6 made the server observable)
 
 ```
 apps/rgs/src/
 ├─ http/          routes from the CALLS table; schema validation; bearer extraction, rate
-│                 limiting and the operator surface (R5)
+│                 limiting and the operator surface (R5); the access line, call spans,
+│                 /metrics and the probing /ready (R6)
 ├─ domain/        createRoundService — the real lifecycle (R1), caller-bound since R5;
 │                 sessions.ts — the SessionStore port, its twins' contract, the minting service
 ├─ wallet/        the R0 seam, real at the wire (R2): RemoteWallet + wire schemas + the wallet sim
@@ -997,7 +1010,9 @@ apps/rgs/src/
 ├─ math/          re-exports @slot/game-math — never a second copy
 ├─ rng/           the commitment chain (R4): per-round seed pairs over injected entropy
 ├─ persistence/   the RoundStore port: memory + Postgres (migrations committed), one contract
-└─ observability/ correlation id minted/adopted + echoed; pino via Fastify (R6 grows it)
+└─ observability/ correlation id minted/adopted + echoed; and since R6 (ADR-0008): the
+                  RgsObserver port + pino/metrics adapters, the hand-rolled metrics registry,
+                  the OTel seam (call spans + the tracedWallet decorator), the story gate test
 ```
 
 **The domain is real since R1** — `createRoundService` implements docs/protocol.md §3/§4/§5 over
@@ -1100,6 +1115,34 @@ the server the jurisdiction half it can observe (D8): a spin arriving inside
 `retryAfterMs` in the body and `Retry-After` on the wire. Test compositions carry no budgets by
 design: the suite hammers on purpose, and `main.ts` always passes the env-configured ones.
 
+**The server is observable since R6** (ADR-0008) — three seams, not a framework, each the
+smallest honest implementation of what R6 owed. **Logs**: the HTTP binding writes one structured
+line per answered game call (call name, `roundId`, duration — Fastify's own request lines are off
+because ours say more) and one enriched line per refusal (code, class, `roundId`); the domain
+speaks through `RgsObserver`, a one-method port for what HTTP cannot see — the two money-side
+failures ADR-0005 swallows by design (the undeliverable rollback, the lost ledger entry) are now
+`error`-level events **at the failure site** with the `roundId` and the correlation id on them
+(`Caller` carries it since R6), plus the §5 resume and the delivered rollback telling their
+stories at `info`/`warn`. One pino instance serves Fastify and the observer, so a round's lines
+interleave in one stream. **Traces**: `@opentelemetry/api` is the seam — a facade with a no-op
+default, exactly the injected-shape pattern — one SERVER span per call, wallet CLIENT spans
+nested under it by the `tracedWallet` decorator (the `withRetry` shape), `rgs.round_id` on every
+span; the SDK and the OTLP exporter register only in `main.ts`, only when
+`OTEL_EXPORTER_OTLP_ENDPOINT` names a collector. **Metrics**: a hand-rolled registry (the R5
+token-bucket argument — three instrument kinds and the Prometheus text format are a page of
+unit-tested arithmetic) served on `GET /metrics`: `rgs_call_duration_seconds{call}`,
+`rgs_errors_total{call,code,class}`, `rgs_calls_total`, `rgs_money_write_failures_total{kind}`
+(the counter an alert fires on), and `rgs_rounds{state}` — asked of the store at scrape time via
+`countByState()` (both twins, contract-tested), because a process-local gauge forgets every open
+round a restart inherited and a high `OPEN` count *is* the stranded-round alarm. **Readiness**:
+`/ready` runs the composition's named probes — the store via its own count query, the wallet
+**by refusal** (a `WalletError` for the probe id proves the wire answers; only silence counts as
+down, so docs/wallet-api.md gains no health endpoint) — and turns 503 naming the failing check.
+The R6 gate is [`observability/story.test.ts`](apps/rgs/src/observability/story.test.ts):
+composed exactly as `main.ts` composes, real rounds over the real binding, one `roundId`
+retrieving the round's full story from logs, traces and `/metrics` — and the swallowed failures
+asserted loud, correlation id intact.
+
 What is deliberately absent, and stays absent: `/dev/*` (a production server is not driveable),
 `/demo/session` (tokens come from the operator's lobby, §7 — `/operator/sessions` is its
 validating half since R5), and
@@ -1107,8 +1150,10 @@ any import of `@slot/rgs-sim` or `@slot/transport` — enforced by `rgs-deps`, t
 The HTTP layer still validates before it dispatches, so `SCHEMA_MISMATCH` and a domain refusal
 stay distinguishable — and the stub composition (`notImplementedRounds`) still exists and still
 answers `NOT_IMPLEMENTED`/`501` under test, because taking an endpoint dark again must stay a
-tested state, not an archaeological one. `/ready` now answers `200 ready: true` with the shipped
-`MATH_VERSION`; a stub composition says `503`, because a load balancer should know the difference.
+tested state, not an archaeological one. `/ready` answers `200 ready: true` with the shipped
+`MATH_VERSION` and, since R6, the per-dependency check results; a stub composition says `503`,
+and so does a composition whose store or wallet stops answering — a load balancer should know
+the difference, and *which* difference.
 
 ### Platform — `packages/platform`
 
@@ -1205,6 +1250,7 @@ not — a remote server's regime is that server's configuration) without either 
 | **Store contract** | `apps/rgs` (`store-contract.ts`) | One suite, two stores: memory always; Postgres whenever `RGS_TEST_DATABASE_URL` is set — always in CI, via a `postgres:16` service container. The session store (R5) has the same twin pair under its own contract |
 | **Ledger** | `apps/rgs` (`ledger/`) | One contract suite, two ledgers (memory always; Postgres in CI, where a trigger proves append-only); the R3 gate — a scripted session's journal sums to zero, reproduces the exact balance history, reconciles clean, and reports then heals the orphaned stake |
 | **Fairness** | `apps/rgs` (`rng/fairness.test.ts`) + the contract suite | The R4 gate: the "player" recomputes every step's `stops[]` from the reveal and their own inputs — hash, chain continuity, stranded-round binding — with `@slot/game-math` only; the suite repeats it over the production chain, `sha256Hex` is held to NIST vectors |
+| **Observability** | `apps/rgs` (`observability/story.test.ts`) | The R6 gate: a composition wired as `main.ts` wires it plays real rounds over the real binding, and one `roundId` retrieves the round's full story — log lines (with the correlation id), spans (`rgs.round_id`, wallet spans nested), `/metrics` — plus the swallowed money-side failures asserted loud at the failure site |
 | **Wallet seam** | `apps/rgs` (`wallet/`) | `RemoteWallet` against the wallet sim over a real socket: an outage outlived by bounded retries, a lost confirmation healed by the idempotent ref, a refusal surfaced once and never retried (docs/wallet-api.md §4) |
 | **E2E** | Playwright, in CI | Fixed seed + forced outcomes: spin, win, feature, resume after reload |
 | **Perf** | `tools/perf-harness` | `pnpm perf`: 30 spins against the production bundle, 4× CPU throttle, headless Chrome — ~120 fps avg, p95 9.2 ms, 7 draw calls/frame (max 8: the symbol layer batches), heap sawtooths 9.8 → 14.1 → 9.4 MB. Frames from a rAF probe, draw calls by wrapping the WebGL entry points, heap over CDP; driven through the DOM control layer, so no dev hook is needed and the measured bundle is the shipped one |
@@ -1329,14 +1375,13 @@ D8, D9 — jurisdiction rules on the wire, no renew call, transparent mid-round 
 
 **Real RGS (`apps/rgs`) — playing since R1; what remains is the seams' real halves**
 
-- **A failed money-side write is found by reconciliation, not announced when it happens.** A
-  rollback that cannot be delivered, or a ledger write that fails, is swallowed by design
-  (ADR-0005) — the reconciliation job reports the orphan or the drift on its next tick, through
-  the app log. What R6 owes is the *instant* structured event at the failure site itself, with
-  the `roundId` and the correlation id on it, so ops hears the bang and not just the echo.
 - **History retention on Postgres is a number, not an eviction.** The memory store evicts settled
   rounds past `retention`; the Postgres store keeps every row and reports its configured figure —
   honest for now, but archival/partitioning is an ops job that belongs to R7.
+- **The metrics endpoint is as public as the game routes.** `GET /metrics` answers unauthenticated
+  on the same listener — right for a demo and for scrape-inside-the-perimeter deploys, but a real
+  operator integration wants it on a separate port or behind the infrastructure's own guard.
+  R7's containerized deploy is where that split belongs.
 
 **Client — implied by the domain, built by no block**
 

@@ -6,8 +6,14 @@ packages:
 # One version per tool, referenced from every package as `"catalog:"`.
 # A single edit here moves the whole workspace — and drift becomes impossible.
 catalog:
+  '@opentelemetry/api': ^1.9
+  '@opentelemetry/context-async-hooks': ^2
+  '@opentelemetry/exporter-trace-otlp-http': ^0.221.0
+  '@opentelemetry/sdk-trace-base': ^2
+  '@opentelemetry/sdk-trace-node': ^2
   fastify: ^5
   pg: ^8
+  pino: ^9
   pixi.js: ^8
   tsx: ^4
   typescript: ^5

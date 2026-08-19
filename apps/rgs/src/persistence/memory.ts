@@ -95,6 +95,12 @@ export class MemoryRoundStore implements RoundStore {
     return Promise.resolve(latest);
   }
 
+  countByState(): Promise<Record<'OPEN' | 'RESOLVED' | 'SETTLED', number>> {
+    const counts = { OPEN: 0, RESOLVED: 0, SETTLED: 0 };
+    for (const round of this.#rounds.values()) counts[round.state] += 1;
+    return Promise.resolve(counts);
+  }
+
   settledFor(playerId: string, limit: number): Promise<readonly StoredRound[]> {
     const settled = [...this.#rounds.values()]
       .filter((round) => round.playerId === playerId && round.state === 'SETTLED')

@@ -223,5 +223,33 @@ export function runStoreContract(name: string, makeStore: () => Promise<RoundSto
       expect(await store.lastOpenedAt(PLAYER)).toBe(1_700_000_005_000);
       expect(await store.lastOpenedAt(OTHER)).toBe(1_700_000_009_000);
     });
+
+    it('counts rounds by state, all three states always present — the gauge read (R6)', async () => {
+      const store = await makeStore();
+
+      // Empty store, honest zeros: a scraper that sees no `OPEN` series cannot alert on it.
+      expect(await store.countByState()).toEqual({ OPEN: 0, RESOLVED: 0, SETTLED: 0 });
+
+      const settled = roundOf();
+      const resolved = roundOf();
+      await store.open(settled);
+      await store.open(resolved);
+      await store.open(roundOf({ playerId: OTHER })); // stays OPEN — the stranded-round signal
+
+      await store.commit({
+        roundId: settled.roundId,
+        from: 'OPEN',
+        patch: { state: 'SETTLED' },
+        records: [],
+      });
+      await store.commit({
+        roundId: resolved.roundId,
+        from: 'OPEN',
+        patch: { state: 'RESOLVED' },
+        records: [],
+      });
+
+      expect(await store.countByState()).toEqual({ OPEN: 1, RESOLVED: 1, SETTLED: 1 });
+    });
   });
 }

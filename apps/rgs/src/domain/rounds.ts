@@ -35,6 +35,8 @@ import { isStoreConflict } from '../persistence/store.js';
 import type { WalletProvider } from '../wallet/provider.js';
 import { WalletError } from '../wallet/provider.js';
 import type { Ledger, MovementKind } from '../ledger/ledger.js';
+import type { RgsObserver } from '../observability/observer.js';
+import { noopObserver } from '../observability/observer.js';
 import type { ServerSeedProvider } from '../rng/seeds.js';
 import type { SessionPort } from './sessions.js';
 import { featureSpinFingerprint, settleFingerprint, spinFingerprint } from './fingerprint.js';
@@ -63,6 +65,12 @@ import { featureSpinFingerprint, settleFingerprint, spinFingerprint } from './fi
  */
 export interface Caller {
   readonly token?: string;
+  /**
+   * The request's correlation id, when an HTTP layer resolved this caller — carried so the
+   * domain's observer events join the same story the access log and the spans tell (R6). The
+   * domain never mints one: a caller without it (a test, a script) simply reports events unkeyed.
+   */
+  readonly correlationId?: string;
 }
 
 export type RoundService = {
@@ -96,6 +104,12 @@ export interface RoundServiceDeps {
   config: GameConfig;
   /** Epoch ms. Injected — the purity rule, applied to a server. */
   now: () => number;
+  /**
+   * Where the domain reports what the HTTP layer cannot see (R6): the money-side failures
+   * ADR-0005 swallows by design, and the §5 recoveries. Optional — a domain nobody listens to
+   * still plays correctly, which is why every existing test composes without it.
+   */
+  observe?: RgsObserver;
 }
 
 /**
@@ -182,32 +196,38 @@ export function createRoundService({
   seeds,
   config,
   now,
+  observe = noopObserver,
 }: RoundServiceDeps): RoundService {
   /**
    * Journal one confirmed wallet movement — after the wallet said yes, never instead of asking.
-   * A failure is swallowed by design (ADR-0005): the money already moved, and refusing the call
-   * over its own audit trail would leave the player a debit with no round. The drift a lost entry
-   * creates is what the reconciliation job exists to find, and R6's structured logging is where
-   * the failure itself becomes a loud event. The ledger's own idempotency (mirroring the
-   * wallet's) is what lets every retry path report its movement unconditionally: a replayed
-   * movement journals nothing.
+   * A failure never fails the call, by design (ADR-0005): the money already moved, and refusing
+   * the call over its own audit trail would leave the player a debit with no round. But since R6
+   * it is never *silent* either — the observer gets the event at the failure site, with the
+   * roundId and the correlation id on it, and reconciliation remains the net underneath. The
+   * ledger's own idempotency (mirroring the wallet's) is what lets every retry path report its
+   * movement unconditionally: a replayed movement journals nothing.
    */
   const journal = (
     kind: MovementKind,
     roundId: string,
     playerId: string,
     amount: Minor,
-  ): Promise<void> =>
-    ledger
-      .record({
+    correlationId?: string,
+  ): Promise<void> => {
+    const ref = kind === 'WIN' ? `${roundId}:settle` : roundId;
+    return ledger.record({ kind, roundId, playerId, amount, ref, at: now() }).catch((cause) => {
+      observe.event({
+        type: 'ledger.record_failed',
         kind,
+        ref,
         roundId,
         playerId,
         amount,
-        ref: kind === 'WIN' ? `${roundId}:settle` : roundId,
-        at: now(),
-      })
-      .catch(() => undefined);
+        ...(correlationId === undefined ? {} : { correlationId }),
+        cause,
+      });
+    });
+  };
 
   /**
    * The session every non-authenticate call runs under — named by the caller's token since R5,
@@ -329,13 +349,19 @@ export function createRoundService({
           { roundId: request.roundId },
         );
       }
+      observe.event({
+        type: 'round.resumed_unresolved',
+        roundId: request.roundId,
+        playerId: round.playerId,
+        ...(caller.correlationId === undefined ? {} : { correlationId: caller.correlationId }),
+      });
       balance = await wallet.getBalance(session.playerId).catch((error: unknown) => {
         throw walletFailure(error, request.roundId);
       });
       // The debit happened when the round opened; journaling it again is a no-op unless the
       // original entry was lost to a crash — in which case this is the retry healing the journal
       // exactly as it heals the round.
-      await journal('STAKE', request.roundId, round.playerId, round.stake);
+      await journal('STAKE', request.roundId, round.playerId, round.stake, caller.correlationId);
     } else {
       // This server never honours forceOutcome — there is no dev mode to enable it (§8). Refused
       // before anything else is considered, so a tampered request learns nothing.
@@ -357,7 +383,13 @@ export function createRoundService({
         .catch((error: unknown) => {
           throw walletFailure(error, request.roundId);
         });
-      await journal('STAKE', request.roundId, session.playerId, request.stake);
+      await journal(
+        'STAKE',
+        request.roundId,
+        session.playerId,
+        request.stake,
+        caller.correlationId,
+      );
 
       // Bind the offered fairness pair to this round (§9): the seed rides the row — a restart
       // must still resolve and reveal it — and the chain rotates only once the open succeeds, so
@@ -388,12 +420,41 @@ export function createRoundService({
           // as-is: it is `RECOVERABLE`, and the client's same-`roundId` retry starts clean
           // because a rolled-back ref is debitable again (§3). A delivered rollback is journaled
           // like any movement; one that cannot be delivered leaves a standing stake with no
-          // round, which is the orphan the reconciliation job reports — and hiding the original
-          // failure behind the rollback's would help nobody.
+          // round — the orphan — reported *here*, at the failure site, since R6, and by the
+          // reconciliation job's next tick regardless. Hiding the original failure behind the
+          // rollback's would help nobody, so the original is what this throws.
           await wallet
             .rollback(request.roundId)
-            .then(() => journal('ROLLBACK', request.roundId, session.playerId, request.stake))
-            .catch(() => undefined);
+            .then(() => {
+              observe.event({
+                type: 'wallet.rollback_delivered',
+                roundId: request.roundId,
+                playerId: session.playerId,
+                amount: request.stake,
+                ...(caller.correlationId === undefined
+                  ? {}
+                  : { correlationId: caller.correlationId }),
+              });
+              return journal(
+                'ROLLBACK',
+                request.roundId,
+                session.playerId,
+                request.stake,
+                caller.correlationId,
+              );
+            })
+            .catch((cause: unknown) => {
+              observe.event({
+                type: 'wallet.rollback_failed',
+                roundId: request.roundId,
+                playerId: session.playerId,
+                amount: request.stake,
+                ...(caller.correlationId === undefined
+                  ? {}
+                  : { correlationId: caller.correlationId }),
+                cause,
+              });
+            });
           throw error;
         }
         // A concurrent duplicate opened it first. The debit replayed idempotently, the round is
@@ -668,7 +729,7 @@ export function createRoundService({
       });
     // Zero included: a feature round can settle with nothing to pay, and the credit still ran —
     // one wallet movement, one entry, even when the amount is 0.
-    await journal('WIN', request.roundId, round.playerId, credited);
+    await journal('WIN', request.roundId, round.playerId, credited, caller.correlationId);
 
     const response: SettleRes = {
       roundId: request.roundId,

@@ -45,6 +45,12 @@ const EnvSchema = z.object({
   RGS_WALLET_URL: z.string().min(1).optional(),
   /** How often the ledger is trued against the wallet (R3). 0 disables the job. */
   RGS_RECONCILE_INTERVAL_MS: z.coerce.number().int().min(0).default(60_000),
+  /**
+   * Where OTel spans go (R6) — the standard OTLP/HTTP variable, spelled the way every collector
+   * documents it. Set, `main.ts` registers a real tracer provider and exports; absent, the OTel
+   * API stays a no-op and the server pays nothing for the seam (ADR-0008).
+   */
+  OTEL_EXPORTER_OTLP_ENDPOINT: z.string().min(1).optional(),
 });
 
 export type RgsEnv = z.infer<typeof EnvSchema>;
