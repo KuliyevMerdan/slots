@@ -42,8 +42,13 @@ contract suite's third target expected-red with its red gate a green CI assertio
 2026-08-19**: rounds and idempotency behind a store port with in-memory and Postgres
 implementations held to one contract, the outcome engine lifted into `@slot/game-math`, and the
 third target running the **full** contract suite — including the §5 stranded round only it can
-produce. **Next is C8** — packaging: the deploy, the README, rate limiting, the nightly soak and
-the E2E suite. **R2** (a real wallet) and **R5** (sessions for real) are unblocked in parallel.
+produce. **R2 landed 2026-08-19** as well: the wallet seam is real at the wire —
+`RemoteWallet` with deadlines and bounded retries against any wallet speaking
+[`docs/wallet-api.md`](docs/wallet-api.md), the rollback path closing the confirmed-debit-no-round
+window, and the third contract target running client→HTTP→rgs→HTTP→wallet with faults enacted by
+refusing the real wallet. **Next is C8** — packaging: the deploy, the README, rate limiting, the
+nightly soak and the E2E suite. **R3** (the ledger), **R4** (commit/reveal) and **R5** (sessions
+for real) are unblocked in parallel.
 
 ---
 
@@ -71,7 +76,7 @@ contract suite. `#` maps each block back to the phase numbering of the original 
 | **S4** | `tools/math-sim` — RTP / hit frequency / volatility report | S0 | 8 | ✅ (landed 2026-08-18) |
 | **R0** | `apps/rgs` skeleton — routes stubbed, `NotImplemented`, wallet seam | C1 | 2 | ✅ (landed 2026-08-19) |
 | **R1** | Rounds & idempotency on Postgres | R0, S3 | 10 | ✅ (landed 2026-08-19) |
-| **R2** | Wallet integration behind `WalletProvider` | R1 | 10 | ☐ |
+| **R2** | Wallet integration behind `WalletProvider` | R1 | 10 | ✅ (landed 2026-08-19) |
 | **R3** | Double-entry ledger in integer minor units | R2 | 10 | ☐ |
 | **R4** | Server RNG + provably-fair seed commit/reveal | R1 | 10 | ☐ |
 | **R5** | Sessions, auth, limits — the `PLAYER` error class for real | R1 | 10 | ☐ |
@@ -567,11 +572,28 @@ the §5 stranded-round case runs against the one target that can honestly produc
 
 ## Block R2 — Wallet integration
 
-- [ ] A real `WalletProvider` implementation behind the R0 interface, with timeouts, bounded retries
-      and a **rollback path** for a debit whose round never resolved.
-- [ ] Failure isolation: a wallet outage produces a `RECOVERABLE` error, never a lost round.
+_Landed **2026-08-19**._
 
-**Done when:** a wallet failure injected mid-round leaves no orphaned debit, proven by test.
+- [x] A real `WalletProvider` implementation behind the R0 interface, with timeouts, bounded
+      retries and a **rollback path** for a debit whose round never resolved. `RemoteWallet`
+      speaks [`docs/wallet-api.md`](docs/wallet-api.md) — a wire pinned for the block, deliberately
+      outside `@slot/protocol` (the wallet is the operator's *platform* contract, not the game
+      team's): per-attempt `AbortSignal` deadlines, bounded retries only for unavailability (safe
+      because every mutation is idempotent on its ref), refusals surfaced once and never retried.
+      The wallet sim serves the same contract over a socket with the §4 failure model injectable —
+      refused-before-executing vs. executed-with-the-confirmation-lost, the simulator's FAIL/DROP
+      distinction applied to money.
+- [x] Failure isolation: a wallet outage produces a `RECOVERABLE` error, never a lost round — a
+      credit outage leaves the round `RESOLVED` and the later settle credits exactly once.
+
+**Done when:** a wallet failure injected mid-round leaves no orphaned debit, proven by test. ✅ —
+three tests, one per shape: a lost debit confirmation is healed by replaying the ref; an outage
+moves nothing and the retry that outlives it starts fresh; and the one confirmed-debit-no-round
+state (the store refused the `open`) rolls the debit back, which forced the wire's one non-obvious
+rule — **a rolled-back ref is debitable again, as a fresh transaction** — so the client's
+same-`roundId` retry converges to exactly one standing debit. The contract suite's third target
+now runs the full production chain (client→HTTP→rgs→HTTP→wallet), and its `faultInjection`
+capability turned honestly true: `WALLET_UNAVAILABLE` is demanded by refusing the real wallet.
 
 ## Block R3 — Double-entry ledger
 

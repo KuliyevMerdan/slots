@@ -4,8 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-> ⚠️ **The game is a game, its math is a designed 96%, and the real RGS now plays it.**
-> As of **2026-08-19**, **C0, C1, S0, S1, C2, S2, C3, C4, C5, S4, S3, C6, C7, R0 and R1 have landed** — the
+> ⚠️ **The game is a game, its math is a designed 96%, and the real RGS plays it against a real wallet seam.**
+> As of **2026-08-19**, **C0, C1, S0, S1, C2, S2, C3, C4, C5, S4, S3, C6, C7, R0, R1 and R2 have landed** — the
 > workspace, the contracts (`protocol`, `money`, `game-math`), `rgs-sim`, the `RgsTransport` seam
 > with `MockTransport`, `HttpTransport` and the retry policy, `engine`, `apps/mock-rgs`, `renderer`,
 > `ui` and `apps/game-client`, `tools/math-sim` — the RTP report that tuned the strips —
@@ -25,11 +25,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > insert-only idempotency table), held to one shared store-contract suite — the Postgres half runs
 > against a service container in CI on every push. The outcome engine (the seeded PRNG and the
 > stops-first derivation) moved into `@slot/game-math`, so both servers and the RTP report draw
-> from **one implementation of the math**. The wallet is the R0 `MockWallet` (R2 integrates a real
-> provider) and the session is a single demo one (R5 builds the operator seam) — both mocked *at a
-> declared seam*, not faked inline. The contract suite's third target runs the whole suite, and
-> the one case neither simulator can produce — a round debited and never resolved (§5) — has its
-> first real producer and runs green. 918 tests locally, 926 in CI, `pnpm check` green.
+> from **one implementation of the math**. **The wallet seam is real at the wire since R2**:
+> `RemoteWallet` — per-attempt deadlines, bounded retries made safe by idempotent refs — speaks
+> [`docs/wallet-api.md`](docs/wallet-api.md) to any operator wallet, the wallet sim serves that
+> contract in dev and tests with both §4 failure shapes injectable (refused before executing vs.
+> executed with the confirmation lost), and the rollback path closes the one
+> confirmed-debit-no-round window — "a wallet failure mid-round leaves no orphaned debit" is a
+> test, not a promise. The session is still a single demo one (R5 builds the operator seam). The
+> contract suite's third target runs the whole suite over the full production chain —
+> client→HTTP→rgs→HTTP→wallet — its fault case enacted by refusing the *real* wallet, and the §5
+> stranded round runs against the one target that can honestly produce it. 938 tests locally, 946
+> in CI, `pnpm check` green.
 >
 > **`pnpm dev:client` opens a playable slot.** It authenticates, spins, lands on the server's
 > `stops[]`, lights the paylines it was told won, counts the win up, runs the feature and settles —
@@ -51,8 +57,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > §5 stranded-round case runs against the one target that can honestly produce it.
 >
 > **What is deliberately not there yet:** packaging, the README, rate limiting, the nightly soak
-> and the E2E suite (**C8**). The next block is **C8**; **R2** (a real wallet behind the R0 seam)
-> and **R5** (sessions and auth for real) are the R-blocks R1 unblocked.
+> and the E2E suite (**C8**). The next block is **C8**; **R3** (the double-entry ledger), **R4**
+> (commit/reveal) and **R5** (sessions and auth for real) are the R-blocks now unblocked.
 >
 > The canon is four documents: `CLAUDE.md` (this file), [`ROADMAP.md`](ROADMAP.md) (the task map),
 > [`RECOMMENDATIONS.md`](RECOMMENDATIONS.md) (the strategic registry) and
@@ -109,7 +115,7 @@ empty, and the block named is the commitment.
 | ------------------- | -------------------- | -------------------------------------------------------- | ----- |
 | `@slot/game-client` | `apps/game-client`   | The deliverable — Pixi client on Vite                     | ✅ C3 |
 | `@slot/mock-rgs`    | `apps/mock-rgs`      | Fastify wrapper around `rgs-sim` — proves the network path | ✅ S2 |
-| `@slot/rgs`         | `apps/rgs`           | Node.js RGS — rounds & idempotency on Postgres (in-memory twin); wallet/session seams mocked until R2/R5 | ✅ R1 |
+| `@slot/rgs`         | `apps/rgs`           | Node.js RGS — rounds & idempotency on Postgres (in-memory twin); wallet over HTTP behind the R0 seam (docs/wallet-api.md); session seam mocked until R5 | ✅ R2 |
 | `@slot/protocol`    | `packages/protocol`  | ★ Contracts: zod schemas + inferred TS types + error taxonomy | ✅ C1 |
 | `@slot/money`       | `packages/money`     | Branded `Minor` integer units, exact arithmetic, formatting | ✅ C1 |
 | `@slot/game-math`   | `packages/game-math` | Reel strips, paytable, payline evaluator — and, since R1, the outcome engine (PRNG + stops-first derivation) both servers draw from | ✅ C1 |
@@ -939,13 +945,13 @@ playable over HTTP. Configuration is
 environment, validated with a schema like anything else that crosses a boundary — a mistyped server
 seed silently changes every outcome the session produces.
 
-### The real RGS — `apps/rgs` (R0 laid it out; R1 made it play)
+### The real RGS — `apps/rgs` (R0 laid it out; R1 made it play; R2 made the wallet real)
 
 ```
 apps/rgs/src/
 ├─ http/          routes from the CALLS table; request validation via @slot/protocol schemas
 ├─ domain/        createRoundService — the real lifecycle (R1); sessions.ts is the R5 seam
-├─ wallet/        WalletProvider interface + MockWallet          (R2 integrates a real provider)
+├─ wallet/        the R0 seam, real at the wire (R2): RemoteWallet + wire schemas + the wallet sim
 ├─ ledger/        double-entry interface, append-only            (R3 fills)
 ├─ math/          re-exports @slot/game-math — never a second copy
 ├─ rng/           ServerSeedProvider — static seed today, commit/reveal in R4
@@ -973,11 +979,22 @@ primary keys) runs whenever `RGS_TEST_DATABASE_URL` is set — **always in CI**,
 promises" is asserted on every push. `main.ts` picks the store by `RGS_DATABASE_URL`; the contract
 suite's third target runs on memory because its subject is the wire.
 
-`MockWallet` (R0) remains the wallet — replay-vs-conflict on the ref, the idempotent rollback —
-and its unit tests are the specification R2's integration is held to. Sessions are R1-minimal
-behind `SessionPort`: one active demo session, issued by the composition (§7 — the environment is
-the out-of-band channel in development), expiry checked on every call; R5 replaces the
-implementation, not the seam. `forceOutcome` is refused always — there is no dev flag to mis-set.
+**The wallet is real at the wire since R2** — pinned in [`docs/wallet-api.md`](docs/wallet-api.md),
+deliberately *outside* `@slot/protocol`: the game wire is the operator's game team's contract, the
+wallet wire is their platform team's, and a different operator means a different adapter behind
+the same `WalletProvider`. `RemoteWallet` is that adapter: four POSTs under a resilience policy —
+a per-attempt `AbortSignal` deadline, bounded retries only for *unavailability* (safe because
+every mutation is idempotent on its ref), refusals surfaced once and never retried. The wallet sim
+(`WalletSim` + `buildWalletSimApp`) serves the same contract over a socket with the §4 failure
+model injectable — **refused before executing** vs. **executed, confirmation lost** — the FAIL/DROP
+distinction again, wallet-side; `MockWallet` stays the one implementation of the semantics
+underneath both, and its tests are the wire's specification. Two rules carry the money safety: a
+lost confirmation is healed by replaying the ref, and **a rolled-back debit's ref is debitable
+again as a fresh transaction** — what makes the domain's rollback (a confirmed debit whose round's
+`open` failed — the one such state) converge with the client's same-`roundId` retry to exactly one
+standing debit. That sentence is R2's gate, and it is a test, not a promise. Sessions are still
+R1-minimal behind `SessionPort` (R5 replaces the implementation, not the seam), and `forceOutcome`
+is refused always — there is no dev flag to mis-set.
 
 What is deliberately absent, and stays absent: `/dev/*` (a production server is not driveable),
 `/demo/session` (tokens come from the operator's lobby, §7 — R5 builds the validating half), and
@@ -1081,6 +1098,7 @@ not — a remote server's regime is that server's configuration) without either 
 | **Network soak** | `tests/http-soak.test.ts` | 300 rounds over a real socket, a faulty-line run, and a shutdown with a hundred abandoned responses in flight — the failures that only exist on a connection |
 | **Contract** | `tests/contract/`, one suite per target | `rgs-sim` in-process · sim over HTTP · `apps/rgs` (the full suite since R1, incl. the §5 stranded round only it can produce) — the switch-over gate |
 | **Store contract** | `apps/rgs` (`store-contract.ts`) | One suite, two stores: memory always; Postgres whenever `RGS_TEST_DATABASE_URL` is set — always in CI, via a `postgres:16` service container |
+| **Wallet seam** | `apps/rgs` (`wallet/`) | `RemoteWallet` against the wallet sim over a real socket: an outage outlived by bounded retries, a lost confirmation healed by the idempotent ref, a refusal surfaced once and never retried (docs/wallet-api.md §4) |
 | **E2E** | Playwright, in CI | Fixed seed + forced outcomes: spin, win, feature, resume after reload |
 | **Perf** | `tools/perf-harness` | `pnpm perf`: 30 spins against the production bundle, 4× CPU throttle, headless Chrome — ~120 fps avg, p95 9.2 ms, 7 draw calls/frame (max 8: the symbol layer batches), heap sawtooths 9.8 → 14.1 → 9.4 MB. Frames from a rAF probe, draw calls by wrapping the WebGL entry points, heap over CDP; driven through the DOM control layer, so no dev hook is needed and the measured bundle is the shipped one |
 
@@ -1109,8 +1127,10 @@ Three rules make it a gate rather than a second copy of the unit tests:
   full suite since R1. The `expectedRed` mechanism stays in the suite — taking an endpoint dark
   again must remain a tested state. The capability skips now cut both ways: the simulators skip
   the `unresolvedRounds` case they structurally cannot produce, and `apps/rgs` — the target whose
-  `strand()` finally runs it — skips the `forceOutcome` and `faultInjection` cases a production
-  server refuses by design.
+  `strand()` finally runs it — skips the `forceOutcome` cases a production server refuses by
+  design. `faultInjection` turned *true* for it in R2, the only way a production-shaped server can
+  offer it honestly: `WALLET_UNAVAILABLE` is demanded by refusing the target's real wallet, not by
+  simulating a refusal.
 - **The control plane is a port, not a back door.** The HTTP target resets and inspects through
   `apps/mock-rgs`'s `/dev/*` routes rather than the `SimServer` object it happens to hold, so the
   same target definition works against a server in another process.
@@ -1211,11 +1231,14 @@ D8, D9 — jurisdiction rules on the wire, no renew call, transparent mid-round 
   pacing case to catch it. The client paces itself, so nothing user-visible depends on it — but
   server-side enforcement is a regulator's requirement, and it belongs to R5 with the rest of the
   session/limits surface.
-- **The wallet is `MockWallet`, the seed provider has no commitment, the ledger is an interface.**
-  Each is a declared seam with its block: R2 integrates a real provider (the rollback path gets
-  its integration test there — the domain never calls `rollback` yet), R4 replaces the static
-  seed with commit/reveal (`commitmentFor` currently throws `NotImplementedError`), R3 fills the
+- **The seed provider has no commitment, and the ledger is an interface.** R4 replaces the static
+  seed with commit/reveal (`commitmentFor` currently throws `NotImplementedError`); R3 fills the
   ledger — today no ledger entry is written, so reconciliation has nothing to read.
+- **A rollback that cannot be delivered is an orphan nobody hears about.** Since R2 the domain
+  undoes a confirmed debit when the store refuses the open; if that rollback itself fails, the
+  failure is deliberately swallowed in favour of surfacing the original store error — correct on
+  the wire, invisible in ops. R6's structured logging is where it becomes a loud event, and R3's
+  reconciliation is where the orphan is found regardless.
 - **History retention on Postgres is a number, not an eviction.** The memory store evicts settled
   rounds past `retention`; the Postgres store keeps every row and reports its configured figure —
   honest for now, but archival/partitioning is an ops job that belongs to R7.

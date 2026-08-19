@@ -30,6 +30,11 @@ const EnvSchema = z.object({
   RGS_BALANCE: z.coerce.number().int().min(0).default(1_000_000),
   /** postgres://… — selects the Postgres store. Absent means in-memory. */
   RGS_DATABASE_URL: z.string().min(1).optional(),
+  /**
+   * Base URL of an operator wallet speaking docs/wallet-api.md — selects `RemoteWallet` with its
+   * timeouts and bounded retries. Absent means the in-process `MockWallet` (dev and demo).
+   */
+  RGS_WALLET_URL: z.string().min(1).optional(),
 });
 
 export type RgsEnv = z.infer<typeof EnvSchema>;

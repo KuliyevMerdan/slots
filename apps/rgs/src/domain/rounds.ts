@@ -44,8 +44,9 @@ import { featureSpinFingerprint, settleFingerprint, spinFingerprint } from './fi
  * provider. The semantics are the simulator's, deliberately — the contract suite holds both
  * servers to one wire — but the *shape* is a real server's: the wallet is an external system the
  * database cannot wrap in a transaction, so the debit and the round resolve are separated by a
- * window a process can die in. That window is not a bug; it is §5's stranded round, the rollback
- * seam R2 fills, and the reason `strand()` in the contract suite finally has a producer.
+ * window a process can die in. That window is not a bug; it is §5's stranded round, the reason
+ * `strand()` in the contract suite finally has a producer — and, since R2, the reason the one
+ * confirmed-debit-no-round state rolls its debit back (docs/wallet-api.md §4).
  */
 export type RoundService = {
   [N in CallName]: (request: CallRequest<N>) => Promise<CallResponse<N>>;
@@ -262,9 +263,18 @@ export function createRoundService({
       try {
         await store.open(opened);
       } catch (error) {
+        if (!isStoreConflict(error, 'DUPLICATE_ROUND')) {
+          // The debit is confirmed and the round cannot exist — the one state the rollback
+          // exists for (docs/wallet-api.md §4). Undo the stake, then surface the store failure
+          // as-is: it is `RECOVERABLE`, and the client's same-`roundId` retry starts clean
+          // because a rolled-back ref is debitable again (§3). If the rollback itself cannot be
+          // delivered, the orphan is what R3's reconciliation exists to find — and hiding the
+          // original failure behind the rollback's would help nobody.
+          await wallet.rollback(request.roundId).catch(() => undefined);
+          throw error;
+        }
         // A concurrent duplicate opened it first. The debit replayed idempotently, the round is
         // theirs to resolve as much as ours — fall through to the resolve with the stored row.
-        if (!isStoreConflict(error, 'DUPLICATE_ROUND')) throw error;
         const existing = await store.find(request.roundId);
         if (existing === undefined || existing.fingerprint !== fingerprint) {
           throw new SlotError(

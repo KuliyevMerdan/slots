@@ -82,7 +82,12 @@ export class MockWallet implements WalletProvider {
 
   #apply(kind: 'DEBIT' | 'CREDIT', playerId: string, amount: Minor, ref: string): Promise<Minor> {
     const seen = this.#transactions.get(ref);
-    if (seen !== undefined) {
+    // A rolled-back debit's ref is debitable again, as a fresh transaction — the rule that makes
+    // the RGS's rollback safe against the game client's same-roundId retry (wallet-api.md §3):
+    // `debit → rollback → debit → round resolves` must converge to one standing debit.
+    const reusable =
+      seen !== undefined && seen.kind === 'DEBIT' && seen.reversed && kind === 'DEBIT';
+    if (seen !== undefined && !reusable) {
       const identical = seen.kind === kind && seen.playerId === playerId && seen.amount === amount;
       if (!identical) {
         return Promise.reject(

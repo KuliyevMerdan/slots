@@ -6,6 +6,7 @@ import { staticSeedProvider } from './rng/seeds.js';
 import { MemoryRoundStore } from './persistence/memory.js';
 import { createPostgresStore } from './persistence/postgres.js';
 import { MockWallet } from './wallet/mock.js';
+import { RemoteWallet } from './wallet/remote.js';
 import type { Minor } from '@slot/protocol';
 
 /**
@@ -26,7 +27,10 @@ const store =
     ? new MemoryRoundStore()
     : await createPostgresStore({ databaseUrl: env.RGS_DATABASE_URL });
 
-const wallet = new MockWallet({ 'demo-player': env.RGS_BALANCE as Minor });
+const wallet =
+  env.RGS_WALLET_URL === undefined
+    ? new MockWallet({ 'demo-player': env.RGS_BALANCE as Minor })
+    : new RemoteWallet({ baseUrl: env.RGS_WALLET_URL });
 const sessions = new SingleSessionHost();
 sessions.issue(env.RGS_DEMO_TOKEN, {
   playerId: 'demo-player',
@@ -66,6 +70,7 @@ try {
     {
       address,
       store: env.RGS_DATABASE_URL === undefined ? 'memory' : 'postgres',
+      wallet: env.RGS_WALLET_URL ?? 'mock (in-process)',
       gameId: config.gameId,
       mathVersion: config.mathVersion,
       // Printed for the same reason mock-rgs prints its token: it is the demo session (§7), and

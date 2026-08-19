@@ -116,4 +116,28 @@ describe('rollback — the recovery path for a debit whose round never resolved'
 
     expect(error.code).toBe('UNKNOWN_REF');
   });
+
+  it('accepts a fresh debit on a rolled-back ref — the retry after a rollback takes the stake again', async () => {
+    const w = wallet();
+    await w.debit('alice', minor(100), 'round-1');
+    await w.rollback('round-1');
+
+    // wallet-api.md §3: debit → rollback → debit converges to exactly one standing debit.
+    await expect(w.debit('alice', minor(100), 'round-1')).resolves.toBe(900);
+    await expect(w.getBalance('alice')).resolves.toBe(900);
+
+    // And the fresh transaction is an ordinary one: its own replay, its own reversibility.
+    await expect(w.debit('alice', minor(100), 'round-1')).resolves.toBe(900);
+    await expect(w.rollback('round-1')).resolves.toBe(1_000);
+  });
+
+  it('does not open a reversed debit ref to a credit — only a debit may reuse it', async () => {
+    const w = wallet();
+    await w.debit('alice', minor(100), 'round-1');
+    await w.rollback('round-1');
+
+    const error = await failure(w.credit('alice', minor(100), 'round-1'));
+
+    expect(error.code).toBe('REF_CONFLICT');
+  });
 });

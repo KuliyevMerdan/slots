@@ -4,9 +4,11 @@ import type { FaultConfig } from '@slot/rgs-sim';
 import { buildApp } from '@slot/mock-rgs';
 import {
   MemoryRoundStore,
-  MockWallet,
+  RemoteWallet,
   SingleSessionHost,
+  WalletSim,
   buildApp as buildRgsApp,
+  buildWalletSimApp,
   createGameConfig,
   createRoundService,
   spinFingerprint,
@@ -215,27 +217,31 @@ export const httpTarget: ContractTarget = {
 };
 
 /**
- * The real RGS — running the full contract since R1.
+ * The real RGS — running the full contract since R1, in its full production shape since R2.
  *
  * Registered before it existed (a named skip), expected-red through R0 (`NOT_IMPLEMENTED` only,
- * asserted), and a full target since R1 built the domain. It runs on the in-memory store — the
- * gate is about the *wire*, and the shared store-contract suite in `apps/rgs` is what holds the
- * Postgres store to the memory store's semantics — with `MockWallet` and a single demo session,
- * the seams R2 and R5 replace.
+ * asserted), a full target since R1, and since R2 the whole chain is real: the suite's client
+ * speaks HTTP to `apps/rgs`, which speaks HTTP to a wallet — `RemoteWallet` with its timeouts and
+ * bounded retries against the wallet sim (docs/wallet-api.md), exactly the composition a
+ * deployment runs. The store stays in-memory: the gate is about the wire, and the shared
+ * store-contract suite in `apps/rgs` holds Postgres to the memory semantics.
  *
  * The control plane is the composition itself, reached in-process: this server has no `/dev/*` by
- * design, and a real deployment is reset by being someone else's environment. What only this
- * target can do is `strand()` — a debit whose round never resolved (§5) — because only here does a
- * wallet the database cannot wrap in a transaction separate the debit from the resolve. The two
- * capabilities it lacks are honest: no `forceOutcome`, no fault injection, ever.
+ * design. Two things only this target can claim honestly: `strand()` — a debit whose round never
+ * resolved (§5), possible because the wallet genuinely lives outside the store's transaction —
+ * and, since R2, `faultInjection`: a `RECOVERABLE` failure is demanded by actually refusing the
+ * wallet, not by simulating a refusal. `forceOutcome` stays false forever.
  */
 export const realRgsTarget: ContractTarget = {
   name: 'apps/rgs',
-  supports: { forceOutcome: false, faultInjection: false, unresolvedRounds: true },
+  supports: { forceOutcome: false, faultInjection: true, unresolvedRounds: true },
   async start(options) {
     const playerId = 'demo-player';
     const store = new MemoryRoundStore();
-    const wallet = new MockWallet({ [playerId]: options.balance });
+    const walletSim = new WalletSim({ [playerId]: options.balance });
+    const walletApp = buildWalletSimApp(walletSim);
+    const walletUrl = await walletApp.listen({ port: 0, host: '127.0.0.1' });
+    const wallet = new RemoteWallet({ baseUrl: walletUrl, timeoutMs: 500, backoffMs: 1 });
     const sessions = new SingleSessionHost();
     // `devMode` is deliberately unread: this server has no such flag to set (§8), which is
     // exactly what the suite's dev-gate case asserts from the outside.
@@ -257,17 +263,32 @@ export const realRgsTarget: ContractTarget = {
       transport: new HttpTransport({ baseUrl }),
       reset: ({ balance = options.balance } = {}) => {
         store.clear();
-        wallet.reset({ [playerId]: balance });
+        walletSim.reset({ [playerId]: balance });
         const token = `contract-rgs-${(issued += 1)}`;
         sessions.issue(token, { playerId, currency: 'EUR', expiresAt: EXPIRES_AT });
         return Promise.resolve({ token, balance });
       },
-      faults: (config) =>
-        Object.keys(config).length === 0
-          ? Promise.resolve()
-          : Promise.reject(new Error('apps/rgs supports no fault injection — by design, forever')),
+      /**
+       * Fault injection, the only way a production-shaped server can honestly offer it: break the
+       * upstream. `WALLET_UNAVAILABLE` is enacted by refusing the real wallet; everything else the
+       * sim targets can fake has no producer here and is refused loudly rather than ignored.
+       */
+      faults: (config) => {
+        const { errorRates = {}, ...rest } = config;
+        const codes = Object.keys(errorRates);
+        const onlyWallet = codes.every((code) => code === 'WALLET_UNAVAILABLE');
+        if (Object.keys(rest).length > 0 || !onlyWallet) {
+          return Promise.reject(
+            new Error('apps/rgs can only enact WALLET_UNAVAILABLE — by breaking its real wallet'),
+          );
+        }
+        walletSim.setFaults({ refuse: (errorRates.WALLET_UNAVAILABLE ?? 0) > 0 });
+        return Promise.resolve();
+      },
+      // Read directly from the sim, not over the wire: the account must stay readable while the
+      // wallet is deliberately refusing.
       state: async () => ({
-        balance: await wallet.getBalance(playerId),
+        balance: await walletSim.wallet.getBalance(playerId),
         rounds: store.snapshot().map((round) => ({
           roundId: round.roundId,
           state: round.state,
@@ -283,7 +304,7 @@ export const realRgsTarget: ContractTarget = {
        */
       strand: async (stake) => {
         const roundId = `018f0000-0000-7000-8000-${(stranded += 1).toString(16).padStart(12, '0')}`;
-        await wallet.debit(playerId, stake, roundId);
+        await walletSim.wallet.debit(playerId, stake, roundId);
         await store.open({
           roundId,
           playerId,
@@ -297,7 +318,10 @@ export const realRgsTarget: ContractTarget = {
         });
         return roundId;
       },
-      close: () => app.close(),
+      close: async () => {
+        await app.close();
+        await walletApp.close();
+      },
     };
   },
 };

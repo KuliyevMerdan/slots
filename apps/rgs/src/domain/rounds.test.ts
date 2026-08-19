@@ -330,6 +330,89 @@ describe('history', () => {
   });
 });
 
+describe('the rollback path — a wallet failure mid-round leaves no orphaned debit (R2)', () => {
+  it('rolls the debit back when the store refuses the open, and the retry completes with one net debit', async () => {
+    const h = harness();
+    let failOpens = 1;
+    const store = h.store;
+    const failingStore = new Proxy(store, {
+      get(target, property, receiver) {
+        if (property === 'open' && failOpens > 0) {
+          return () => {
+            failOpens -= 1;
+            return Promise.reject(new Error('the store is down'));
+          };
+        }
+        const value = Reflect.get(target, property, receiver) as unknown;
+        return typeof value === 'function' ? (value as CallableFunction).bind(target) : value;
+      },
+    });
+    const service = createRoundService({
+      store: failingStore,
+      wallet: h.wallet,
+      sessions: h.sessions,
+      seeds: staticSeedProvider('rgs-test-seed'),
+      config: createGameConfig(),
+      now: () => NOW,
+    });
+    const roundId = nextRoundId();
+
+    // The spin fails — RECOVERABLE from the client's side — and the debit was undone: the wallet
+    // holds the full balance and the store holds nothing. No orphan.
+    const caught: unknown = await service
+      .spin({ roundId, stake: STAKE })
+      .then(() => undefined)
+      .catch((error: unknown) => error);
+    expect(caught).toBeInstanceOf(Error);
+    expect(caught).not.toBeInstanceOf(SlotError);
+    await expect(h.wallet.getBalance(PLAYER)).resolves.toBe(1_000_000);
+    expect(store.snapshot()).toHaveLength(0);
+
+    // The client's honest retry — same roundId, the wire's own rule — re-debits the rolled-back
+    // ref as a fresh transaction and the round completes: exactly one standing debit.
+    const spin = await service.spin({ roundId, stake: STAKE });
+    expect(spin.balance).toBe(1_000_000 - STAKE);
+    await expect(h.wallet.getBalance(PLAYER)).resolves.toBe(1_000_000 - STAKE);
+  });
+
+  it('leaves the round RESOLVED through a credit outage, and the later settle credits once', async () => {
+    const h = harness();
+    let failCredits = 1;
+    const wallet = h.wallet;
+    const flakyWallet = new Proxy(wallet, {
+      get(target, property, receiver) {
+        if (property === 'credit' && failCredits > 0) {
+          return () => {
+            failCredits -= 1;
+            return Promise.reject(new Error('wallet outage at the credit'));
+          };
+        }
+        const value = Reflect.get(target, property, receiver) as unknown;
+        return typeof value === 'function' ? (value as CallableFunction).bind(target) : value;
+      },
+    });
+    const service = createRoundService({
+      store: h.store,
+      wallet: flakyWallet,
+      sessions: h.sessions,
+      seeds: staticSeedProvider('rgs-test-seed'),
+      config: createGameConfig(),
+      now: () => NOW,
+    });
+    const win = await spinUntil(service, (spin) => spin.next === 'SETTLE');
+
+    const outage = await rejection(service.settle({ roundId: win.roundId }));
+    expect(outage.code).toBe('WALLET_UNAVAILABLE');
+    expect(outage.isRetryable).toBe(true);
+
+    // The round was not lost: it is still RESOLVED, and the retry credits exactly once.
+    const settled = await service.settle({ roundId: win.roundId });
+    expect(settled.totalWin).toBe(win.roundWin);
+    expect(settled.balance).toBe(win.balance + settled.totalWin);
+    expect(await service.settle({ roundId: win.roundId })).toEqual(settled);
+  });
+});
+
 describe('the wallet as an upstream', () => {
   it('surfaces a wallet outage as WALLET_UNAVAILABLE, having moved nothing', async () => {
     const h = harness();
