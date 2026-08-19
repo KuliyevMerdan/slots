@@ -42,6 +42,12 @@ export const CLASS_OF_CODE = {
   ILLEGAL_TRANSITION: 'FATAL',
   FORCE_OUTCOME_REFUSED: 'FATAL',
   MATH_VERSION_MISMATCH: 'FATAL',
+  /**
+   * The request was understood, validated, and there is no code behind the endpoint — `apps/rgs`
+   * while the R-blocks land, or an operator rollout that shipped routes before implementations.
+   * `FATAL` because no retry produces the missing implementation (docs/protocol.md §6, D10).
+   */
+  NOT_IMPLEMENTED: 'FATAL',
 } as const satisfies Record<string, ErrorClass>;
 
 export type ErrorCode = keyof typeof CLASS_OF_CODE;
@@ -51,6 +57,43 @@ export const ERROR_CODES = Object.keys(CLASS_OF_CODE) as [ErrorCode, ...ErrorCod
 export const ErrorCodeSchema = z.enum(ERROR_CODES);
 
 export const classOf = (code: ErrorCode): ErrorClass => CLASS_OF_CODE[code];
+
+/**
+ * The taxonomy, given HTTP status codes — the table in docs/protocol.md §2.7.
+ *
+ * A status is not how the client decides what to do — it branches on the `class`, which is derived
+ * from the `code`, which is in the body. The status is for everything *between* the two: a proxy
+ * log, a load-balancer health rule, a `curl` in a terminal. It lives here rather than in a server
+ * because two servers implement the binding — `apps/mock-rgs` and `apps/rgs` — and two copies of a
+ * table that must agree exactly is one copy too many.
+ *
+ * `satisfies Record<ErrorCode, number>` is the same discipline as `CLASS_OF_CODE`: a new error code
+ * cannot be added without deciding what it looks like on the wire.
+ */
+export const STATUS_OF_CODE = {
+  // RECOVERABLE — the client should ask again with the same key.
+  TIMEOUT: 504,
+  UPSTREAM_UNAVAILABLE: 503,
+  WALLET_UNAVAILABLE: 503,
+  RATE_LIMITED: 429,
+
+  // PLAYER — the request was understood and refused. 422 rather than 400: nothing is malformed.
+  INSUFFICIENT_FUNDS: 422,
+  STAKE_NOT_ALLOWED: 422,
+  LIMIT_REACHED: 422,
+  SESSION_EXPIRED: 401,
+
+  // FATAL — the two sides disagree about reality.
+  SCHEMA_MISMATCH: 400,
+  UNKNOWN_ROUND: 404,
+  ROUND_CONFLICT: 409,
+  ILLEGAL_TRANSITION: 409,
+  MATH_VERSION_MISMATCH: 409,
+  FORCE_OUTCOME_REFUSED: 403,
+  NOT_IMPLEMENTED: 501,
+} as const satisfies Record<ErrorCode, number>;
+
+export const statusOf = (code: ErrorCode): number => STATUS_OF_CODE[code];
 
 /** The error as it crosses the wire. */
 export const ProtocolErrorSchema = z.object({

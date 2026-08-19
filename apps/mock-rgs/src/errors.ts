@@ -1,40 +1,14 @@
-import type { ErrorCode, ProtocolErrorPayload } from '@slot/protocol';
+import type { ProtocolErrorPayload } from '@slot/protocol';
 import { SlotError, classOf } from '@slot/protocol';
 
 /**
- * The error taxonomy, given HTTP status codes.
- *
- * A status is not how the client decides what to do — it branches on the `class`, which is derived
- * from the `code`, which is in the body. The status is for everything *between* the two: a proxy log,
- * a load-balancer health rule, a `curl` in a terminal. Getting it wrong would not break the game and
- * would make every operations conversation about this service worse.
- *
- * `satisfies Record<ErrorCode, number>` is the same discipline as `CLASS_OF_CODE`: a new error code
- * cannot be added to the protocol without someone deciding what it looks like on the wire.
+ * The status table lived here until R0. It moved to `@slot/protocol` (`STATUS_OF_CODE`) the day a
+ * second server started implementing the binding — `apps/rgs` — because two copies of a table that
+ * must agree exactly is one copy too many. Re-exported so this package's public surface is
+ * unchanged; everything below is what is genuinely this server's: the wire form of an error body,
+ * and the classification of failures Fastify produced before the simulator saw the request.
  */
-export const STATUS_OF_CODE = {
-  // RECOVERABLE — the client should ask again with the same key.
-  TIMEOUT: 504,
-  UPSTREAM_UNAVAILABLE: 503,
-  WALLET_UNAVAILABLE: 503,
-  RATE_LIMITED: 429,
-
-  // PLAYER — the request was understood and refused. 422 rather than 400: nothing is malformed.
-  INSUFFICIENT_FUNDS: 422,
-  STAKE_NOT_ALLOWED: 422,
-  LIMIT_REACHED: 422,
-  SESSION_EXPIRED: 401,
-
-  // FATAL — the two sides disagree about reality.
-  SCHEMA_MISMATCH: 400,
-  UNKNOWN_ROUND: 404,
-  ROUND_CONFLICT: 409,
-  ILLEGAL_TRANSITION: 409,
-  MATH_VERSION_MISMATCH: 409,
-  FORCE_OUTCOME_REFUSED: 403,
-} as const satisfies Record<ErrorCode, number>;
-
-export const statusOf = (code: ErrorCode): number => STATUS_OF_CODE[code];
+export { STATUS_OF_CODE, statusOf } from '@slot/protocol';
 
 /**
  * The wire form of an error, with the HTTP request's correlation id rather than the simulator's.

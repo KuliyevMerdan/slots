@@ -2,6 +2,7 @@ import type { ErrorCode, Minor, RoundState } from '@slot/protocol';
 import { SimServer, createSimConfig, createSimState } from '@slot/rgs-sim';
 import type { FaultConfig } from '@slot/rgs-sim';
 import { buildApp } from '@slot/mock-rgs';
+import { buildApp as buildRgsApp } from '@slot/rgs';
 import { HttpTransport, MockTransport } from '@slot/transport';
 import type { RgsTransport } from '@slot/transport';
 
@@ -15,9 +16,9 @@ import type { RgsTransport } from '@slot/transport';
  * being built a particular way.
  *
  * Three targets are registered below. Two are the simulator, reached in-process and over a socket;
- * the third is `apps/rgs`, which does not exist until R0 and is registered as unavailable rather
- * than left out — a suite that silently covers two targets while claiming three is worse than one
- * that names the hole in its own output.
+ * the third is `apps/rgs` — real since R0, and *expected red*: it runs, and the suite holds it to
+ * the one thing an honest skeleton can promise — every call refused as `NOT_IMPLEMENTED`, nothing
+ * else — until the R-blocks turn the contract green endpoint by endpoint.
  */
 
 /** The subset of fault injection the contract cares about. A real RGS supports none of it. */
@@ -91,6 +92,13 @@ export interface ContractTarget {
   readonly supports: TargetCapabilities;
   /** Set when the target cannot run yet. The suite reports the reason instead of passing quietly. */
   readonly unavailable?: string;
+  /**
+   * Set when the target runs but is not expected to pass the contract yet — `apps/rgs` between R0
+   * and the R-blocks that fill it. The suite then runs the *red gate* instead: every call must be
+   * refused with `NOT_IMPLEMENTED` and nothing else (ROADMAP Part III), which turns "the skeleton
+   * is wired and honestly empty" into a green assertion rather than a red run CI has to ignore.
+   */
+  readonly expectedRed?: string;
   start(options: StartOptions): Promise<TargetHandle>;
 }
 
@@ -197,18 +205,38 @@ export const httpTarget: ContractTarget = {
 };
 
 /**
- * The real RGS. Registered before it exists, on purpose.
+ * The real RGS — running, and expected red (R0).
  *
- * R0 builds `apps/rgs` and fills this entry in; until then the suite prints the target's name and
- * the reason it did not run, so "one suite, three targets" is a claim the output either supports or
- * visibly does not. The `NotImplemented`-only expectation is R0's gate, not this block's.
+ * Registered before it existed; real since R0 built the skeleton. Every route is up, validates
+ * with the shared schemas, and answers `NOT_IMPLEMENTED` from a domain the R-blocks fill — so the
+ * suite runs its red gate here (see `expectedRed` on the type), and drops to the full contract as
+ * the endpoints land. The capabilities describe the *finished* server: no `forceOutcome`, no fault
+ * injection, and — uniquely — real unresolved rounds, because only a server with a transaction
+ * boundary between debit and resolve can strand one (R1 implements `strand()`).
  */
 export const realRgsTarget: ContractTarget = {
   name: 'apps/rgs',
   supports: { forceOutcome: false, faultInjection: false, unresolvedRounds: true },
-  unavailable: 'apps/rgs does not exist yet — R0 builds the skeleton and wires this target in',
-  start() {
-    return Promise.reject(new Error('apps/rgs is not built yet (R0)'));
+  expectedRed:
+    'R0 skeleton — every call answers NOT_IMPLEMENTED until the R-blocks land (R1: rounds, R5: sessions)',
+  async start(options) {
+    const app = buildRgsApp();
+    const baseUrl = await app.listen({ port: 0, host: '127.0.0.1' });
+
+    return {
+      transport: new HttpTransport({ baseUrl }),
+      // There is nothing to reset: no session store exists until R5. The token is any string the
+      // red gate can put in an `authenticate` request that must be refused as NOT_IMPLEMENTED.
+      reset: ({ balance = options.balance } = {}) =>
+        Promise.resolve({ token: 'contract-demo-token', balance }),
+      faults: () =>
+        Promise.reject(new Error('a real RGS supports no fault injection — by design, forever')),
+      state: () =>
+        Promise.reject(
+          new Error('apps/rgs has no state inspection yet — R1 adds it beside the repositories'),
+        ),
+      close: () => app.close(),
+    };
   },
 };
 

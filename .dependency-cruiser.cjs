@@ -130,6 +130,13 @@ module.exports = {
      */
     consumerMayOnlyDependOn('apps', 'mock-rgs', 'protocol', 'rgs-sim'),
     /**
+     * The real RGS reaches the contract, the money and the math — and pointedly nothing else.
+     * Not `rgs-sim`: a server leaning on the simulator it exists to replace would make the
+     * contract suite's third target a disguised rerun of the first. Not `transport`: the server
+     * does not implement the client's seam — the same inversion `mock-rgs-deps` forbids.
+     */
+    consumerMayOnlyDependOn('apps', 'rgs', 'protocol', 'money', 'game-math'),
+    /**
      * The RTP report reads the math and the outcome engine, and nothing that presents them. A tool
      * that could reach the renderer would be a tool that could measure something other than the game.
      */

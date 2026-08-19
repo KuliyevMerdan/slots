@@ -157,6 +157,56 @@ async function rejection(promise: Promise<unknown>): Promise<SlotError> {
   return error;
 }
 
+/**
+ * The red gate — what the contract suite asserts of a target that is wired but not built.
+ *
+ * R0's "done when" (ROADMAP Part III): the suite runs against `apps/rgs` and every failure is
+ * `NotImplemented` **and nothing else**. That is only meaningful because the refusal is
+ * distinguishable on the wire (D10): `NOT_IMPLEMENTED` proves the route exists, the request was
+ * understood, and the domain is missing — where `SCHEMA_MISMATCH` would blame the request,
+ * `UPSTREAM_UNAVAILABLE` the network, and a hang the server. So the gate is a *green* CI
+ * assertion about an honestly empty server, and the full contract above takes over per endpoint
+ * as the R-blocks land.
+ */
+function runExpectedRedGate(target: ContractTarget, reason: string): void {
+  describe(`contract · ${target.name} — expected red: ${reason}`, () => {
+    let handle: TargetHandle;
+    let transport: RgsTransport;
+
+    beforeAll(async () => {
+      // `devMode` is a simulator affordance; this server has no such flag to set.
+      handle = await target.start({ devMode: false, balance: 1_000_000 as Minor });
+      transport = handle.transport;
+    });
+
+    afterAll(async () => {
+      await handle.close();
+    });
+
+    const calls: Record<string, () => Promise<unknown>> = {
+      authenticate: () => transport.authenticate({ token: 'contract-demo-token' }),
+      spin: () => transport.spin({ roundId: nextRoundId(), stake: 100 as Minor }),
+      featureSpin: () => transport.featureSpin({ roundId: nextRoundId(), step: 1 }),
+      settle: () => transport.settle({ roundId: nextRoundId() }),
+      history: () => transport.history({}),
+    };
+
+    it.each(Object.keys(calls))('%s — refused as NOT_IMPLEMENTED, FATAL', async (name) => {
+      const error = await rejection((calls[name] as () => Promise<unknown>)());
+
+      expect(error.code).toBe('NOT_IMPLEMENTED');
+      expect(error.errorClass).toBe('FATAL');
+    });
+
+    it('still validates first — a malformed request is SCHEMA_MISMATCH, never NOT_IMPLEMENTED', async () => {
+      const error = await rejection(transport.spin({ roundId: 'not-a-uuid', stake: -1 } as never));
+
+      expect(error.code).toBe('SCHEMA_MISMATCH');
+      expect(error.errorClass).toBe('FATAL');
+    });
+  });
+}
+
 export function runContractSuite(target: ContractTarget): void {
   if (target.unavailable !== undefined) {
     // Named, skipped, and visible in the output — a suite that quietly covers two targets while
@@ -164,6 +214,11 @@ export function runContractSuite(target: ContractTarget): void {
     describe(`contract · ${target.name}`, () => {
       it.skip(`not run — ${target.unavailable}`, () => undefined);
     });
+    return;
+  }
+
+  if (target.expectedRed !== undefined) {
+    runExpectedRedGate(target, target.expectedRed);
     return;
   }
 

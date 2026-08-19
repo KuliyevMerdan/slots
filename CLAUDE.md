@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project status
 
 > ⚠️ **The game is a game, its math is a designed 96%, and the tooling now watches itself.**
-> As of **2026-08-19**, **C0, C1, S0, S1, C2, S2, C3, C4, C5, S4, S3, C6 and C7 have landed** — the
+> As of **2026-08-19**, **C0, C1, S0, S1, C2, S2, C3, C4, C5, S4, S3, C6, C7 and R0 have landed** — the
 > workspace, the contracts (`protocol`, `money`, `game-math`), `rgs-sim`, the `RgsTransport` seam
 > with `MockTransport`, `HttpTransport` and the retry policy, `engine`, `apps/mock-rgs`, `renderer`,
 > `ui` and `apps/game-client`, `tools/math-sim` — the RTP report that tuned the strips —
@@ -18,8 +18,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > drawer over the wire's `history` call, and a perf harness whose numbers are measured rather than
 > promised — ~120 fps at a 4× CPU throttle, 7 draw calls a frame, a heap that sawtooths flat. The
 > production bundle is **proven** free of all of it: `verify:strip` fails `pnpm check` if any dev
-> marker reaches `dist/`. 835 tests, `pnpm check` green. Every `packages/*` is now real; no
-> scaffolds remain.
+> marker reaches `dist/`. And **`apps/rgs` exists (R0)** — eight modules laid out the way a real
+> RGS is built, every route validating with the shared schemas and answering `NOT_IMPLEMENTED` (a
+> code D10 added to the protocol for exactly this server), the `WalletProvider` seam declared with
+> a `MockWallet` whose tested semantics are the specification R2 inherits — and the contract
+> suite's third target is **expected-red rather than skipped**: its red gate asserts, in green CI,
+> that every call is refused `NOT_IMPLEMENTED` and nothing else. 868 tests, `pnpm check` green.
+> Every `packages/*` is real; the one deliberate skeleton is `apps/rgs`, and the suite says so out
+> loud.
 >
 > **`pnpm dev:client` opens a playable slot.** It authenticates, spins, lands on the server's
 > `stops[]`, lights the paylines it was told won, counts the win up, runs the feature and settles —
@@ -36,12 +42,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > rounds through the game's own evaluator and prints the RTP, the hit frequency, the volatility and
 > the win distribution — **96.107%**, measured, on the strips that ship. And `pnpm test:contract`
 > plays the whole of [`docs/protocol.md`](docs/protocol.md) — lifecycle, idempotent replay,
-> `pendingRound` recovery, every error class — against **every registered target**, naming in its
-> own output the one target it could not run.
+> `pendingRound` recovery, every error class — against **every registered target**, holding the
+> expected-red `apps/rgs` to the one thing an honest skeleton can promise: every call refused
+> `NOT_IMPLEMENTED`, and nothing else.
 >
 > **What is deliberately not there yet:** packaging, the README, rate limiting, the nightly soak
-> and the E2E suite (**C8**). The next block is **C8**; **R0** — the `apps/rgs` skeleton — is
-> available in parallel and is what fills the contract suite's third target.
+> and the E2E suite (**C8**). The next block is **C8**; **R1** — rounds and idempotency on
+> Postgres — is available in parallel and is what turns the red target's first endpoints green.
 >
 > The canon is four documents: `CLAUDE.md` (this file), [`ROADMAP.md`](ROADMAP.md) (the task map),
 > [`RECOMMENDATIONS.md`](RECOMMENDATIONS.md) (the strategic registry) and
@@ -98,7 +105,7 @@ empty, and the block named is the commitment.
 | ------------------- | -------------------- | -------------------------------------------------------- | ----- |
 | `@slot/game-client` | `apps/game-client`   | The deliverable — Pixi client on Vite                     | ✅ C3 |
 | `@slot/mock-rgs`    | `apps/mock-rgs`      | Fastify wrapper around `rgs-sim` — proves the network path | ✅ S2 |
-| `@slot/rgs`         | `apps/rgs`           | Node.js RGS skeleton — routes stubbed, `NotImplemented`    | R0    |
+| `@slot/rgs`         | `apps/rgs`           | Node.js RGS — R0 skeleton: routes validate, answer `NOT_IMPLEMENTED`; wallet seam | ✅ R0 |
 | `@slot/protocol`    | `packages/protocol`  | ★ Contracts: zod schemas + inferred TS types + error taxonomy | ✅ C1 |
 | `@slot/money`       | `packages/money`     | Branded `Minor` integer units, exact arithmetic, formatting | ✅ C1 |
 | `@slot/game-math`   | `packages/game-math` | Reel strips, paytable, payline evaluator (pure, no I/O)   | ✅ C1 |
@@ -236,7 +243,8 @@ real home directory.
 
 - **pnpm workspaces** define the packages (`packages/*`, `apps/*`, `tools/*`); **Turborepo**
   orchestrates `build`/`dev`/`typecheck`/`test` with caching and `^build` ordering (`turbo.json`).
-  Every `packages/*` is real; of `apps/*` only `apps/rgs` (R0) is still to come.
+  Every `packages/*` and `apps/*` is real; `apps/rgs` is deliberately a skeleton (R0) that the
+  R-blocks fill.
 - **One version per tool, in the pnpm catalog** (`pnpm-workspace.yaml`). Packages say
   `"typescript": "catalog:"`, so the workspace moves in one edit and drift is impossible.
 - **TypeScript strict, plus `noUncheckedIndexedAccess`** — `config/tsconfig-base.json`, extended by
@@ -276,6 +284,7 @@ game-client → everything above
 
 ```
 mock-rgs    → protocol, rgs-sim               # apps/mock-rgs — NOT transport
+rgs         → protocol, money, game-math      # apps/rgs — NOT rgs-sim, NOT transport
 ```
 
 Plus three rules the table doesn't spell out: **no cycles**, **no deep imports** — a package is
@@ -339,11 +348,15 @@ both the code list and its classification, so a new code cannot be added without
 client does about it; `SlotError` derives the class **from the code**, so a server that mislabels one
 does not get to change client behaviour:
 
+`STATUS_OF_CODE` sits beside `CLASS_OF_CODE` since R0 — the HTTP status binding both servers share
+(`apps/mock-rgs` re-exports it; `apps/rgs` imports it) — so a new code cannot join the taxonomy
+without deciding its class *and* what it looks like on the wire:
+
 | Class | Codes | Client behaviour |
 | --- | --- | --- |
 | `RECOVERABLE` | `TIMEOUT` · `UPSTREAM_UNAVAILABLE` · `WALLET_UNAVAILABLE` · `RATE_LIMITED` | Exponential backoff retry **with the same `roundId`**; reconnect overlay |
 | `PLAYER` | `INSUFFICIENT_FUNDS` · `STAKE_NOT_ALLOWED` · `SESSION_EXPIRED` · `LIMIT_REACHED` | Modal, return to `IDLE`, **no retry** — except `SESSION_EXPIRED` under an open round, which renews transparently and resumes (§5, D9) |
-| `FATAL` | `SCHEMA_MISMATCH` · `UNKNOWN_ROUND` · `ROUND_CONFLICT` · `ILLEGAL_TRANSITION` · `FORCE_OUTCOME_REFUSED` · `MATH_VERSION_MISMATCH` | Freeze the reels, error screen, offer reload |
+| `FATAL` | `SCHEMA_MISMATCH` · `UNKNOWN_ROUND` · `ROUND_CONFLICT` · `ILLEGAL_TRANSITION` · `FORCE_OUTCOME_REFUSED` · `MATH_VERSION_MISMATCH` · `NOT_IMPLEMENTED` | Freeze the reels, error screen, offer reload |
 
 ### Money — `packages/money`
 
@@ -879,9 +892,10 @@ The binding is pinned in [docs/protocol.md §2.7](docs/protocol.md) and argued i
 - **Routes come from the `CALLS` table**, via `routeFor()` — `POST /rgs/spin` and friends. A fifth
   call would be routed, validated and typed the moment it joined the contract.
 - **The status code is for operators; the body is for the client.** The client branches on the
-  `class`, which is derived from the `code`, which is in the body. `STATUS_OF_CODE` is declared
-  `satisfies Record<ErrorCode, number>`, so a new error code cannot be added without deciding what it
-  looks like on the wire.
+  `class`, which is derived from the `code`, which is in the body. `STATUS_OF_CODE` lived here until
+  R0 and now lives in `@slot/protocol` (two servers, one binding — this app re-exports it), still
+  declared `satisfies Record<ErrorCode, number>`, so a new error code cannot be added without
+  deciding what it looks like on the wire.
 - **A dropped response is a hijacked reply** — the connection is held open and says nothing, because
   that is what the fault *is*: the round happened and the answer was lost. The client's own timeout
   ends the wait, exactly as in-process. Hijacked sockets are tracked so shutdown destroys them
@@ -901,37 +915,50 @@ The binding is pinned in [docs/protocol.md §2.7](docs/protocol.md) and argued i
 
 `/dev/*` — fault injection, session reset and expiry, a state summary — is what the debug panel drives and
 what lets the contract suite *demand* a failure rather than wait for one; it is mounted only
-when `devRoutes` is on, and `apps/rgs` will not have it. `POST /demo/session` is not gated, because a
+when `devRoutes` is on, and `apps/rgs` does not have it (tested: `/dev/state` is a 404 there). `POST /demo/session` is not gated, because a
 server you cannot obtain a token for is not a server (docs/protocol.md §7) — and issuing **renews**
 the running session rather than wiping it, which is what makes the §5 mid-round expiry recovery
 playable over HTTP. Configuration is
 environment, validated with a schema like anything else that crosses a boundary — a mistyped server
 seed silently changes every outcome the session produces.
 
-### The future backend — `apps/rgs`
+### The real RGS — `apps/rgs` (R0: a skeleton, honestly empty)
 
-Created in **R0**, before it does anything, structured the way it would really be built:
+Created in **R0**, before it does anything, structured the way it will really be built:
 
 ```
 apps/rgs/src/
-├─ http/          routes, request validation via @slot/protocol schemas
-├─ domain/        round lifecycle, stake validation      → throw NotImplemented
-├─ wallet/        WalletProvider interface + MockWallet   (the operator↔provider seam)
-├─ ledger/        double-entry interface                  → throw NotImplemented
-├─ math/          re-exports @slot/game-math
-├─ rng/           ServerSeedProvider interface
-├─ persistence/   RoundRepository, IdempotencyRepository interfaces
-└─ observability/ pino logger, correlation-ID middleware
+├─ http/          routes from the CALLS table; request validation via @slot/protocol schemas
+├─ domain/        RoundService — the round lifecycle, injected  → throws NotImplemented (R1)
+├─ wallet/        WalletProvider interface + MockWallet          (the operator↔provider seam)
+├─ ledger/        double-entry interface, append-only            (R3 fills)
+├─ math/          re-exports @slot/game-math — never a second copy
+├─ rng/           ServerSeedProvider interface — commit/reveal   (R4 fills)
+├─ persistence/   RoundRepository, IdempotencyRepository interfaces (R1 fills, on Postgres)
+└─ observability/ correlation id minted/adopted + echoed; pino via Fastify (R6 grows it)
 ```
 
-Every route validates with the shared zod schema and throws `NotImplementedError`. **The contract
-suite runs against both `rgs-sim` and `apps/rgs`** — the sim passes today, the real one goes green
-endpoint by endpoint. That is the scalability answer made concrete, and it is why R-blocks can land
-one at a time without a big-bang cutover.
+**Every route exists now**, registered from the same `CALLS` table the other two implementations
+read, validating with the shared schemas, and answering `NOT_IMPLEMENTED` — the `FATAL`, `501`
+protocol code D10 added for exactly this server — from a `RoundService` the R-blocks replace behind
+the HTTP layer's back. The one behavioural claim is the **ordering**, and it is tested in
+`app.test.ts`: validation runs before the stub throws, so a refusal provably means "not built",
+never "not understood" — `SCHEMA_MISMATCH` and `NOT_IMPLEMENTED` stay distinguishable on the wire.
+**The contract suite runs against it from day one** (the expected-red target), and the R-blocks turn
+it green endpoint by endpoint — the scalability answer made concrete, with no big-bang cutover.
 
 `WalletProvider` (`getBalance` / `debit` / `credit` / `rollback`) is the seam every real RGS has
-between operator and game provider. Stubbing it in R0 costs an hour and shows you know the industry
-shape.
+between operator and game provider. `MockWallet` implements it for real — the only working code in
+the app, deliberately: replay-vs-conflict on the ref, the idempotent rollback, exact `@slot/money`
+arithmetic — and its unit tests are the specification R2's integration is held to.
+
+What is deliberately absent, and stays absent: `/dev/*` (a production server is not driveable),
+`/demo/session` (tokens come from the operator's lobby, §7 — R5 builds the validating half), and
+any import of `@slot/rgs-sim` or `@slot/transport` — the first would make the skeleton lean on the
+thing it exists to replace, the second would put the client's seam inside the server. Both are
+`dependency-cruiser` errors (`rgs-deps`), tested by fixture like every other boundary. `/ready`
+answers `503 ready: false` with the shipped `MATH_VERSION`, because a load balancer should know
+what a skeleton is.
 
 ### Platform — `packages/platform`
 
@@ -1024,7 +1051,7 @@ not — a remote server's regime is that server's configuration) without either 
 | **Contrast** | `tests/contrast.test.ts` | Every text-on-surface pair both palettes can produce holds WCAG 2.1 AA — found two failures the day it was written |
 | **Glyph coverage** | `apps/game-client` (`i18n.test.ts`) | Every character of both string catalogues has a glyph in the shipped Inter woff2, at every shipped weight |
 | **Network soak** | `tests/http-soak.test.ts` | 300 rounds over a real socket, a faulty-line run, and a shutdown with a hundred abandoned responses in flight — the failures that only exist on a connection |
-| **Contract** | `tests/contract/`, one suite per target | `rgs-sim` in-process · sim over HTTP · `apps/rgs` (registered, unavailable until R0) — the switch-over gate |
+| **Contract** | `tests/contract/`, one suite per target | `rgs-sim` in-process · sim over HTTP · `apps/rgs` (expected red — `NOT_IMPLEMENTED` only, asserted) — the switch-over gate |
 | **E2E** | Playwright, in CI | Fixed seed + forced outcomes: spin, win, feature, resume after reload |
 | **Perf** | `tools/perf-harness` | `pnpm perf`: 30 spins against the production bundle, 4× CPU throttle, headless Chrome — ~120 fps avg, p95 9.2 ms, 7 draw calls/frame (max 8: the symbol layer batches), heap sawtooths 9.8 → 14.1 → 9.4 MB. Frames from a rAF probe, draw calls by wrapping the WebGL entry points, heap over CDP; driven through the DOM control layer, so no dev hook is needed and the measured bundle is the shipped one |
 
@@ -1046,12 +1073,15 @@ Three rules make it a gate rather than a second copy of the unit tests:
   the shape a test needs, finishing every round that does not — because `forceOutcome` is refused by
   every production server, and a suite built on it would be unrunnable against the one target that
   matters. Only the feature cases use it, and they are marked as needing the capability.
-- **A capability a target lacks turns the case into a *named skip*, never an omission.** `apps/rgs`
-  is registered today with `unavailable` set, so the run prints `contract · apps/rgs — not run` and
-  the claim "one suite, three targets" is something the output either supports or visibly does not.
-  Same mechanism carries the case the simulator structurally cannot produce: a round debited and
-  never resolved (docs/protocol.md §5) is declared as `unresolvedRounds`, skipped by name, and comes
-  with the `strand()` hook the target that *can* produce it must implement.
+- **A capability a target lacks turns the case into a *named skip*, never an omission — and a
+  target that runs but cannot pass yet is *expected red*, never quietly excluded.** `apps/rgs` ran
+  as a named skip until R0; since R0 it runs, marked `expectedRed`, and the suite's **red gate**
+  asserts in green CI exactly what an honest skeleton can promise: every call refused
+  `NOT_IMPLEMENTED` and nothing else, with a malformed request still `SCHEMA_MISMATCH` — so "wired
+  and honestly empty" is a tested property, not a hope. The skip mechanism still carries the case
+  the simulator structurally cannot produce: a round debited and never resolved
+  (docs/protocol.md §5) is declared as `unresolvedRounds`, skipped by name, and comes with the
+  `strand()` hook the target that *can* produce it must implement.
 - **The control plane is a port, not a back door.** The HTTP target resets and inspects through
   `apps/mock-rgs`'s `/dev/*` routes rather than the `SimServer` object it happens to hold, so the
   same target definition works against a server in another process.
@@ -1135,17 +1165,20 @@ D8, D9 — jurisdiction rules on the wire, no renew call, transparent mid-round 
   jurisdiction rule set behind an operator configuration — has no producer anywhere and belongs to
   `apps/rgs` (R5).
 
-**Real RGS (`apps/rgs`) — the whole surface**
+**Real RGS (`apps/rgs`) — a skeleton the R-blocks fill**
 
-- **`apps/rgs` does not exist, so the third target is registered and unavailable.** It is in
-  `CONTRACT_TARGETS` with an `unavailable` reason, which prints as a named skip on every run rather
-  than a target quietly missing from a green suite. R0 builds the skeleton and replaces that entry
-  with a real one, after which the suite is expected to fail against it with `NotImplemented` **and
-  nothing else** until R1+ lands. Replace this bullet with specific gaps as the R-blocks land and
-  the failures become real ones.
-  **Decision (2026-08-19):** R0 is scheduled immediately after C6 — a day of work that turns the
-  named skip into an expected-red target and makes "swap the transport URL" a process the suite
-  watches happen, endpoint by endpoint.
+- **The domain does not exist — by design, and the red gate asserts it.** Every endpoint answers
+  `NOT_IMPLEMENTED`; `RoundService` is all stubs. R1 (rounds + idempotency on Postgres) turns the
+  first endpoints green, R5 the sessions. Two things R1 must bring with it, noted now so they are
+  designed rather than discovered: **`expectedRed` is target-wide**, so the first green endpoint
+  needs a finer-grained (per-call) expectation in the suite; and **the third target has no control
+  plane** — its `TargetHandle.state()` and `faults()` reject, and the full suite cannot run without
+  `state()` (the server's own account of the session). R1 adds state inspection beside the
+  repositories, and the real `strand()` with it (see the simulator section above).
+- **The wallet, ledger, rng and persistence surfaces are interfaces with one mock.** `MockWallet`
+  works and is the tested specification for R2; `Ledger`, `ServerSeedProvider`,
+  `RoundRepository` and `IdempotencyRepository` are declarations only — each names the block that
+  fills it (R3, R4, R1, R1) in its doc comment.
 
 **Client — implied by the domain, built by no block**
 

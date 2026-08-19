@@ -3,7 +3,8 @@
 **Status:** decisions pinned **2026-08-16**; implemented by `packages/protocol` (C1), served by
 `packages/rgs-sim` (S0/S1) and carried over HTTP by `apps/mock-rgs` and `HttpTransport` (S2);
 amended **2026-08-19** (C6) — jurisdiction rules travel on the wire (§2.1, D8) and an expiring
-session mid-round has a recovery story (§5, D9). This
+session mid-round has a recovery story (§5, D9) — and again **2026-08-19** (R0) — an endpoint a
+server has not implemented yet answers `NOT_IMPLEMENTED` (§6, §2.7, D10). This
 document is the contract; the code is downstream of it. When the wire changes, change this file and
 `packages/protocol` **first**, then the simulator, then the engine, then the UI.
 
@@ -264,7 +265,11 @@ reasoning and the rejected alternatives are in
 | Correlation | `x-correlation-id` in both directions: the client mints one, the server adopts it or mints its own, and every response echoes it |
 
 `HTTP_ROUTE_PREFIX` and `routeFor()` are exported from `@slot/protocol` beside the `CALLS` table, so
-the client's path and the server's routes come from one definition.
+the client's path and the server's routes come from one definition. The status table below is
+exported the same way, as `STATUS_OF_CODE` — two servers implement this binding (`apps/mock-rgs`
+today, `apps/rgs` as the R-blocks land), and two copies of a table that must agree exactly is one
+copy too many. It is declared `satisfies Record<ErrorCode, number>`, so a new error code cannot join
+the taxonomy without deciding what it looks like on the wire.
 
 **The client branches on the `class` in the body, never on the status.** The status is for the things
 between the two — a proxy log, a health rule, a `curl` in a terminal:
@@ -278,6 +283,7 @@ between the two — a proxy log, a health rule, a `curl` in a terminal:
 | `409` | `ROUND_CONFLICT` · `ILLEGAL_TRANSITION` · `MATH_VERSION_MISMATCH` |
 | `422` | `INSUFFICIENT_FUNDS` · `STAKE_NOT_ALLOWED` · `LIMIT_REACHED` — understood and refused, not malformed |
 | `429` | `RATE_LIMITED` (honours `Retry-After`) |
+| `501` | `NOT_IMPLEMENTED` — the route exists, the implementation does not (§6, D10) |
 | `503` | `UPSTREAM_UNAVAILABLE` · `WALLET_UNAVAILABLE` |
 | `504` | `TIMEOUT` |
 
@@ -288,7 +294,7 @@ network never did.
 
 Two surfaces outside the game contract, both dev affordances: `POST /demo/session → { token }` (§7),
 and `GET /health` · `GET /ready`. `apps/mock-rgs` adds `/dev/*` — fault injection, session reset, a
-state summary — which `apps/rgs` will not have.
+state summary — which `apps/rgs` does not have.
 
 ---
 
@@ -402,7 +408,7 @@ interface ProtocolError {
 | --- | --- | --- |
 | `RECOVERABLE` | `TIMEOUT` · `UPSTREAM_UNAVAILABLE` · `WALLET_UNAVAILABLE` · `RATE_LIMITED` | backoff retry **with the same key**, reconnect overlay |
 | `PLAYER` | `INSUFFICIENT_FUNDS` · `STAKE_NOT_ALLOWED` · `SESSION_EXPIRED` · `LIMIT_REACHED` | modal, return to `IDLE`, **no retry** |
-| `FATAL` | `SCHEMA_MISMATCH` · `UNKNOWN_ROUND` · `ROUND_CONFLICT` · `ILLEGAL_TRANSITION` · `FORCE_OUTCOME_REFUSED` · `MATH_VERSION_MISMATCH` | freeze the reels, error screen, offer reload |
+| `FATAL` | `SCHEMA_MISMATCH` · `UNKNOWN_ROUND` · `ROUND_CONFLICT` · `ILLEGAL_TRANSITION` · `FORCE_OUTCOME_REFUSED` · `MATH_VERSION_MISMATCH` · `NOT_IMPLEMENTED` | freeze the reels, error screen, offer reload |
 
 `STAKE_NOT_ALLOWED` covers both a stake outside `betLevels` and one outside `limits` — the client
 already knows both from `GameConfig`, so the distinction buys nothing at the boundary.
@@ -414,6 +420,13 @@ the client re-authenticates transparently instead of showing the modal (§5, D9)
 holds, because retrying *the failed call* changes nothing; what recovers is a different call. And
 `LIMIT_REACHED` has a jurisdictional producer: a `spin` arriving before `minSpinIntervalMs` has
 passed (§2.1).
+
+`NOT_IMPLEMENTED` is the answer of a server that understood the request and has no code behind the
+endpoint — `apps/rgs` while the R-blocks land, or an operator integration reached before a rollout
+finished. `FATAL` because no retry produces the missing implementation, and a client presented with
+a round its server cannot play has nothing safe to improvise (D10). It is a *validated* refusal:
+schema errors still answer `SCHEMA_MISMATCH`, so the two are distinguishable on the wire — which is
+exactly what the contract suite's expected-red gate branches on.
 
 ---
 
@@ -559,3 +572,17 @@ producer.
 *Rejected:* a `renew` call. Three servers would have to carry and test it, and it would exist only
 to avoid a recovery path that already exists, is already tested, and already handles every other
 way a session dies.
+
+**D10 — `NOT_IMPLEMENTED` is a protocol error: `FATAL`, `501`.** (2026-08-19)
+R0 wires `apps/rgs` into the contract suite before any endpoint works, and its gate is "every
+failure is `NotImplemented` **and nothing else**" — which is only assertable if the refusal is
+distinguishable on the wire from a crash, a schema error and an outage. So the skeleton's answer is
+a first-class taxonomy member: a valid `ProtocolError` body, `code: NOT_IMPLEMENTED`, status `501`.
+`FATAL` because retrying cannot produce the missing code, and the state is not the player's doing.
+The code outlives R0: a rollout that ships routes before implementations is a real state of a real
+server, and `501` is what HTTP has always called it.
+*Rejected:* answering `503 UPSTREAM_UNAVAILABLE`. It is `RECOVERABLE`, so every client would retry
+three times against an endpoint that cannot succeed — and the contract suite could not tell "not
+built yet" from "temporarily down", which un-defines the R0 gate.
+*Rejected:* a non-protocol body only the suite understands. The first thing a real client meeting
+the skeleton would see is a body it cannot parse — `SCHEMA_MISMATCH` — blaming the wrong side.

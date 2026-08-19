@@ -50,6 +50,9 @@ importers:
       '@slot/renderer':
         specifier: workspace:*
         version: link:packages/renderer
+      '@slot/rgs':
+        specifier: workspace:*
+        version: link:apps/rgs
       '@slot/rgs-sim':
         specifier: workspace:*
         version: link:packages/rgs-sim
@@ -168,6 +171,37 @@ importers:
       '@slot/rgs-sim':
         specifier: workspace:*
         version: link:../../packages/rgs-sim
+      fastify:
+        specifier: 'catalog:'
+        version: 5.12.0
+      zod:
+        specifier: 'catalog:'
+        version: 4.4.3
+    devDependencies:
+      '@types/node':
+        specifier: ^20
+        version: 20.19.43
+      tsx:
+        specifier: 'catalog:'
+        version: 4.23.12
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vitest:
+        specifier: 'catalog:'
+        version: 3.2.7(@types/node@20.19.43)(lightningcss@1.33.0)(tsx@4.23.12)(yaml@2.9.0)
+
+  apps/rgs:
+    dependencies:
+      '@slot/game-math':
+        specifier: workspace:*
+        version: link:../../packages/game-math
+      '@slot/money':
+        specifier: workspace:*
+        version: link:../../packages/money
+      '@slot/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
       fastify:
         specifier: 'catalog:'
         version: 5.12.0

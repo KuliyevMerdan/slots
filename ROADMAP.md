@@ -35,9 +35,13 @@ math-version gate, the max-win ceiling as a multiple of the stake, the telemetry
 `prefers-reduced-motion` with an announced region, the `history` call, and the network soak that
 found a shutdown hang in `apps/mock-rgs`.
 
-**Next is C6** — the platform layer: responsive layout, audio, i18n and the compliance presets. It is
-also where the feature stops being silent. **R0** — the `apps/rgs` skeleton — can run in parallel,
-and is what turns the contract suite's third target from a named skip into an expected-red one.
+Since then **C6 and C7 landed 2026-08-19** (platform, compliance, dev-tools, perf-harness — see
+`CLAUDE.md` for what each turned out to be) and **R0 landed 2026-08-19**: `apps/rgs` exists, every
+route validating with the shared schemas and answering `NOT_IMPLEMENTED` (D10), the wallet seam
+declared and its mock's semantics tested, and the contract suite's third target turned from a named
+skip into an **expected-red** one whose red gate is a green CI assertion. **Next is C8** —
+packaging: the deploy, the README, rate limiting, the nightly soak and the E2E suite. **R1** runs
+in parallel when wanted, and is what turns the red target's first endpoints green.
 
 ---
 
@@ -63,7 +67,7 @@ contract suite. `#` maps each block back to the phase numbering of the original 
 | **S2** | `apps/mock-rgs` — Fastify wrapper, the real network path | S0 | 2 | ✅ (landed 2026-08-18) |
 | **S3** | The contract suite — one suite, three targets. **The switch-over gate** | S2, R0 | 2 | ✅ (landed 2026-08-18, ahead of R0 — see the block) |
 | **S4** | `tools/math-sim` — RTP / hit frequency / volatility report | S0 | 8 | ✅ (landed 2026-08-18) |
-| **R0** | `apps/rgs` skeleton — routes stubbed, `NotImplemented`, wallet seam | C1 | 2 | ☐ |
+| **R0** | `apps/rgs` skeleton — routes stubbed, `NotImplemented`, wallet seam | C1 | 2 | ✅ (landed 2026-08-19) |
 | **R1** | Rounds & idempotency on Postgres | R0, S3 | 10 | ☐ |
 | **R2** | Wallet integration behind `WalletProvider` | R1 | 10 | ☐ |
 | **R3** | Double-entry ledger in integer minor units | R2 | 10 | ☐ |
@@ -464,13 +468,13 @@ _The gate everything else references. Landed **2026-08-18**._
       is registered with an `unavailable` reason and prints as a named skip, because a suite that
       silently covers two targets while claiming three is worse than one that shows the hole.
 
-**Landed ahead of R0**, which the gate below depends on. `apps/rgs` does not exist yet, so the third
-target cannot be expected-red — only absent, and it says so by name. **R0 owns turning it red**; its
-own checklist already carries "wired into the contract suite as a third target".
+**Landed ahead of R0**, which the gate below depends on. At the time `apps/rgs` did not exist, so
+the third target could only be absent-by-name; **R0 turned it red** on 2026-08-19 — the target now
+runs, and the suite's red gate holds it to `NOT_IMPLEMENTED`-only as a green assertion.
 
 **Done when:** `pnpm test:contract` passes against both sim targets and fails against `apps/rgs`
-with `NotImplemented` only — no other kind of failure. _(The first half holds today; the second is
-R0's gate.)_
+with `NotImplemented` only — no other kind of failure. _(Both halves hold since R0: the second is
+enforced as the red gate, so "fails with `NotImplemented` only" is itself what CI asserts.)_
 
 ## Block S4 — `tools/math-sim`
 
@@ -512,16 +516,25 @@ for sessions and idempotency, pino + OpenTelemetry for observability.
 
 ## Block R0 — Skeleton & the wallet seam
 
-- [ ] `apps/rgs/src/` laid out as `http` · `domain` · `wallet` · `ledger` · `math` · `rng` ·
-      `persistence` · `observability`.
-- [ ] Every route validates with the shared schema, then throws `NotImplementedError`.
-- [ ] `WalletProvider` interface (`getBalance` / `debit` / `credit` / `rollback`) + `MockWallet` —
-      the operator↔provider seam every real RGS has.
-- [ ] `RoundRepository` / `IdempotencyRepository` / `ServerSeedProvider` interfaces declared.
-- [ ] Wired into the contract suite as a third target — replace the `unavailable` entry in
-      `tests/contract/targets.ts` with a real one (expected-red, documented).
+_Landed **2026-08-19**._
 
-**Done when:** the contract suite runs against `apps/rgs` and every failure is `NotImplemented`.
+- [x] `apps/rgs/src/` laid out as `http` · `domain` · `wallet` · `ledger` · `math` · `rng` ·
+      `persistence` · `observability`.
+- [x] Every route validates with the shared schema, then throws `NotImplementedError`.
+- [x] `WalletProvider` interface (`getBalance` / `debit` / `credit` / `rollback`) + `MockWallet` —
+      the operator↔provider seam every real RGS has. The mock's semantics are tested as the
+      specification R2 inherits: idempotency on ref, replay vs. conflict, the reversible debit.
+- [x] `RoundRepository` / `IdempotencyRepository` / `ServerSeedProvider` interfaces declared.
+- [x] Wired into the contract suite as a third target — the `unavailable` entry replaced with a
+      running one marked `expectedRed`, and the suite's **red gate** asserts the expectation in
+      green CI: every call refused as `NOT_IMPLEMENTED` and nothing else, with malformed requests
+      still `SCHEMA_MISMATCH` — so the refusal provably means "not built", never "not understood".
+
+**Done when:** the contract suite runs against `apps/rgs` and every failure is `NotImplemented`. ✅
+— and making that assertable took a protocol amendment (D10): `NOT_IMPLEMENTED` joined the taxonomy
+as a `FATAL` code with status `501`, and `STATUS_OF_CODE` moved from `apps/mock-rgs` into
+`@slot/protocol`, because two servers implementing one status binding is two copies of a table that
+must agree exactly.
 
 ## Block R1 — Rounds & idempotency on Postgres
 
