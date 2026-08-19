@@ -11,7 +11,8 @@ import { createGameConfig } from '../config.js';
 import { MemoryRoundStore } from '../persistence/memory.js';
 import { MemoryLedger } from '../ledger/memory.js';
 import { MockWallet } from '../wallet/mock.js';
-import { staticSeedProvider } from '../rng/seeds.js';
+import { commitmentOf } from '@slot/game-math';
+import { committingSeedProvider, seededBytes } from '../rng/seeds.js';
 import { SingleSessionHost } from './sessions.js';
 import { createRoundService } from './rounds.js';
 import { spinFingerprint } from './fingerprint.js';
@@ -45,7 +46,7 @@ const harness = ({ balance = 1_000_000 as Minor, now = NOW } = {}) => {
     wallet,
     ledger,
     sessions,
-    seeds: staticSeedProvider('rgs-test-seed'),
+    seeds: committingSeedProvider(seededBytes('rgs-test-seed')),
     config: createGameConfig(),
     now: () => clock.now,
   });
@@ -183,6 +184,8 @@ describe('the stranded round — debited, never resolved (§5)', () => {
       playerId: PLAYER,
       state: 'OPEN',
       stake,
+      serverSeed: 'strand-server-seed',
+      commitment: commitmentOf('strand-server-seed'),
       fingerprint: spinFingerprint(stake, undefined, undefined),
       cumulativeWin: 0 as Minor,
       capped: false,
@@ -355,7 +358,7 @@ describe('the rollback path — a wallet failure mid-round leaves no orphaned de
       wallet: h.wallet,
       ledger: h.ledger,
       sessions: h.sessions,
-      seeds: staticSeedProvider('rgs-test-seed'),
+      seeds: committingSeedProvider(seededBytes('rgs-test-seed')),
       config: createGameConfig(),
       now: () => NOW,
     });
@@ -400,7 +403,7 @@ describe('the rollback path — a wallet failure mid-round leaves no orphaned de
       wallet: flakyWallet,
       ledger: h.ledger,
       sessions: h.sessions,
-      seeds: staticSeedProvider('rgs-test-seed'),
+      seeds: committingSeedProvider(seededBytes('rgs-test-seed')),
       config: createGameConfig(),
       now: () => NOW,
     });
@@ -431,7 +434,7 @@ describe('the wallet as an upstream', () => {
       },
       ledger: h.ledger,
       sessions: h.sessions,
-      seeds: staticSeedProvider('rgs-test-seed'),
+      seeds: committingSeedProvider(seededBytes('rgs-test-seed')),
       config: createGameConfig(),
       now: () => NOW,
     });

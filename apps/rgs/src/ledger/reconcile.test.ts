@@ -31,6 +31,8 @@ const openRound = async (store: MemoryRoundStore, roundId: string, stake: Minor)
     playerId: PLAYER,
     state: 'OPEN',
     stake,
+    serverSeed: 'reconcile-server-seed',
+    commitment: 'reconcile-commitment',
     fingerprint: 'fp',
     cumulativeWin: 0 as Minor,
     capped: false,

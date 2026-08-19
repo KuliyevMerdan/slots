@@ -1,34 +1,61 @@
-import type { RoundId } from '@slot/protocol';
-import { NotImplementedError } from '../errors.js';
+import { commitmentOf, createPrng } from '@slot/game-math';
 
 /**
- * Where server randomness comes from — the seam R4 fills with commit/reveal.
+ * Where server randomness comes from — the R4 half of provable fairness (docs/protocol.md §9,
+ * D11; docs/fairness.md; ADR-0006).
  *
- * The derivation discipline is the one the simulator proved: a spin's seed is *derived* from
- * `(serverSeed, roundId, clientSeed, step)` and never stored, so a round is replayable from its
- * inputs and no table of consumed randomness exists to leak or corrupt. R4 keeps that and adds the
- * provably-fair half: the server publishes `commitmentFor` (a hash of the seed material) *before*
- * the round, reveals the material after settlement, and the player can verify the outcome was
- * fixed before they pressed.
+ * One pair per round: a fresh seed and its SHA-256, chained. The pair *on offer* is published as
+ * a commitment before any bet can bind it (`authenticate`, and every closing response's `next`);
+ * a spin binds the offered pair to its round at `open` — the seed is persisted on the round row,
+ * so a restart can still resolve and reveal it — and the chain rotates only once the open
+ * succeeds, which is what keeps a failed open retryable under the same commitment. The spin seed
+ * itself stays *derived*, exactly as before: `deriveSpinSeed(pair.seed, roundId, clientSeed,
+ * step)`, with `roundId` and `clientSeed` both client-minted — after the commitment, the server
+ * has nothing left to choose.
+ *
+ * Randomness arrives injected (`RandomBytes`) for the same reason the clock does: `main.ts` hands
+ * in `node:crypto`'s CSPRNG, tests hand in a seeded stream, and the provider cannot tell — so the
+ * chain is replayable exactly where a test needs it to be and unpredictable exactly where a
+ * player does.
  */
-export interface ServerSeedProvider {
-  /** The per-round seed material. Deterministic — asking twice is the same answer. */
-  seedFor(roundId: RoundId): Promise<string>;
-  /** The hash published before the round plays — what makes the reveal checkable (R4). */
-  commitmentFor(roundId: RoundId): Promise<string>;
+
+export interface SeedPair {
+  /** 32 bytes of entropy, hex — the secret half, disclosed only at the round's close. */
+  readonly seed: string;
+  /** `sha256(seed)` — the public half, held by the player before the bet. */
+  readonly commitment: string;
 }
 
+export type RandomBytes = (byteCount: number) => Uint8Array;
+
+export interface ServerSeedProvider {
+  /** The pair on offer for the next round to open. Stable until `rotate()`. */
+  current(): SeedPair;
+  /** Consume the offer: mint and publish a fresh pair. Called once a round has bound the old one. */
+  rotate(): SeedPair;
+}
+
+const hexOf = (bytes: Uint8Array): string =>
+  [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+
+export const committingSeedProvider = (randomBytes: RandomBytes): ServerSeedProvider => {
+  const mint = (): SeedPair => {
+    const seed = hexOf(randomBytes(32));
+    return { seed, commitment: commitmentOf(seed) };
+  };
+  let current = mint();
+  return {
+    current: () => current,
+    rotate: () => (current = mint()),
+  };
+};
+
 /**
- * R1's provider: one configured server seed, the simulator's derivation, and no commitment —
- * `commitmentFor` throws `NotImplementedError` rather than answering something unverifiable,
- * because a commitment nobody can check is worse than an honest absence (R4).
- *
- * The material is `serverSeed|roundId`; the domain appends `|clientSeed|step` — together exactly
- * `deriveSpinSeed` in `@slot/game-math`, byte for byte, so the same seed and round id produce the
- * same outcome on this server and on the simulator. Nothing depends on that equality; it exists so
- * a divergence investigation can swap servers under a round and compare.
+ * A deterministic byte stream for tests and the dev loop: xoshiro over a label. Not a CSPRNG and
+ * not pretending to be one — a test that cannot replay its chain is not finished, and a dev
+ * server that surprises its own fixtures helps nobody. `main.ts` never constructs this.
  */
-export const staticSeedProvider = (serverSeed: string): ServerSeedProvider => ({
-  seedFor: (roundId) => Promise.resolve(`${serverSeed}|${roundId}`),
-  commitmentFor: () => Promise.reject(new NotImplementedError('rng.commitmentFor (R4)')),
-});
+export const seededBytes = (label: string): RandomBytes => {
+  const prng = createPrng(label);
+  return (byteCount) => Uint8Array.from({ length: byteCount }, () => prng.nextBelow(256));
+};

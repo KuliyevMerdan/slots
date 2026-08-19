@@ -17,3 +17,4 @@ export * from './evaluate.js';
 export * from './config.js';
 export * from './prng.js';
 export * from './outcome.js';
+export * from './verify.js';

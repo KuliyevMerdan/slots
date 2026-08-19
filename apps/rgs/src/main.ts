@@ -1,8 +1,9 @@
+import { randomBytes } from 'node:crypto';
 import { buildApp } from './http/app.js';
 import { createGameConfig, readEnv } from './config.js';
 import { createRoundService } from './domain/rounds.js';
 import { SingleSessionHost } from './domain/sessions.js';
-import { staticSeedProvider } from './rng/seeds.js';
+import { committingSeedProvider } from './rng/seeds.js';
 import { MemoryRoundStore } from './persistence/memory.js';
 import { createPgPool, createPostgresStore } from './persistence/postgres.js';
 import { MemoryLedger } from './ledger/memory.js';
@@ -49,7 +50,8 @@ const rounds = createRoundService({
   wallet,
   ledger,
   sessions,
-  seeds: staticSeedProvider(env.RGS_SERVER_SEED),
+  // The one composition that gets real entropy: the fairness chain runs on the CSPRNG (R4).
+  seeds: committingSeedProvider((byteCount) => randomBytes(byteCount)),
   config,
   now: Date.now,
 });

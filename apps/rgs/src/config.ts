@@ -5,10 +5,10 @@ import { BET_LEVELS, MATH_CONFIG } from '@slot/game-math';
 
 /**
  * The environment, validated like anything else that crosses a boundary — the same discipline as
- * `apps/mock-rgs`. `RGS_SERVER_SEED` carries no committed secret: it is the dev default of a value
- * R4 replaces with committed/revealed material, and a real deployment sets its own. Postgres
- * arrives through `RGS_DATABASE_URL` (R1) — set, it selects the Postgres store; absent, the
- * in-memory store, which is what the dev loop and the contract suite run on.
+ * `apps/mock-rgs`. There is deliberately no seed variable: since R4 the fairness chain runs on
+ * the CSPRNG (`main.ts` injects `node:crypto`), so there is nothing to configure and nothing to
+ * leak. Postgres arrives through `RGS_DATABASE_URL` (R1) — set, it selects the Postgres store;
+ * absent, the in-memory store, which is what the dev loop and the contract suite run on.
  */
 
 const EnvSchema = z.object({
@@ -17,8 +17,6 @@ const EnvSchema = z.object({
   RGS_LOG_LEVEL: z
     .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
     .default('info'),
-  /** Every spin seed derives from this until R4's commit/reveal. Dev default, never a secret. */
-  RGS_SERVER_SEED: z.string().min(1).default('rgs-dev-seed'),
   /**
    * The demo session this server issues to itself at boot (§7: tokens are issued out of band, and
    * in development the environment *is* the out-of-band channel). R5 replaces this with real

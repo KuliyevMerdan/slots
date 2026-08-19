@@ -2,6 +2,7 @@ import type { ErrorCode, Minor, RoundState } from '@slot/protocol';
 import { SimServer, createSimConfig, createSimState } from '@slot/rgs-sim';
 import type { FaultConfig } from '@slot/rgs-sim';
 import { buildApp } from '@slot/mock-rgs';
+import { commitmentOf } from '@slot/game-math';
 import {
   MemoryLedger,
   MemoryRoundStore,
@@ -10,10 +11,11 @@ import {
   WalletSim,
   buildApp as buildRgsApp,
   buildWalletSimApp,
+  committingSeedProvider,
   createGameConfig,
   createRoundService,
+  seededBytes,
   spinFingerprint,
-  staticSeedProvider,
 } from '@slot/rgs';
 import { HttpTransport, MockTransport } from '@slot/transport';
 import type { RgsTransport } from '@slot/transport';
@@ -92,6 +94,14 @@ export interface TargetCapabilities {
    * (R1) can, so the case is declared here and skipped by name rather than quietly untested.
    */
   unresolvedRounds: boolean;
+  /**
+   * The target commits to its outcomes and reveals at the close (docs/protocol.md §9, R4).
+   *
+   * Mutually exclusive with `forceOutcome` by construction, not by accident: a server that will
+   * play whatever it is told cannot publish a hash of an outcome it has not been told yet. The
+   * simulators exist to be driven, so they are honest about the fairness they do not have.
+   */
+  provableFairness: boolean;
 }
 
 export interface StartOptions {
@@ -148,6 +158,7 @@ const SIM_CAPABILITIES: TargetCapabilities = {
   forceOutcome: true,
   faultInjection: true,
   unresolvedRounds: false,
+  provableFairness: false,
 };
 
 /**
@@ -235,7 +246,12 @@ export const httpTarget: ContractTarget = {
  */
 export const realRgsTarget: ContractTarget = {
   name: 'apps/rgs',
-  supports: { forceOutcome: false, faultInjection: true, unresolvedRounds: true },
+  supports: {
+    forceOutcome: false,
+    faultInjection: true,
+    unresolvedRounds: true,
+    provableFairness: true,
+  },
   async start(options) {
     const playerId = 'demo-player';
     const store = new MemoryRoundStore();
@@ -252,7 +268,7 @@ export const realRgsTarget: ContractTarget = {
       wallet,
       ledger,
       sessions,
-      seeds: staticSeedProvider(SEED),
+      seeds: committingSeedProvider(seededBytes(SEED)),
       config: createGameConfig(),
       now: () => NOW,
     });
@@ -308,12 +324,17 @@ export const realRgsTarget: ContractTarget = {
        */
       strand: async (stake) => {
         const roundId = `018f0000-0000-7000-8000-${(stranded += 1).toString(16).padStart(12, '0')}`;
+        // The stranded round crashed *after* its open, so it died holding a bound fairness pair —
+        // a real one, because `authenticate` reports the commitment on the wire (§9).
+        const serverSeed = `strand-server-seed-${stranded}`;
         await walletSim.wallet.debit(playerId, stake, roundId);
         await store.open({
           roundId,
           playerId,
           state: 'OPEN',
           stake,
+          serverSeed,
+          commitment: commitmentOf(serverSeed),
           fingerprint: spinFingerprint(stake, undefined, undefined),
           cumulativeWin: 0 as Minor,
           capped: false,

@@ -49,9 +49,13 @@ window, and the third contract target running client→HTTP→rgs→HTTP→walle
 refusing the real wallet. **R3 landed 2026-08-19**: the double-entry ledger — append-only on both
 stores (a trigger enforces it on Postgres), every wallet movement journaled with idempotency
 mirroring the wallet's own, and a reconciliation job that trues the journal against the wallet and
-finds the orphaned stake balance-truing cannot see (ADR-0005). **Next is C8** — packaging: the
-deploy, the README, rate limiting, the nightly soak and the E2E suite. **R4** (commit/reveal) and
-**R5** (sessions for real) are unblocked in parallel; **R7** now gates only on R6.
+finds the orphaned stake balance-truing cannot see (ADR-0005). **R4 landed 2026-08-19**: provable
+fairness — per-round seed pairs on a CSPRNG chain, commitment before the bet, seed bound at open
+and persisted with the round, reveal on the closing response; the player's verification ships in
+`@slot/game-math` (a NIST-vectored `sha256Hex`, `stopsForStep`), the wire half is §9/D11, and the
+contract suite holds `apps/rgs` to it as a capability the simulators honestly lack (ADR-0006).
+**Next is C8** — packaging: the deploy, the README, rate limiting, the nightly soak and the E2E
+suite. **R5** (sessions for real) is unblocked; **R7** now gates only on R6.
 
 ---
 
@@ -81,7 +85,7 @@ contract suite. `#` maps each block back to the phase numbering of the original 
 | **R1** | Rounds & idempotency on Postgres | R0, S3 | 10 | ✅ (landed 2026-08-19) |
 | **R2** | Wallet integration behind `WalletProvider` | R1 | 10 | ✅ (landed 2026-08-19) |
 | **R3** | Double-entry ledger in integer minor units | R2 | 10 | ✅ (landed 2026-08-19) |
-| **R4** | Server RNG + provably-fair seed commit/reveal | R1 | 10 | ☐ |
+| **R4** | Server RNG + provably-fair seed commit/reveal | R1 | 10 | ✅ (landed 2026-08-19) |
 | **R5** | Sessions, auth, limits — the `PLAYER` error class for real | R1 | 10 | ☐ |
 | **R6** | Observability — structured logs, metrics, OTel on `roundId` | R1 | 10 | ☐ |
 | **R7** | Production readiness — config validation, load test, deploy | R3, R6 | 10 | ☐ |
@@ -630,12 +634,31 @@ correction ever being written.
 
 ## Block R4 — Server RNG & provable fairness
 
-- [ ] `ServerSeedProvider` backed by a CSPRNG.
-- [ ] Seed **commit on authenticate, reveal on settle**, with the client able to verify the round.
-- [ ] Documented verification procedure in `docs/`.
+_Landed **2026-08-19**._
+
+- [x] `ServerSeedProvider` backed by a CSPRNG — rebuilt as a commitment chain: one pair per round
+      (32 bytes of entropy and its SHA-256), minted from injected `RandomBytes` (`main.ts` hands
+      in `node:crypto`; tests hand in a seeded stream and stay deterministic). `RGS_SERVER_SEED`
+      is gone — there is nothing to configure and nothing to leak.
+- [x] Seed **commit on authenticate, reveal on settle**, with the client able to verify the round
+      — as built: the commitment on offer travels on `authenticate` and on every closing
+      response's `next`; the spin binds it at `open` (persisted on the round row, so a restart
+      resolves and reveals the same round, and `pendingRound.fairness` re-reports the binding);
+      the reveal rides the response that *closes* the round — `settle`, or `spin` itself for an
+      atomically-settled dead round, because nobody is required to settle nothing (§9, D11,
+      ADR-0006). The verification toolkit ships in `@slot/game-math` (`sha256Hex` held to NIST
+      vectors, `stopsForStep`) — client-runnable by construction; the client *calling* it is a
+      logged gap, not a shipped button.
+- [x] Documented verification procedure in `docs/` — [`docs/fairness.md`](docs/fairness.md), a
+      procedure with an executable twin: the gate test runs exactly what the page describes.
 
 **Done when:** a player can independently recompute a round's `stops[]` from the revealed seed and
-their client seed.
+their client seed. ✅ — `apps/rgs/src/rng/fairness.test.ts`: the "player" holds only wire data and
+`@slot/game-math`, and verifies the hash, the chain's continuity, every step of dead, won and
+feature rounds, idempotent reveals on duplicate settles, and the stranded round's binding across
+resume. The contract suite repeats the procedure over the full production chain as the
+`provableFairness` capability — true only for `apps/rgs`, because a server that honours
+`forceOutcome` cannot commit to outcomes, and the simulators skip the cases by name.
 
 ## Block R5 — Sessions, auth & limits
 

@@ -4,7 +4,7 @@ import { createGameConfig } from '../config.js';
 import { MemoryRoundStore } from '../persistence/memory.js';
 import type { RoundStore } from '../persistence/store.js';
 import { MockWallet } from '../wallet/mock.js';
-import { staticSeedProvider } from '../rng/seeds.js';
+import { committingSeedProvider, seededBytes } from '../rng/seeds.js';
 import { SingleSessionHost } from '../domain/sessions.js';
 import { createRoundService } from '../domain/rounds.js';
 import { MemoryLedger } from './memory.js';
@@ -72,7 +72,7 @@ const world = () => {
     wallet: flakyWallet,
     ledger,
     sessions,
-    seeds: staticSeedProvider('rgs-test-seed'),
+    seeds: committingSeedProvider(seededBytes('rgs-test-seed')),
     config: createGameConfig(),
     now: () => NOW,
   });

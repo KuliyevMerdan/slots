@@ -4,9 +4,11 @@
 `packages/rgs-sim` (S0/S1) and carried over HTTP by `apps/mock-rgs` and `HttpTransport` (S2);
 amended **2026-08-19** (C6) — jurisdiction rules travel on the wire (§2.1, D8) and an expiring
 session mid-round has a recovery story (§5, D9) — again **2026-08-19** (R0) — an endpoint a
-server has not implemented yet answers `NOT_IMPLEMENTED` (§6, §2.7, D10) — and again
+server has not implemented yet answers `NOT_IMPLEMENTED` (§6, §2.7, D10) — again
 **2026-08-19** (R1) — `PendingRound.next` is absent for a round debited and never resolved
-(§2.6, §5), the case that gained its first real producer. This
+(§2.6, §5), the case that gained its first real producer — and again **2026-08-19** (R4) —
+provable fairness as optional fields and a capability (§9, D11): commit before the bet, reveal at
+the close, refused as a claim by any server that honours `forceOutcome`. This
 document is the contract; the code is downstream of it. When the wire changes, change this file and
 `packages/protocol` **first**, then the simulator, then the engine, then the UI.
 
@@ -474,7 +476,46 @@ Gate 2 is what catches a regression in gate 1, which is why both exist.
 
 ---
 
-## 9. Persisted state
+## 9. Provable fairness (R4, D11)
+
+Optional fields and a **capability**, not a requirement — because fairness and `forceOutcome` are
+mutually exclusive by construction: a server that will play whatever it is told cannot publish a
+hash of an outcome it has not been told yet. The simulators honestly omit every field below; a
+server that refuses `forceOutcome` always (`apps/rgs`) is the kind that can commit.
+
+```ts
+interface FairnessNext    { next: Commitment }                                   // authenticate
+interface FairnessBinding { commitment: Commitment }                             // pendingRound
+interface SpinFairness    { commitment: Commitment; reveal?: string; next?: Commitment }
+interface SettleFairness  { commitment: Commitment; reveal: string; next: Commitment }
+
+type Commitment = string;      // SHA-256, 64 lowercase hex characters
+```
+
+The scheme is a chain of per-round pairs, one rule per moment:
+
+- **Commit before the bet.** `authenticate.fairness.next` — and every closing response's
+  `fairness.next` — is the SHA-256 of the seed the *next* round will play. The player holds it
+  before choosing `roundId` and `clientSeed`, both client-minted, so after publishing the hash the
+  server has nothing left to choose.
+- **Bind at open.** The round's `spin` response echoes `fairness.commitment` — exactly the
+  commitment that was on offer. The bound seed is persisted with the round, so a restart resolves
+  and reveals the same round, and `pendingRound.fairness` re-reports the binding on resume (§5).
+- **Reveal at close.** The response that closes the round — `spin` for a round with nothing left
+  to pay (it settled atomically, §3), `settle` for every other — carries `reveal` (the bound seed)
+  and `next` (the commitment now on offer). `reveal` and `next` travel together or not at all.
+- **Verify with the maths you already have.** `sha256(reveal)` must equal the held commitment, and
+  for every step `k` the round played, `drawStops(config, deriveSpinSeed(reveal, roundId,
+  clientSeed, k))` must equal that step's `result.stops` — both functions ship in
+  `@slot/game-math`, and the procedure is written out in [`fairness.md`](fairness.md).
+
+One round derives every step from one committed seed, which is why a single reveal verifies the
+whole round, feature and all. Idempotent replays carry the fairness block verbatim — a duplicate
+`settle` reveals the same seed, not a second one.
+
+---
+
+## 10. Persisted state
 
 Any client- or sim-side persisted payload (`localStorage` round state, feature progress) carries a
 schema version exported from `@slot/protocol`:
@@ -495,7 +536,7 @@ survives a discarded local payload — which means the safe behaviour is also th
 
 ---
 
-## 10. Deliberately not in v1
+## 11. Deliberately not in v1
 
 Stated so their absence reads as a decision rather than an oversight.
 
@@ -505,15 +546,10 @@ Stated so their absence reads as a decision rather than an oversight.
 - **No standalone balance read.** Every response carries the authoritative balance and `authenticate`
   re-reads it on reconnect, so a `getBalance` call would have no caller. Adding one later is purely
   additive.
-- **No seed commit/reveal.** Provable fairness is **R4** work; adding the fields now would ship a
-  fairness claim the simulator cannot honour. Tracked in
-  [`RECOMMENDATIONS.md`](../RECOMMENDATIONS.md) as an investment worth bringing forward.
-- **No round-history call.** Tracked as a gap in [`CLAUDE.md`](../CLAUDE.md); `roundId` plus the
-  persisted round state make it nearly free when it is scheduled.
 
 ---
 
-## 11. Decision log
+## 12. Decision log
 
 Each entry answers a question that was open in the `CLAUDE.md` **Gaps** registry until this document
 landed. The rejected alternative is recorded because it was genuinely arguable.
@@ -544,7 +580,7 @@ rule: the last response is the truth, and `authenticate` re-reads it.
 Anything else would be inventing an operator. §7 says so explicitly and points at where the real one
 plugs in (R5).
 
-**D5 — No WebSocket transport.** See §10.
+**D5 — No WebSocket transport.** See §11.
 
 **D6 — The persistence schema version lives in `@slot/protocol`, defined in C1.**
 The sim's `localStorage` adapter (S0) and the client's feature persistence (C5) both write the
@@ -592,5 +628,21 @@ server, and `501` is what HTTP has always called it.
 *Rejected:* answering `503 UPSTREAM_UNAVAILABLE`. It is `RECOVERABLE`, so every client would retry
 three times against an endpoint that cannot succeed — and the contract suite could not tell "not
 built yet" from "temporarily down", which un-defines the R0 gate.
+
+**D11 — Provable fairness is a capability with per-round chained commitments, revealed on the
+closing response.** (2026-08-19)
+Optional fields, because the claim is only honest where `forceOutcome` is refused always — the
+simulators exist to be driven, and a required field would make them lie (§9). Per-round pairs
+rather than one session seed, because "reveal on settle" and "future rounds stay unpredictable"
+cannot both hold for a seed that serves more than one round. The reveal rides the response that
+*closes* the round — `settle` usually, `spin` for an atomically-settled dead round — because a
+client is not required to call `settle` when there is nothing to credit, and a reveal nobody
+receives is not a reveal. And the chain rotates only when an open succeeds, so a failed open
+retries under the very commitment the player is holding.
+*Rejected:* committing to a session-long seed with material derived per round
+(`HMAC(secret, roundId)`) — the reveal of one round's material is then unverifiable against the
+commitment until the session ends, which turns "verify your round" into "trust us until logout".
+*Rejected:* a separate `verifyRound` call — the whole point is that verification needs nothing
+from the server it is checking.
 *Rejected:* a non-protocol body only the suite understands. The first thing a real client meeting
 the skeleton would see is a body it cannot parse — `SCHEMA_MISMATCH` — blaming the wrong side.

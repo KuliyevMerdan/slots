@@ -10,7 +10,7 @@ import type {
   Win,
 } from '@slot/protocol';
 import { AuthenticateResSchema, SlotError, classOf } from '@slot/protocol';
-import { evaluate, viewMatchesStops } from '@slot/game-math';
+import { evaluate, sha256Hex, stopsForStep, viewMatchesStops } from '@slot/game-math';
 import type { RgsTransport } from '@slot/transport';
 import type { ContractTarget, TargetHandle } from './targets.js';
 
@@ -721,6 +721,85 @@ export function runContractSuite(target: ContractTarget): void {
 
         await production.close();
       });
+    });
+
+    /**
+     * Provable fairness (§9, D11) — the capability only a server that refuses `forceOutcome` can
+     * claim, which is why both simulator targets skip these by name: a server built to be driven
+     * cannot commit to its outcomes, and pretending would test fiction. The player's half of the
+     * arithmetic comes from `@slot/game-math`, exactly as it would in a browser console.
+     */
+    describe('provable fairness', () => {
+      const HEX64 = /^[0-9a-f]{64}$/;
+
+      needs('provableFairness')(
+        'publishes a commitment before the bet, honours it, and the reveal recomputes the round',
+        async () => {
+          const auth = await transport.authenticate({ token });
+          let held = auth.fairness?.next;
+          expect(held).toMatch(HEX64);
+
+          // Two full rounds: the chain must hand each bet exactly the commitment on offer.
+          for (let round = 0; round < 2; round += 1) {
+            const roundId = nextRoundId();
+            const spin = await transport.spin({
+              roundId,
+              stake: STAKE,
+              clientSeed: 'players-own-entropy',
+            });
+            expect(spin.fairness?.commitment).toBe(held);
+
+            const played = await finish(transport, roundId, spin.next);
+            const closing = played.settle?.fairness ?? spin.fairness;
+            if (played.settle !== undefined) {
+              // The round needed a settle, so the spin must not have revealed anything.
+              expect(spin.fairness?.reveal).toBeUndefined();
+              expect(played.settle.fairness?.commitment).toBe(held);
+            }
+            const reveal = closing?.reveal as string;
+            expect(sha256Hex(reveal)).toBe(held);
+
+            // The player's own recomputation, step by step, from wire data alone.
+            const stopsByStep = [
+              spin.result.stops,
+              ...played.steps.map((stepRes) => stepRes.result.stops),
+            ];
+            stopsByStep.forEach((stops, index) => {
+              expect(stopsForStep(config, reveal, roundId, 'players-own-entropy', index)).toEqual(
+                stops,
+              );
+            });
+
+            held = closing?.next;
+            expect(held).toMatch(HEX64);
+          }
+        },
+      );
+
+      // Only the target that can strand a round can test the §5 half of fairness; today that
+      // target is also the only committing one, so one capability gate covers both.
+      needs('unresolvedRounds')(
+        'reports the stranded round’s binding on authenticate, and the resume reveals it',
+        async () => {
+          if (handle.strand === undefined) {
+            throw new Error('a target claiming unresolvedRounds must implement strand()');
+          }
+          const roundId = await handle.strand(STAKE);
+
+          const pending = (await transport.authenticate({ token })).pendingRound;
+          expect(pending?.fairness?.commitment).toMatch(HEX64);
+
+          const spin = await transport.spin({ roundId, stake: STAKE });
+          expect(spin.fairness?.commitment).toBe(pending?.fairness?.commitment);
+
+          const played = await finish(transport, roundId, spin.next);
+          const closing = played.settle?.fairness ?? spin.fairness;
+          expect(sha256Hex(closing?.reveal as string)).toBe(pending?.fairness?.commitment);
+          expect(stopsForStep(config, closing?.reveal as string, roundId, undefined, 0)).toEqual(
+            spin.result.stops,
+          );
+        },
+      );
     });
   });
 }

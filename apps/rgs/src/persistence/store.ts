@@ -32,6 +32,13 @@ export interface StoredRound {
   readonly state: RoundState;
   readonly stake: Minor;
   readonly clientSeed?: string;
+  /**
+   * The fairness pair bound at open (R4): the seed every step of this round derives from — which
+   * is why it must survive a restart — and the commitment published before the bet. The seed is
+   * disclosed on the response that closes the round; until then it exists only here.
+   */
+  readonly serverSeed: string;
+  readonly commitment: string;
   /** Canonical form of the originating spin request — a differing duplicate is `ROUND_CONFLICT`. */
   readonly fingerprint: string;
   /** The payable total so far, already capped — the wire's `roundWin`, accrued (D7). */

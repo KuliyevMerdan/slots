@@ -24,6 +24,8 @@ const roundOf = (overrides: Partial<StoredRound> = {}): StoredRound => ({
   playerId: PLAYER,
   state: 'OPEN',
   stake: 100 as Minor,
+  serverSeed: 'contract-server-seed',
+  commitment: 'contract-commitment',
   fingerprint: 'fp',
   cumulativeWin: 0 as Minor,
   capped: false,
@@ -50,6 +52,10 @@ export function runStoreContract(name: string, makeStore: () => Promise<RoundSto
         roundId: round.roundId,
         state: 'OPEN',
         stake: 100,
+        // The fairness pair survives the round trip: a seed that does not is a round that cannot
+        // resolve after a restart, let alone reveal (R4).
+        serverSeed: 'contract-server-seed',
+        commitment: 'contract-commitment',
       });
       expect(await store.find(nextRoundId())).toBeUndefined();
     });

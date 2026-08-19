@@ -14,6 +14,7 @@ import {
   PendingRoundSchema,
   RoundResultSchema,
 } from './round.js';
+import { FairnessNextSchema, SettleFairnessSchema, SpinFairnessSchema } from './fairness.js';
 
 /* ── authenticate ─────────────────────────────────────────────────────────────────────────────
  * Read-only. Token in, session + balance + config out — and `pendingRound` if a round was left
@@ -41,6 +42,8 @@ export const AuthenticateResSchema = z.object({
   balance: NonNegativeMinorSchema,
   config: GameConfigSchema,
   pendingRound: PendingRoundSchema.optional(),
+  /** Present iff this server commits to its outcomes (§9, D11) — the simulator honestly omits it. */
+  fairness: FairnessNextSchema.optional(),
 });
 
 export type AuthenticateRes = z.infer<typeof AuthenticateResSchema>;
@@ -76,6 +79,8 @@ export const SpinResSchema = z.object({
   result: RoundResultSchema,
   feature: FeatureProgressSchema.optional(),
   next: NextActionSchema,
+  /** The binding — plus the reveal, iff this response closed the round (§9, D11). */
+  fairness: SpinFairnessSchema.optional(),
 });
 
 export type SpinRes = z.infer<typeof SpinResSchema>;
@@ -129,6 +134,8 @@ export const SettleResSchema = z.object({
   /** True iff the ceiling clipped this round. The player has to be told. */
   capped: z.boolean(),
   next: z.literal('IDLE'),
+  /** The reveal: this response closes the round, so the seed is disclosed here (§9, D11). */
+  fairness: SettleFairnessSchema.optional(),
 });
 
 export type SettleRes = z.infer<typeof SettleResSchema>;

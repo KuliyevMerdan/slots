@@ -42,10 +42,12 @@ shortly after the project is shown to a studio. The same maintenance rules apply
 
 **Game math & fairness**
 
-- **Bring seed commit/reveal forward into the simulator.** It is scheduled for R4, which means the
-  demo can never show provable fairness — the one property that makes a fairness claim more than
-  marketing. Committing on authenticate and revealing on settle in `rgs-sim` turns R4 from an
-  invention into a port, and gives the README a section most portfolio slots don't have.
+- **Let the packaged demo *show* provable fairness.** R4 landed it in `apps/rgs` and settled the
+  simulator question the other way — a server that honours `forceOutcome` cannot commit to
+  outcomes (D11, ADR-0006), so the sim will never carry the fields. The consequence for C8: a
+  deployed demo that talks to the sim cannot demonstrate the project's best property. Either the
+  deploy includes an `apps/rgs` composition to point the client at, or the README's fairness
+  section leans on `docs/fairness.md` and the recorded test run — deciding which is a C8 call.
 - **Publish the volatility distribution, not just the RTP number.** Two games at 96% RTP can feel
   completely different. A win-size histogram and a max-win frequency figure from `math-sim` show you
   understand what volatility *means* to a player, which is the actual math conversation.

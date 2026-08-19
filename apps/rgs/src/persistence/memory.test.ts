@@ -13,6 +13,8 @@ describe('eviction', () => {
       playerId: 'demo-player',
       state: 'OPEN' as const,
       stake: 100 as Minor,
+      serverSeed: 'eviction-server-seed',
+      commitment: 'eviction-commitment',
       fingerprint: 'fp',
       cumulativeWin: 0 as Minor,
       capped: false,

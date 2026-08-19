@@ -22,7 +22,13 @@ import type {
 } from '@slot/protocol';
 import { SlotError } from '@slot/protocol';
 import { ZERO, add, min, multiply } from '@slot/money';
-import { baseFeatures, retriggerFeatures, spinOutcome, toRoundResult } from '@slot/game-math';
+import {
+  baseFeatures,
+  deriveSpinSeed,
+  retriggerFeatures,
+  spinOutcome,
+  toRoundResult,
+} from '@slot/game-math';
 import { NotImplementedError } from '../errors.js';
 import type { RoundStore, StoredRecord, StoredRound } from '../persistence/store.js';
 import { isStoreConflict } from '../persistence/store.js';
@@ -65,9 +71,11 @@ export interface RoundServiceDeps {
   now: () => number;
 }
 
-/** The per-step seed: `seedFor(roundId)` + `|clientSeed|step` — `deriveSpinSeed`, byte for byte. */
-const stepSeed = (material: string, clientSeed: string | undefined, step: number): string =>
-  `${material}|${clientSeed ?? ''}|${step}`;
+/**
+ * Whether a stored commitment is one the wire may carry — pre-R4 rows persist an empty string,
+ * and an ill-formed commitment is a fairness story better left untold than told wrong.
+ */
+const wireWorthy = (commitment: string): boolean => /^[0-9a-f]{64}$/.test(commitment);
 
 /**
  * The round's payout ceiling, applied as the round accrues (D7) — `roundWin` is the payable figure
@@ -109,6 +117,12 @@ const walletFailure = (error: unknown, roundId?: string): SlotError => {
 const pendingRoundOf = (round: StoredRound): PendingRound => {
   // Debited and never resolved: no result to present, no feature, and no `next` — the call that
   // moves this round on is the spin retry itself, which the client derives from state + feature.
+  // The binding travels with the recovery report (§9): a resuming client re-learns which
+  // commitment its interrupted round plays under.
+  const fairness = wireWorthy(round.commitment)
+    ? { fairness: { commitment: round.commitment } }
+    : {};
+
   if (round.state === 'OPEN' && round.lastResult === undefined) {
     return {
       roundId: round.roundId,
@@ -116,6 +130,7 @@ const pendingRoundOf = (round: StoredRound): PendingRound => {
       stake: round.stake,
       roundWin: round.cumulativeWin,
       capped: round.capped,
+      ...fairness,
     };
   }
 
@@ -128,6 +143,7 @@ const pendingRoundOf = (round: StoredRound): PendingRound => {
     ...(round.lastResult === undefined ? {} : { result: round.lastResult }),
     ...(round.feature === undefined ? {} : { feature: round.feature }),
     next: round.state === 'OPEN' ? 'FEATURE_SPIN' : 'SETTLE',
+    ...fairness,
   };
 };
 
@@ -219,6 +235,8 @@ export function createRoundService({
       balance,
       config,
       ...(pending === undefined ? {} : { pendingRound: pendingRoundOf(pending) }),
+      // The commitment on offer for the next round — held by the player before any bet (§9).
+      fairness: { next: seeds.current().commitment },
     };
   };
 
@@ -282,12 +300,18 @@ export function createRoundService({
         });
       await journal('STAKE', request.roundId, session.playerId, request.stake);
 
+      // Bind the offered fairness pair to this round (§9): the seed rides the row — a restart
+      // must still resolve and reveal it — and the chain rotates only once the open succeeds, so
+      // a failed open retries under the very commitment the player is holding.
+      const pair = seeds.current();
       const opened: StoredRound = {
         roundId: request.roundId,
         playerId: session.playerId,
         state: 'OPEN',
         stake: request.stake,
         ...(request.clientSeed === undefined ? {} : { clientSeed: request.clientSeed }),
+        serverSeed: pair.seed,
+        commitment: pair.commitment,
         fingerprint,
         cumulativeWin: ZERO,
         capped: false,
@@ -297,6 +321,7 @@ export function createRoundService({
 
       try {
         await store.open(opened);
+        seeds.rotate();
       } catch (error) {
         if (!isStoreConflict(error, 'DUPLICATE_ROUND')) {
           // The debit is confirmed and the round cannot exist — the one state the rollback
@@ -327,9 +352,13 @@ export function createRoundService({
       round ??= opened;
     }
 
-    // The outcome: drawn from the derived seed, stops first, everything else a consequence.
-    const material = await seeds.seedFor(request.roundId);
-    const outcome = spinOutcome(config, stepSeed(material, request.clientSeed, 0), request.stake);
+    // The outcome: drawn from the bound seed, stops first, everything else a consequence. The
+    // derivation mixes only client-minted values on top of the committed seed (§9).
+    const outcome = spinOutcome(
+      config,
+      deriveSpinSeed(round.serverSeed, request.roundId, request.clientSeed, 0),
+      request.stake,
+    );
 
     const features = baseFeatures(outcome.scatters);
     const awarded = features[0]?.awarded ?? 0;
@@ -351,6 +380,18 @@ export function createRoundService({
     const next: NextAction =
       feature !== undefined ? 'FEATURE_SPIN' : roundWin > ZERO ? 'SETTLE' : 'IDLE';
 
+    // The binding always; the reveal exactly when this response closes the round — a dead round
+    // settles atomically, so its seed has nothing left to decide and is disclosed here (§9).
+    const closes = state === 'SETTLED';
+    const fairness = wireWorthy(round.commitment)
+      ? {
+          fairness: {
+            commitment: round.commitment,
+            ...(closes ? { reveal: round.serverSeed, next: seeds.current().commitment } : {}),
+          },
+        }
+      : {};
+
     const response: SpinRes = {
       roundId: request.roundId,
       balance,
@@ -359,6 +400,7 @@ export function createRoundService({
       result: toRoundResult(outcome, features),
       ...(feature === undefined ? {} : { feature }),
       next,
+      ...fairness,
     };
 
     const records: StoredRecord[] = [
@@ -378,6 +420,15 @@ export function createRoundService({
           totalWin: ZERO,
           capped,
           next: 'IDLE',
+          ...(wireWorthy(round.commitment)
+            ? {
+                fairness: {
+                  commitment: round.commitment,
+                  reveal: round.serverSeed,
+                  next: seeds.current().commitment,
+                },
+              }
+            : {}),
         } satisfies SettleRes,
       });
     }
@@ -447,11 +498,12 @@ export function createRoundService({
       });
     }
 
-    const material = await seeds.seedFor(request.roundId);
     // Free spins carry no stake of their own — multipliers resolve against the triggering stake.
+    // The seed is the round's bound one: every step of a round derives from a single committed
+    // secret, which is what makes the close's one reveal verify the whole round (§9).
     const outcome = spinOutcome(
       config,
-      stepSeed(material, round.clientSeed, request.step),
+      deriveSpinSeed(round.serverSeed, request.roundId, round.clientSeed, request.step),
       feature.stakeRef,
     );
 
@@ -565,6 +617,16 @@ export function createRoundService({
       totalWin: credited,
       capped: round.capped,
       next: 'IDLE',
+      // This response closes the round: disclose the seed, offer the next commitment (§9).
+      ...(wireWorthy(round.commitment)
+        ? {
+            fairness: {
+              commitment: round.commitment,
+              reveal: round.serverSeed,
+              next: seeds.current().commitment,
+            },
+          }
+        : {}),
     };
 
     try {

@@ -5,6 +5,7 @@ import {
   RoundIdSchema,
   SymbolIdSchema,
 } from './primitives.js';
+import { FairnessBindingSchema } from './fairness.js';
 
 /** The server-side round machine. One round is one stake, one debit and one credit. */
 export const ROUND_STATES = ['OPEN', 'RESOLVED', 'SETTLED'] as const;
@@ -120,6 +121,8 @@ export const PendingRoundSchema = z
     result: RoundResultSchema.optional(),
     feature: FeatureProgressSchema.optional(),
     next: NextActionSchema.optional(),
+    /** The commitment the interrupted round bound — re-learned on resume (§9, D11). */
+    fairness: FairnessBindingSchema.optional(),
   })
   .refine(
     (pending) =>

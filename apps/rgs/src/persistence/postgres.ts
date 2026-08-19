@@ -42,6 +42,8 @@ interface RoundRow {
   cumulative_win: number;
   capped: boolean;
   client_seed: string | null;
+  server_seed: string;
+  commitment: string;
   fingerprint: string;
   feature: FeatureProgress | null;
   last_result: RoundResult | null;
@@ -55,6 +57,8 @@ const roundOfRow = (row: RoundRow): StoredRound => ({
   state: row.state,
   stake: row.stake as Minor,
   ...(row.client_seed === null ? {} : { clientSeed: row.client_seed }),
+  serverSeed: row.server_seed,
+  commitment: row.commitment,
   fingerprint: row.fingerprint,
   cumulativeWin: row.cumulative_win as Minor,
   capped: row.capped,
@@ -77,9 +81,9 @@ export class PostgresRoundStore implements RoundStore {
     try {
       await this.#pool.query(
         `insert into rounds
-           (round_id, player_id, state, stake, cumulative_win, capped, client_seed, fingerprint,
-            feature, last_result, steps, opened_at)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+           (round_id, player_id, state, stake, cumulative_win, capped, client_seed, server_seed,
+            commitment, fingerprint, feature, last_result, steps, opened_at)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
         [
           round.roundId,
           round.playerId,
@@ -88,6 +92,8 @@ export class PostgresRoundStore implements RoundStore {
           round.cumulativeWin,
           round.capped,
           round.clientSeed ?? null,
+          round.serverSeed,
+          round.commitment,
           round.fingerprint,
           round.feature === undefined ? null : JSON.stringify(round.feature),
           round.lastResult === undefined ? null : JSON.stringify(round.lastResult),

@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project status
 
 > ⚠️ **The game is a game, its math is a designed 96%, and the real RGS plays it against a real wallet seam.**
-> As of **2026-08-19**, **C0, C1, S0, S1, C2, S2, C3, C4, C5, S4, S3, C6, C7, R0, R1, R2 and R3 have landed** — the
+> As of **2026-08-19**, **C0, C1, S0, S1, C2, S2, C3, C4, C5, S4, S3, C6, C7, R0, R1, R2, R3 and R4 have landed** — the
 > workspace, the contracts (`protocol`, `money`, `game-math`), `rgs-sim`, the `RgsTransport` seam
 > with `MockTransport`, `HttpTransport` and the retry policy, `engine`, `apps/mock-rgs`, `renderer`,
 > `ui` and `apps/game-client`, `tools/math-sim` — the RTP report that tuned the strips —
@@ -38,11 +38,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > movement unconditionally and one movement is one entry; a reconciliation job trues the journal
 > against the wallet on an interval and finds the orphaned stake balance-truing cannot see
 > (ADR-0005). The R3 gate is a test: a scripted session's ledger sums to zero and reproduces the
-> exact balance history from the entries alone. The session is still a single demo one (R5 builds
+> exact balance history from the entries alone. **The outcomes are provably fair since R4** (§9,
+> D11, ADR-0006): per-round seed pairs on a CSPRNG chain — commitment published before the bet,
+> seed bound at open (persisted on the round row, so a restart resolves and reveals the same
+> round), revealed on the response that closes the round with the next commitment beside it — and
+> the player's whole verification ships in `@slot/game-math` (`sha256Hex` held to NIST vectors,
+> `stopsForStep`), documented in [`docs/fairness.md`](docs/fairness.md). Fairness is a contract
+> *capability*, mutually exclusive with `forceOutcome` by construction: the simulators skip the
+> cases by name, `apps/rgs` — which refuses `forceOutcome` always — is held to them over the full
+> production chain. The session is still a single demo one (R5 builds
 > the operator seam). The contract suite's third target runs the whole suite over the full
 > production chain — client→HTTP→rgs→HTTP→wallet — its fault case enacted by refusing the *real*
 > wallet, and the §5 stranded round runs against the one target that can honestly produce it.
-> 954 tests locally, 972 in CI, `pnpm check` green.
+> 965 tests locally, 983 in CI, `pnpm check` green.
 >
 > **`pnpm dev:client` opens a playable slot.** It authenticates, spins, lands on the server's
 > `stops[]`, lights the paylines it was told won, counts the win up, runs the feature and settles —
@@ -64,8 +72,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > §5 stranded-round case runs against the one target that can honestly produce it.
 >
 > **What is deliberately not there yet:** packaging, the README, rate limiting, the nightly soak
-> and the E2E suite (**C8**). The next block is **C8**; **R4** (commit/reveal) and **R5**
-> (sessions and auth for real) are the R-blocks now unblocked, and **R7** waits only on R6.
+> and the E2E suite (**C8**). The next block is **C8**; **R5** (sessions and auth for real) is
+> the R-block now unblocked, and **R7** waits only on R6.
 >
 > The canon is four documents: `CLAUDE.md` (this file), [`ROADMAP.md`](ROADMAP.md) (the task map),
 > [`RECOMMENDATIONS.md`](RECOMMENDATIONS.md) (the strategic registry) and
@@ -122,7 +130,7 @@ empty, and the block named is the commitment.
 | ------------------- | -------------------- | -------------------------------------------------------- | ----- |
 | `@slot/game-client` | `apps/game-client`   | The deliverable — Pixi client on Vite                     | ✅ C3 |
 | `@slot/mock-rgs`    | `apps/mock-rgs`      | Fastify wrapper around `rgs-sim` — proves the network path | ✅ S2 |
-| `@slot/rgs`         | `apps/rgs`           | Node.js RGS — rounds & idempotency on Postgres (in-memory twin); wallet over HTTP behind the R0 seam (docs/wallet-api.md); double-entry ledger + reconciliation (R3); session seam mocked until R5 | ✅ R3 |
+| `@slot/rgs`         | `apps/rgs`           | Node.js RGS — rounds & idempotency on Postgres (in-memory twin); wallet over HTTP behind the R0 seam (docs/wallet-api.md); double-entry ledger + reconciliation (R3); per-round commit/reveal on a CSPRNG (R4); session seam mocked until R5 | ✅ R4 |
 | `@slot/protocol`    | `packages/protocol`  | ★ Contracts: zod schemas + inferred TS types + error taxonomy | ✅ C1 |
 | `@slot/money`       | `packages/money`     | Branded `Minor` integer units, exact arithmetic, formatting | ✅ C1 |
 | `@slot/game-math`   | `packages/game-math` | Reel strips, paytable, payline evaluator — and, since R1, the outcome engine (PRNG + stops-first derivation) both servers draw from | ✅ C1 |
@@ -168,7 +176,7 @@ export interface RoundResult {
 }
 ```
 
-Six design points, all of them now load-bearing in `rgs-sim`:
+Seven design points, all of them load-bearing (six in `rgs-sim`; the seventh is `apps/rgs`'s):
 
 - **`roundId` is generated client-side**, so a retry after a timeout is provably the same round. The
   server returns the original result for a duplicate key rather than spinning again.
@@ -199,6 +207,10 @@ Six design points, all of them now load-bearing in `rgs-sim`:
   the lobby seam and resumes from `pendingRound`, with no round open it stays a `PLAYER` modal.
   There is deliberately no renew call, and the demo lobby **renews** on re-issue — the fresh token
   re-attaches to the same balance and the same round.
+- **Provable fairness is optional fields and a capability** (§9, D11): commitment before the bet,
+  seed bound at open, reveal on the closing response with the next commitment beside it —
+  verifiable with `@slot/game-math` alone ([`docs/fairness.md`](docs/fairness.md)). A server that
+  honours `forceOutcome` cannot claim it, which is exactly why the simulators do not.
 
 ## Commands
 
@@ -952,7 +964,7 @@ playable over HTTP. Configuration is
 environment, validated with a schema like anything else that crosses a boundary — a mistyped server
 seed silently changes every outcome the session produces.
 
-### The real RGS — `apps/rgs` (R0 laid it out; R1 made it play; R2 made the wallet real; R3 made the money auditable)
+### The real RGS — `apps/rgs` (R0 laid it out; R1 made it play; R2 made the wallet real; R3 made the money auditable; R4 made the outcomes provable)
 
 ```
 apps/rgs/src/
@@ -961,7 +973,7 @@ apps/rgs/src/
 ├─ wallet/        the R0 seam, real at the wire (R2): RemoteWallet + wire schemas + the wallet sim
 ├─ ledger/        double-entry journal (R3): port + memory/Postgres twins, one contract; reconcile
 ├─ math/          re-exports @slot/game-math — never a second copy
-├─ rng/           ServerSeedProvider — static seed today, commit/reveal in R4
+├─ rng/           the commitment chain (R4): per-round seed pairs over injected entropy
 ├─ persistence/   the RoundStore port: memory + Postgres (migrations committed), one contract
 └─ observability/ correlation id minted/adopted + echoed; pino via Fastify (R6 grows it)
 ```
@@ -1025,6 +1037,25 @@ the journal alone: accounts cancel, folding the player legs from the opening bal
 every balance the wire reported in order, the house's take is stakes − rollbacks − wins, and the
 reconciliation answers clean; its companion loses the rollback on purpose and watches the orphan
 get reported, then healed by the same-`roundId` retry with no correction ever written.
+
+**The outcomes are provably fair since R4** (docs/protocol.md §9, D11; ADR-0006;
+[`docs/fairness.md`](docs/fairness.md)). One seed pair per round, chained: the commitment on offer
+travels on `authenticate` and on every closing response's `next`, always in the player's hand
+before the bet that binds it; the spin binds the pair at `open` — persisted on the round row, so a
+restart resolves and reveals the same round, and `pendingRound.fairness` re-reports the binding on
+resume — and the chain rotates only when an open succeeds, so a failed open retries under the very
+commitment the player holds. The reveal rides the response that *closes* the round (`settle`, or
+`spin` itself for an atomically-settled dead round, because a client is not required to settle
+nothing), beside the next commitment. Entropy is injected: `main.ts` hands the provider
+`node:crypto`'s CSPRNG — `RGS_SERVER_SEED` no longer exists — while tests hand in a seeded stream
+and stay deterministic. Verification needs nothing from the server it checks: `sha256Hex` (pure
+FIPS 180-4, held to NIST vectors) and `stopsForStep` ship in `@slot/game-math`, and the gate —
+"a player can independently recompute a round's `stops[]` from the revealed seed and their client
+seed" — is [`rng/fairness.test.ts`](apps/rgs/src/rng/fairness.test.ts), run again over the full
+production chain by the contract suite's `provableFairness` cases. The capability is mutually
+exclusive with `forceOutcome` by construction — a server that will play whatever it is told cannot
+publish a hash of an outcome it has not been told yet — which is why the simulators skip these
+cases by name and always will.
 
 What is deliberately absent, and stays absent: `/dev/*` (a production server is not driveable),
 `/demo/session` (tokens come from the operator's lobby, §7 — R5 builds the validating half), and
@@ -1129,6 +1160,7 @@ not — a remote server's regime is that server's configuration) without either 
 | **Contract** | `tests/contract/`, one suite per target | `rgs-sim` in-process · sim over HTTP · `apps/rgs` (the full suite since R1, incl. the §5 stranded round only it can produce) — the switch-over gate |
 | **Store contract** | `apps/rgs` (`store-contract.ts`) | One suite, two stores: memory always; Postgres whenever `RGS_TEST_DATABASE_URL` is set — always in CI, via a `postgres:16` service container |
 | **Ledger** | `apps/rgs` (`ledger/`) | One contract suite, two ledgers (memory always; Postgres in CI, where a trigger proves append-only); the R3 gate — a scripted session's journal sums to zero, reproduces the exact balance history, reconciles clean, and reports then heals the orphaned stake |
+| **Fairness** | `apps/rgs` (`rng/fairness.test.ts`) + the contract suite | The R4 gate: the "player" recomputes every step's `stops[]` from the reveal and their own inputs — hash, chain continuity, stranded-round binding — with `@slot/game-math` only; the suite repeats it over the production chain, `sha256Hex` is held to NIST vectors |
 | **Wallet seam** | `apps/rgs` (`wallet/`) | `RemoteWallet` against the wallet sim over a real socket: an outage outlived by bounded retries, a lost confirmation healed by the idempotent ref, a refusal surfaced once and never retried (docs/wallet-api.md §4) |
 | **E2E** | Playwright, in CI | Fixed seed + forced outcomes: spin, win, feature, resume after reload |
 | **Perf** | `tools/perf-harness` | `pnpm perf`: 30 spins against the production bundle, 4× CPU throttle, headless Chrome — ~120 fps avg, p95 9.2 ms, 7 draw calls/frame (max 8: the symbol layer batches), heap sawtooths 9.8 → 14.1 → 9.4 MB. Frames from a rAF probe, draw calls by wrapping the WebGL entry points, heap over CDP; driven through the DOM control layer, so no dev hook is needed and the measured bundle is the shipped one |
@@ -1262,8 +1294,6 @@ D8, D9 — jurisdiction rules on the wire, no renew call, transparent mid-round 
   pacing case to catch it. The client paces itself, so nothing user-visible depends on it — but
   server-side enforcement is a regulator's requirement, and it belongs to R5 with the rest of the
   session/limits surface.
-- **The seed provider has no commitment.** R4 replaces the static seed with commit/reveal
-  (`commitmentFor` currently throws `NotImplementedError`).
 - **A failed money-side write is found by reconciliation, not announced when it happens.** A
   rollback that cannot be delivered, or a ledger write that fails, is swallowed by design
   (ADR-0005) — the reconciliation job reports the orphan or the drift on its next tick, through
@@ -1281,6 +1311,13 @@ D8, D9 — jurisdiction rules on the wire, no renew call, transparent mid-round 
   there is no lobby. When C8 packages the demo behind a real URL, the dialog should gain an honest
   second action (reload to the landing page, if nothing else). The focus half landed with C7: the
   dialog traps Tab (`trapFocus`, drawer.ts), so only the missing second action remains.
+- **The client holds the verification toolkit and never opens it.** Since R4 every closing
+  response from `apps/rgs` carries a reveal, and `@slot/game-math` — which the client ships —
+  can check it; but no client code calls `sha256Hex`/`stopsForStep` yet. The natural first home
+  is the dev-build assertion (verify the reveal beside the existing win re-evaluation), and the
+  player-facing "verify this round" affordance belongs beside the history drawer (C8+). Until
+  then the ability the R4 bullet promised exists as a shipped library and a documented procedure,
+  not as a button.
 - **Autoplay's plan is fixed at the wiring site.** `{ spins: 25, stopOnFeature: true }` — the stop
   conditions regulators care about (loss limit, single-win limit) are implemented and tested in
   `@slot/compliance` but nothing lets a player *set* them, and the same is true of the session
