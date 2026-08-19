@@ -4,24 +4,22 @@ import type { CallName } from '@slot/protocol';
 import { CALLS, CALL_NAMES, SlotError, routeFor, statusOf } from '@slot/protocol';
 import { MATH_VERSION } from '@slot/game-math';
 import { correlationOptions, echoCorrelation } from '../observability/correlation.js';
-import { notImplementedRounds } from '../domain/rounds.js';
 import type { RoundService } from '../domain/rounds.js';
+import { RGS_GAME_ID } from '../config.js';
 import { classifyError, errorBody } from './errors.js';
 
 /**
- * `apps/rgs` — the real RGS, laid out before it is built.
+ * `apps/rgs` — the real RGS's HTTP binding.
  *
- * Every route this server will ever have exists now: registered from the same `CALLS` table
- * `HttpTransport` and `apps/mock-rgs` read, validated against the same `@slot/protocol` schemas
- * the client validates with, and answering `NOT_IMPLEMENTED` (§6, D10) from a domain that is not
- * there yet. The R-blocks replace `notImplementedRounds` with the real lifecycle — behind this
- * file's back, which is the point: the HTTP binding is finished before the first endpoint works,
- * and the contract suite watches the expected-red target go green endpoint by endpoint.
+ * Every route is registered from the same `CALLS` table `HttpTransport` and `apps/mock-rgs` read,
+ * and validated against the same `@slot/protocol` schemas the client validates with. The domain
+ * behind the routes is injected: R0 wired these routes to `notImplementedRounds` and the contract
+ * suite held the answers to `NOT_IMPLEMENTED` (§6, D10); R1 replaced the injection with the real
+ * `createRoundService` — and this file did not change, which was the point of building it first.
  *
- * The ordering inside `handle` is R0's one behavioural claim, and it is tested: **validation runs
- * before the stub throws.** A malformed request is `SCHEMA_MISMATCH` exactly as it will be
- * forever; only a request the contract accepts learns that the implementation is missing. The
- * refusal provably means "not built", never "not understood".
+ * The ordering inside `handle` is still the binding's one claim of its own, and still tested:
+ * **validation runs before the domain is reached.** A malformed request is `SCHEMA_MISMATCH`
+ * whatever the domain has to say — "not understood" and "refused" stay distinguishable.
  *
  * What is deliberately absent, and stays absent: `/dev/*` (a production server is not driveable),
  * `/demo/session` (tokens come from the operator's lobby — §7; R5 builds the validation half),
@@ -33,16 +31,21 @@ import { classifyError, errorBody } from './errors.js';
 export interface RgsAppOptions {
   logger?: FastifyServerOptions['logger'];
   /**
-   * The domain, injected (the ADR-0003 shape). Defaults to the all-stubs service; R1 constructs
-   * the real one from repositories, the wallet and the seed provider.
+   * The domain, injected (the ADR-0003 shape). Required since R1: the real service exists, so a
+   * silent all-stubs default would be a server that answers 501 because somebody forgot an
+   * argument. A composition that genuinely has no domain passes `notImplementedRounds()` and says
+   * so.
    */
-  rounds?: RoundService;
+  rounds: RoundService;
+  /**
+   * What `/ready` reports. `true` belongs to a composition whose domain can actually play a round;
+   * the stub composition passes `false`. A load balancer reads this, so it is an argument rather
+   * than a guess.
+   */
+  ready?: boolean;
 }
 
-export function buildApp({
-  logger = false,
-  rounds = notImplementedRounds(),
-}: RgsAppOptions = {}): FastifyInstance {
+export function buildApp({ logger = false, rounds, ready = true }: RgsAppOptions): FastifyInstance {
   const app = Fastify({
     logger,
     ...correlationOptions,
@@ -99,14 +102,15 @@ export function buildApp({
   app.get('/health', () => ({ status: 'ok' }));
 
   /**
-   * Readiness — honest: this server cannot play a round yet, and a load balancer should know.
-   * `mathVersion` is already the shipped math package's, because the day the domain lands it is
-   * the one field a deploy can get wrong in a way nothing else notices.
+   * Readiness — honest either way. `mathVersion` is here because it is the one field a deploy can
+   * get wrong in a way nothing else notices: a client drawing reels the server is not playing.
    */
   app.get('/ready', (_request, reply) =>
-    reply
-      .code(503)
-      .send({ ready: false, mathVersion: MATH_VERSION, reason: 'NOT_IMPLEMENTED (R1+)' }),
+    ready
+      ? reply.code(200).send({ ready: true, gameId: RGS_GAME_ID, mathVersion: MATH_VERSION })
+      : reply
+          .code(503)
+          .send({ ready: false, mathVersion: MATH_VERSION, reason: 'NOT_IMPLEMENTED (R1+)' }),
   );
 
   return app;

@@ -3,8 +3,10 @@
 **Status:** decisions pinned **2026-08-16**; implemented by `packages/protocol` (C1), served by
 `packages/rgs-sim` (S0/S1) and carried over HTTP by `apps/mock-rgs` and `HttpTransport` (S2);
 amended **2026-08-19** (C6) — jurisdiction rules travel on the wire (§2.1, D8) and an expiring
-session mid-round has a recovery story (§5, D9) — and again **2026-08-19** (R0) — an endpoint a
-server has not implemented yet answers `NOT_IMPLEMENTED` (§6, §2.7, D10). This
+session mid-round has a recovery story (§5, D9) — again **2026-08-19** (R0) — an endpoint a
+server has not implemented yet answers `NOT_IMPLEMENTED` (§6, §2.7, D10) — and again
+**2026-08-19** (R1) — `PendingRound.next` is absent for a round debited and never resolved
+(§2.6, §5), the case that gained its first real producer. This
 document is the contract; the code is downstream of it. When the wire changes, change this file and
 `packages/protocol` **first**, then the simulator, then the engine, then the UI.
 
@@ -244,9 +246,15 @@ interface PendingRound {
   capped:   boolean;
   result?:  RoundResult;         // present once the round resolved
   feature?: FeatureProgress;     // present while a feature is in flight
-  next:     NextAction;          // exactly what the client must do to continue
+  next?:    NextAction;          // what the client calls to continue — see below
 }
 ```
+
+`next` is absent in exactly one case: a round debited and never resolved (`OPEN`, no `result`, no
+`feature` — §5's stranded case, first producible by `apps/rgs` in R1). The call that moves that
+round on is the `spin` retry itself, which is not a `NextAction` — the client already decides this
+case from `state` + `feature`, so the field would carry a lie rather than an instruction. Everywhere
+else it is required, and the schema enforces the asymmetry.
 
 ### 2.7 HTTP binding
 

@@ -102,18 +102,34 @@ export type RoundResult = z.infer<typeof RoundResultSchema>;
 /**
  * The entire recovery story. `authenticate` returns this when a round was left in flight, and it
  * says exactly what the client must do to continue — there is no separate recovery endpoint.
+ *
+ * `next` is absent in exactly one case: a round debited and never resolved (§5's stranded case —
+ * `OPEN`, no `result`, no `feature`; first producible by `apps/rgs`, R1). The call that moves that
+ * round on is the `spin` retry itself, which is not a `NextAction`, and the client already decides
+ * this case from `state` + `feature`. Everywhere else the field is required — the refinement is
+ * what keeps a server from quietly dropping an instruction the client does read.
  */
-export const PendingRoundSchema = z.object({
-  roundId: RoundIdSchema,
-  state: z.enum(['OPEN', 'RESOLVED']),
-  stake: PositiveMinorSchema,
-  /** What the round will pay, already capped. A rebuilt client must not have to add this up. */
-  roundWin: NonNegativeMinorSchema,
-  capped: z.boolean(),
-  result: RoundResultSchema.optional(),
-  feature: FeatureProgressSchema.optional(),
-  next: NextActionSchema,
-});
+export const PendingRoundSchema = z
+  .object({
+    roundId: RoundIdSchema,
+    state: z.enum(['OPEN', 'RESOLVED']),
+    stake: PositiveMinorSchema,
+    /** What the round will pay, already capped. A rebuilt client must not have to add this up. */
+    roundWin: NonNegativeMinorSchema,
+    capped: z.boolean(),
+    result: RoundResultSchema.optional(),
+    feature: FeatureProgressSchema.optional(),
+    next: NextActionSchema.optional(),
+  })
+  .refine(
+    (pending) =>
+      pending.next !== undefined ||
+      (pending.state === 'OPEN' && pending.result === undefined && pending.feature === undefined),
+    {
+      error: 'next is required except for a debited, never-resolved round (OPEN with no result)',
+      path: ['next'],
+    },
+  );
 
 export type PendingRound = z.infer<typeof PendingRoundSchema>;
 

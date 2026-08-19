@@ -1,9 +1,11 @@
 /**
- * The simulator's random source: **xoshiro128\*\***, seeded from a string.
+ * The game's random source: **xoshiro128\*\***, seeded from a string.
  *
  * Determinism is a feature, not a testing convenience. A given seed replays an identical session,
  * which is what makes the dev loop, the contract suite and the 50-million-spin RTP report (S4) all
  * describe the same game. `Math.random()` is a lint error in this package for exactly that reason.
+ * It lived in `@slot/rgs-sim` until R1; it lives here now so that both servers — the simulator and
+ * `apps/rgs` — draw from one implementation (see `outcome.ts` for the whole argument).
  *
  * xoshiro128\*\* rather than a linear congruential generator: it passes the statistical batteries a
  * slot's RTP claim implicitly rests on, and it needs only four 32-bit words of state — so a round's

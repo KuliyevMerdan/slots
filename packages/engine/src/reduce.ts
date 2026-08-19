@@ -610,6 +610,13 @@ function authenticated(
     return raise(state, illegal('the server sent a resolved pending round with no result'));
   }
 
+  // `next` may be absent only for the stranded case handled above (protocol §5); a round that has
+  // a result to present must say which call continues it, or the machine would have to guess.
+  const pendingNext = pending.next;
+  if (pendingNext === undefined) {
+    return raise(state, illegal('the server sent a resolved pending round with no next call'));
+  }
+
   // Land the reels on what was already decided, then let the normal flow continue — into the next
   // free spin, or into the settle the server is waiting for.
   return move(
@@ -622,7 +629,7 @@ function authenticated(
       roundWin: pending.roundWin,
       capped: pending.capped,
       feature: pending.feature,
-      next: pending.next,
+      next: pendingNext,
       slam: true,
     },
     [

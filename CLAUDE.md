@@ -4,8 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-> ⚠️ **The game is a game, its math is a designed 96%, and the tooling now watches itself.**
-> As of **2026-08-19**, **C0, C1, S0, S1, C2, S2, C3, C4, C5, S4, S3, C6, C7 and R0 have landed** — the
+> ⚠️ **The game is a game, its math is a designed 96%, and the real RGS now plays it.**
+> As of **2026-08-19**, **C0, C1, S0, S1, C2, S2, C3, C4, C5, S4, S3, C6, C7, R0 and R1 have landed** — the
 > workspace, the contracts (`protocol`, `money`, `game-math`), `rgs-sim`, the `RgsTransport` seam
 > with `MockTransport`, `HttpTransport` and the retry policy, `engine`, `apps/mock-rgs`, `renderer`,
 > `ui` and `apps/game-client`, `tools/math-sim` — the RTP report that tuned the strips —
@@ -18,14 +18,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > drawer over the wire's `history` call, and a perf harness whose numbers are measured rather than
 > promised — ~120 fps at a 4× CPU throttle, 7 draw calls a frame, a heap that sawtooths flat. The
 > production bundle is **proven** free of all of it: `verify:strip` fails `pnpm check` if any dev
-> marker reaches `dist/`. And **`apps/rgs` exists (R0)** — eight modules laid out the way a real
-> RGS is built, every route validating with the shared schemas and answering `NOT_IMPLEMENTED` (a
-> code D10 added to the protocol for exactly this server), the `WalletProvider` seam declared with
-> a `MockWallet` whose tested semantics are the specification R2 inherits — and the contract
-> suite's third target is **expected-red rather than skipped**: its red gate asserts, in green CI,
-> that every call is refused `NOT_IMPLEMENTED` and nothing else. 868 tests, `pnpm check` green.
-> Every `packages/*` is real; the one deliberate skeleton is `apps/rgs`, and the suite says so out
-> loud.
+> marker reaches `dist/`. And **`apps/rgs` plays the full contract (R0 + R1)** — eight modules
+> laid out the way a real RGS is built, every route validating with the shared schemas; the domain
+> is real since R1: the round machine and idempotency behind a store port with **two
+> implementations, in-memory and Postgres** (committed migrations, guarded transitions, an
+> insert-only idempotency table), held to one shared store-contract suite — the Postgres half runs
+> against a service container in CI on every push. The outcome engine (the seeded PRNG and the
+> stops-first derivation) moved into `@slot/game-math`, so both servers and the RTP report draw
+> from **one implementation of the math**. The wallet is the R0 `MockWallet` (R2 integrates a real
+> provider) and the session is a single demo one (R5 builds the operator seam) — both mocked *at a
+> declared seam*, not faked inline. The contract suite's third target runs the whole suite, and
+> the one case neither simulator can produce — a round debited and never resolved (§5) — has its
+> first real producer and runs green. 918 tests locally, 926 in CI, `pnpm check` green.
 >
 > **`pnpm dev:client` opens a playable slot.** It authenticates, spins, lands on the server's
 > `stops[]`, lights the paylines it was told won, counts the win up, runs the feature and settles —
@@ -42,13 +46,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > rounds through the game's own evaluator and prints the RTP, the hit frequency, the volatility and
 > the win distribution — **96.107%**, measured, on the strips that ship. And `pnpm test:contract`
 > plays the whole of [`docs/protocol.md`](docs/protocol.md) — lifecycle, idempotent replay,
-> `pendingRound` recovery, every error class — against **every registered target**, holding the
-> expected-red `apps/rgs` to the one thing an honest skeleton can promise: every call refused
-> `NOT_IMPLEMENTED`, and nothing else.
+> `pendingRound` recovery, every error class — against **every registered target**, `apps/rgs`
+> included since R1: the same suite that gated the simulators now gates the real server, and the
+> §5 stranded-round case runs against the one target that can honestly produce it.
 >
 > **What is deliberately not there yet:** packaging, the README, rate limiting, the nightly soak
-> and the E2E suite (**C8**). The next block is **C8**; **R1** — rounds and idempotency on
-> Postgres — is available in parallel and is what turns the red target's first endpoints green.
+> and the E2E suite (**C8**). The next block is **C8**; **R2** (a real wallet behind the R0 seam)
+> and **R5** (sessions and auth for real) are the R-blocks R1 unblocked.
 >
 > The canon is four documents: `CLAUDE.md` (this file), [`ROADMAP.md`](ROADMAP.md) (the task map),
 > [`RECOMMENDATIONS.md`](RECOMMENDATIONS.md) (the strategic registry) and
@@ -105,10 +109,10 @@ empty, and the block named is the commitment.
 | ------------------- | -------------------- | -------------------------------------------------------- | ----- |
 | `@slot/game-client` | `apps/game-client`   | The deliverable — Pixi client on Vite                     | ✅ C3 |
 | `@slot/mock-rgs`    | `apps/mock-rgs`      | Fastify wrapper around `rgs-sim` — proves the network path | ✅ S2 |
-| `@slot/rgs`         | `apps/rgs`           | Node.js RGS — R0 skeleton: routes validate, answer `NOT_IMPLEMENTED`; wallet seam | ✅ R0 |
+| `@slot/rgs`         | `apps/rgs`           | Node.js RGS — rounds & idempotency on Postgres (in-memory twin); wallet/session seams mocked until R2/R5 | ✅ R1 |
 | `@slot/protocol`    | `packages/protocol`  | ★ Contracts: zod schemas + inferred TS types + error taxonomy | ✅ C1 |
 | `@slot/money`       | `packages/money`     | Branded `Minor` integer units, exact arithmetic, formatting | ✅ C1 |
-| `@slot/game-math`   | `packages/game-math` | Reel strips, paytable, payline evaluator (pure, no I/O)   | ✅ C1 |
+| `@slot/game-math`   | `packages/game-math` | Reel strips, paytable, payline evaluator — and, since R1, the outcome engine (PRNG + stops-first derivation) both servers draw from | ✅ C1 |
 | `@slot/engine`      | `packages/engine`    | ★ Headless round orchestration + FSM (**no Pixi, no DOM**) | ✅ C2 |
 | `@slot/renderer`    | `packages/renderer`  | Pixi layer: reels, symbols, spin curve, generated atlas    | ✅ C3 |
 | `@slot/ui`          | `packages/ui`        | Pixi UI: spin button, bet selector, HUD                    | ✅ C3 |
@@ -416,6 +420,16 @@ server sent and returns the wins to highlight; `viewFrom()` derives the grid fro
 `viewMatchesStops()` is what the dev build and the contract suite use to catch a server whose view
 disagrees with its own outcome. `MATH_VERSION` names this strips-and-paytable combination.
 
+**Since R1 it also owns the outcome engine** — `prng.ts` (xoshiro128\*\* with rejection sampling,
+`deriveSpinSeed`) and `outcome.ts` (`drawStops` → `resolveStops`: stops first, everything else a
+consequence), both moved from `rgs-sim` the day `apps/rgs` needed the identical engine and could
+not import the simulator it exists to replace (`rgs-deps`). One implementation of drawing and
+paying a grid is the only reason the published RTP and the contract suite's cross-server
+assertions mean anything — the same argument the RTP report already made about the evaluator. The
+move was proved byte-identical by the tests that pin seeded sequences and replayed sessions, which
+did not change. On the *client*, nothing here decides an outcome (ADR-0001): the client imports
+the evaluator to highlight and re-check, never `outcome.ts`.
+
 Two behaviours worth knowing, both tested: a line that starts with wilds is paid the **better** of
 the two readings (wilds as themselves vs. wilds standing in for the first real symbol), and wilds
 never substitute for the scatter. The rules are specified one line at a time in `evaluate.test.ts` —
@@ -424,9 +438,10 @@ tuning — and what they add up to on a full screen is pinned by 30 handcrafted 
 `src/__fixtures__/golden.json` (`pnpm --filter @slot/game-math golden:update` regenerates the
 expectations from a **built** `dist/`, for a deliberate math change, never to make a red test green).
 
-`MATH_VERSION` is **2.0.0** as of S4. It moves whenever the strips, paylines or paytable move,
-because a client drawing 1.0.0's reels against a 2.0.0 server is showing the player a different game
-— which is what `MATH_VERSION_MISMATCH` exists for, and what nothing yet checks (see the gaps).
+`MATH_VERSION` is **2.0.0** as of S4 — the outcome engine moving *in* did not move it, because the
+game is unchanged. It moves whenever the strips, paylines or paytable move, because a client
+drawing 1.0.0's reels against a 2.0.0 server is showing the player a different game — which is what
+`MATH_VERSION_MISMATCH` exists for, and what the engine's authenticate gate enforces (C5).
 
 ### Engine — `packages/engine` (the part reviewers actually read)
 
@@ -811,13 +826,15 @@ the payload as a `SlotError` for callers who prefer exceptions.
 
 | Module | What it owns |
 | --- | --- |
-| `prng.ts` | xoshiro128\*\* seeded from a string, with **rejection sampling** in `nextBelow` — a plain modulo over-represents low stops and would tilt the published RTP. Spin seeds are *derived*, never stored: `(serverSeed, roundId, clientSeed, step)` |
-| `outcome.ts` | Draws the stops, then derives everything else from them. `view`, `wins` and `totalWin` are consequences of `stops`, never inputs — which is what makes the client's dev-build assertion meaningful |
 | `sim.ts` | The four handlers, the round machine `OPEN → RESOLVED → SETTLED`, and the idempotency store |
 | `state.ts` | `SimState` as a zod schema whose inferred type *is* the exported type — the wire discipline, applied to the disk |
 | `store.ts` | The persistence port: `InMemoryStore` and `WebStorageStore` (ADR-0003) |
 | `config.ts` | `MATH_CONFIG` plus the commercial half — bet limits, max win, jurisdiction, `devMode` |
 | `server.ts` | `SimServer` — validation, persistence, `SlotError` |
+
+The PRNG and the outcome derivation (`prng.ts`, `outcome.ts`) lived here until R1 and are now
+`@slot/game-math`'s — shared with `apps/rgs` and the RTP report, one implementation for every
+consumer. The sim keeps what is a *server's*: awarding the feature, the round machine, the money.
 
 What it does today (**S0**):
 
@@ -922,43 +939,54 @@ playable over HTTP. Configuration is
 environment, validated with a schema like anything else that crosses a boundary — a mistyped server
 seed silently changes every outcome the session produces.
 
-### The real RGS — `apps/rgs` (R0: a skeleton, honestly empty)
-
-Created in **R0**, before it does anything, structured the way it will really be built:
+### The real RGS — `apps/rgs` (R0 laid it out; R1 made it play)
 
 ```
 apps/rgs/src/
 ├─ http/          routes from the CALLS table; request validation via @slot/protocol schemas
-├─ domain/        RoundService — the round lifecycle, injected  → throws NotImplemented (R1)
-├─ wallet/        WalletProvider interface + MockWallet          (the operator↔provider seam)
+├─ domain/        createRoundService — the real lifecycle (R1); sessions.ts is the R5 seam
+├─ wallet/        WalletProvider interface + MockWallet          (R2 integrates a real provider)
 ├─ ledger/        double-entry interface, append-only            (R3 fills)
 ├─ math/          re-exports @slot/game-math — never a second copy
-├─ rng/           ServerSeedProvider interface — commit/reveal   (R4 fills)
-├─ persistence/   RoundRepository, IdempotencyRepository interfaces (R1 fills, on Postgres)
+├─ rng/           ServerSeedProvider — static seed today, commit/reveal in R4
+├─ persistence/   the RoundStore port: memory + Postgres (migrations committed), one contract
 └─ observability/ correlation id minted/adopted + echoed; pino via Fastify (R6 grows it)
 ```
 
-**Every route exists now**, registered from the same `CALLS` table the other two implementations
-read, validating with the shared schemas, and answering `NOT_IMPLEMENTED` — the `FATAL`, `501`
-protocol code D10 added for exactly this server — from a `RoundService` the R-blocks replace behind
-the HTTP layer's back. The one behavioural claim is the **ordering**, and it is tested in
-`app.test.ts`: validation runs before the stub throws, so a refusal provably means "not built",
-never "not understood" — `SCHEMA_MISMATCH` and `NOT_IMPLEMENTED` stay distinguishable on the wire.
-**The contract suite runs against it from day one** (the expected-red target), and the R-blocks turn
-it green endpoint by endpoint — the scalability answer made concrete, with no big-bang cutover.
+**The domain is real since R1** — `createRoundService` implements docs/protocol.md §3/§4/§5 over
+injected ports, with the simulator as its reference semantics and one structural difference that
+matters: **the wallet is an external system the database cannot wrap in a transaction.** The debit
+and the round resolve are separated by a window a process can die in — which is §5's stranded
+round, produced honestly (debit, open, stop) by the contract target's `strand()`, resumed by the
+client's ordinary spin retry, and reported by `authenticate` as `pendingRound` with no `result`
+and no `next` (the schema's one sanctioned absence). Idempotency is fingerprint-based exactly as
+in the sim — key-order-independent canonicalisation, replay vs. `ROUND_CONFLICT` — and a commit
+that loses a race re-reads the recorded answer rather than inventing a second one.
 
-`WalletProvider` (`getBalance` / `debit` / `credit` / `rollback`) is the seam every real RGS has
-between operator and game provider. `MockWallet` implements it for real — the only working code in
-the app, deliberately: replay-vs-conflict on the ref, the idempotent rollback, exact `@slot/money`
-arithmetic — and its unit tests are the specification R2's integration is held to.
+**Persistence is a port with two implementations held to one contract.**
+`store-contract.ts` defines the semantics — insert-only idempotency records, transitions that
+assert the state they move *from*, recovery and history reads — and both `MemoryRoundStore` and
+`PostgresRoundStore` run it. The Postgres half (committed SQL migrations, a compare-and-swap
+`UPDATE … WHERE state = $from` inside the same transaction as the record insert, uniqueness as
+primary keys) runs whenever `RGS_TEST_DATABASE_URL` is set — **always in CI**, where a
+`postgres:16` service container provides it, so "the database enforces what the memory store
+promises" is asserted on every push. `main.ts` picks the store by `RGS_DATABASE_URL`; the contract
+suite's third target runs on memory because its subject is the wire.
+
+`MockWallet` (R0) remains the wallet — replay-vs-conflict on the ref, the idempotent rollback —
+and its unit tests are the specification R2's integration is held to. Sessions are R1-minimal
+behind `SessionPort`: one active demo session, issued by the composition (§7 — the environment is
+the out-of-band channel in development), expiry checked on every call; R5 replaces the
+implementation, not the seam. `forceOutcome` is refused always — there is no dev flag to mis-set.
 
 What is deliberately absent, and stays absent: `/dev/*` (a production server is not driveable),
 `/demo/session` (tokens come from the operator's lobby, §7 — R5 builds the validating half), and
-any import of `@slot/rgs-sim` or `@slot/transport` — the first would make the skeleton lean on the
-thing it exists to replace, the second would put the client's seam inside the server. Both are
-`dependency-cruiser` errors (`rgs-deps`), tested by fixture like every other boundary. `/ready`
-answers `503 ready: false` with the shipped `MATH_VERSION`, because a load balancer should know
-what a skeleton is.
+any import of `@slot/rgs-sim` or `@slot/transport` — enforced by `rgs-deps`, tested by fixture.
+The HTTP layer still validates before it dispatches, so `SCHEMA_MISMATCH` and a domain refusal
+stay distinguishable — and the stub composition (`notImplementedRounds`) still exists and still
+answers `NOT_IMPLEMENTED`/`501` under test, because taking an endpoint dark again must stay a
+tested state, not an archaeological one. `/ready` now answers `200 ready: true` with the shipped
+`MATH_VERSION`; a stub composition says `503`, because a load balancer should know the difference.
 
 ### Platform — `packages/platform`
 
@@ -1051,7 +1079,8 @@ not — a remote server's regime is that server's configuration) without either 
 | **Contrast** | `tests/contrast.test.ts` | Every text-on-surface pair both palettes can produce holds WCAG 2.1 AA — found two failures the day it was written |
 | **Glyph coverage** | `apps/game-client` (`i18n.test.ts`) | Every character of both string catalogues has a glyph in the shipped Inter woff2, at every shipped weight |
 | **Network soak** | `tests/http-soak.test.ts` | 300 rounds over a real socket, a faulty-line run, and a shutdown with a hundred abandoned responses in flight — the failures that only exist on a connection |
-| **Contract** | `tests/contract/`, one suite per target | `rgs-sim` in-process · sim over HTTP · `apps/rgs` (expected red — `NOT_IMPLEMENTED` only, asserted) — the switch-over gate |
+| **Contract** | `tests/contract/`, one suite per target | `rgs-sim` in-process · sim over HTTP · `apps/rgs` (the full suite since R1, incl. the §5 stranded round only it can produce) — the switch-over gate |
+| **Store contract** | `apps/rgs` (`store-contract.ts`) | One suite, two stores: memory always; Postgres whenever `RGS_TEST_DATABASE_URL` is set — always in CI, via a `postgres:16` service container |
 | **E2E** | Playwright, in CI | Fixed seed + forced outcomes: spin, win, feature, resume after reload |
 | **Perf** | `tools/perf-harness` | `pnpm perf`: 30 spins against the production bundle, 4× CPU throttle, headless Chrome — ~120 fps avg, p95 9.2 ms, 7 draw calls/frame (max 8: the symbol layer batches), heap sawtooths 9.8 → 14.1 → 9.4 MB. Frames from a rAF probe, draw calls by wrapping the WebGL entry points, heap over CDP; driven through the DOM control layer, so no dev hook is needed and the measured bundle is the shipped one |
 
@@ -1074,23 +1103,25 @@ Three rules make it a gate rather than a second copy of the unit tests:
   every production server, and a suite built on it would be unrunnable against the one target that
   matters. Only the feature cases use it, and they are marked as needing the capability.
 - **A capability a target lacks turns the case into a *named skip*, never an omission — and a
-  target that runs but cannot pass yet is *expected red*, never quietly excluded.** `apps/rgs` ran
-  as a named skip until R0; since R0 it runs, marked `expectedRed`, and the suite's **red gate**
-  asserts in green CI exactly what an honest skeleton can promise: every call refused
-  `NOT_IMPLEMENTED` and nothing else, with a malformed request still `SCHEMA_MISMATCH` — so "wired
-  and honestly empty" is a tested property, not a hope. The skip mechanism still carries the case
-  the simulator structurally cannot produce: a round debited and never resolved
-  (docs/protocol.md §5) is declared as `unresolvedRounds`, skipped by name, and comes with the
-  `strand()` hook the target that *can* produce it must implement.
+  target that runs but cannot pass yet is *expected red*, never quietly excluded.** `apps/rgs`
+  walked the whole ladder: a named skip until R0, expected-red through it (the **red gate**
+  asserted in green CI that every call was refused `NOT_IMPLEMENTED` and nothing else), and the
+  full suite since R1. The `expectedRed` mechanism stays in the suite — taking an endpoint dark
+  again must remain a tested state. The capability skips now cut both ways: the simulators skip
+  the `unresolvedRounds` case they structurally cannot produce, and `apps/rgs` — the target whose
+  `strand()` finally runs it — skips the `forceOutcome` and `faultInjection` cases a production
+  server refuses by design.
 - **The control plane is a port, not a back door.** The HTTP target resets and inspects through
   `apps/mock-rgs`'s `/dev/*` routes rather than the `SimServer` object it happens to hold, so the
   same target definition works against a server in another process.
 
-What it does **not** prove, said here so nobody reads more into a green run: against both simulator
-targets the paytable re-evaluation is a function agreeing with itself, because `rgs-sim` derives its
-wins with the same `@slot/game-math` the suite checks them with. That assertion is aimed at a target
-that ships its own math — `apps/rgs` (R1+), or an operator's server — which is exactly when a
-paytable can drift.
+What it does **not** prove, said here so nobody reads more into a green run: against all three
+registered targets the paytable re-evaluation is a function agreeing with itself, because every one
+of them — `rgs-sim` and, since R1, `apps/rgs` — derives its wins with the same `@slot/game-math`
+the suite checks them with; sharing the engine was the deliberate choice (one implementation of the
+math), and this is its cost. The assertion is aimed at the target the registry does not hold yet:
+an operator's server reached by base URL, shipping its own math — which is exactly when a paytable
+can drift.
 
 ### Environment & build flags
 
@@ -1156,8 +1187,9 @@ D8, D9 — jurisdiction rules on the wire, no renew call, transparent mid-round 
   can produce it must implement `TargetHandle.strand()`. So the client still implements that branch
   of recovery against no producer, and the first real evidence arrives with R1.
   **Decision (2026-08-19):** stays exactly so — splitting a synchronous handler to fake the window
-  would test fiction. `TargetHandle.strand()` gets its first real implementation in the `apps/rgs`
-  target (R1), where a transaction boundary genuinely separates the debit from the resolve.
+  would test fiction. `TargetHandle.strand()` got its real implementation in the `apps/rgs` target
+  the same day (R1): the wallet debit and the store commit are genuinely separate systems there,
+  and the §5 case now runs green against it while remaining a named skip for both sim targets.
 - **The sim's policy surface is minimal, and regulator-grade enforcement is R5's.** Since C6 the sim
   refuses a spin arriving before `minSpinIntervalMs` (`LIMIT_REACHED`) and expires sessions on every
   call — the two rules the client's compliance layer is built against. What a real regulator also
@@ -1165,20 +1197,28 @@ D8, D9 — jurisdiction rules on the wire, no renew call, transparent mid-round 
   jurisdiction rule set behind an operator configuration — has no producer anywhere and belongs to
   `apps/rgs` (R5).
 
-**Real RGS (`apps/rgs`) — a skeleton the R-blocks fill**
+**Real RGS (`apps/rgs`) — playing since R1; what remains is the seams' real halves**
 
-- **The domain does not exist — by design, and the red gate asserts it.** Every endpoint answers
-  `NOT_IMPLEMENTED`; `RoundService` is all stubs. R1 (rounds + idempotency on Postgres) turns the
-  first endpoints green, R5 the sessions. Two things R1 must bring with it, noted now so they are
-  designed rather than discovered: **`expectedRed` is target-wide**, so the first green endpoint
-  needs a finer-grained (per-call) expectation in the suite; and **the third target has no control
-  plane** — its `TargetHandle.state()` and `faults()` reject, and the full suite cannot run without
-  `state()` (the server's own account of the session). R1 adds state inspection beside the
-  repositories, and the real `strand()` with it (see the simulator section above).
-- **The wallet, ledger, rng and persistence surfaces are interfaces with one mock.** `MockWallet`
-  works and is the tested specification for R2; `Ledger`, `ServerSeedProvider`,
-  `RoundRepository` and `IdempotencyRepository` are declarations only — each names the block that
-  fills it (R3, R4, R1, R1) in its doc comment.
+- **The wire carries no session identifier on mutating calls.** The token travels only in
+  `authenticate` (§7); `spin`/`featureSpin`/`settle`/`history` identify nobody, which is fine for
+  the single-session server R1 deliberately is and untenable for a multi-player one.
+  `HttpTransport` already has the `headers` seam the binding will ride on.
+  **Decision (2026-08-19, build in R5):** the session binds via an `Authorization` header, pinned
+  in docs/protocol.md §2.7 when R5 builds real sessions — a protocol amendment, made once, with
+  the operator integration that needs it.
+- **The pacing rule is not enforced by `apps/rgs`.** The sim refuses a spin arriving before
+  `minSpinIntervalMs` (`LIMIT_REACHED`); this server does not, and the contract suite has no
+  pacing case to catch it. The client paces itself, so nothing user-visible depends on it — but
+  server-side enforcement is a regulator's requirement, and it belongs to R5 with the rest of the
+  session/limits surface.
+- **The wallet is `MockWallet`, the seed provider has no commitment, the ledger is an interface.**
+  Each is a declared seam with its block: R2 integrates a real provider (the rollback path gets
+  its integration test there — the domain never calls `rollback` yet), R4 replaces the static
+  seed with commit/reveal (`commitmentFor` currently throws `NotImplementedError`), R3 fills the
+  ledger — today no ledger entry is written, so reconciliation has nothing to read.
+- **History retention on Postgres is a number, not an eviction.** The memory store evicts settled
+  rounds past `retention`; the Postgres store keeps every row and reports its configured figure —
+  honest for now, but archival/partitioning is an ops job that belongs to R7.
 
 **Client — implied by the domain, built by no block**
 

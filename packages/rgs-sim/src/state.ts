@@ -14,7 +14,7 @@ import {
   persist,
   readPersisted,
 } from '@slot/protocol';
-import { hashSeed } from './prng.js';
+import { hashSeed } from '@slot/game-math';
 import type { SimStore } from './store.js';
 
 /**

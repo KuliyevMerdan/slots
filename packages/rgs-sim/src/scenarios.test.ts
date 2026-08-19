@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { ForceOutcomeScenario } from '@slot/protocol';
 import { SCATTER, viewMatchesStops } from '@slot/game-math';
+import { resolveStops, createPrng } from '@slot/game-math';
 import { scenarioOutcome, scenarioStops } from './scenarios.js';
-import { resolveStops } from './outcome.js';
-import { createPrng } from './prng.js';
 import { STAKE, testConfig } from './__fixtures__/harness.js';
 
 /**

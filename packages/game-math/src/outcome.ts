@@ -1,5 +1,8 @@
 import type { Feature, GameConfig, Minor, RoundResult, SymbolId, Win } from '@slot/protocol';
-import { FREE_SPIN_AWARDS, SCATTER, evaluate, viewFrom } from '@slot/game-math';
+import { FREE_SPIN_AWARDS } from './paytable.js';
+import { SCATTER } from './symbols.js';
+import { evaluate } from './evaluate.js';
+import { viewFrom } from './view.js';
 import { createPrng } from './prng.js';
 
 /**
@@ -10,6 +13,12 @@ import { createPrng } from './prng.js';
  * inputs to it. That is what makes the client's dev-build assertion meaningful (ADR-0001): if the
  * server ever computed a win first and dressed a grid around it, `viewMatchesStops` would be the
  * only thing standing between that and production, and it would pass.
+ *
+ * It lived in `@slot/rgs-sim` until R1, when `apps/rgs` needed the identical engine and could not
+ * import the simulator it exists to replace (`rgs-deps`). Moving it *here* rather than copying it
+ * is the same argument the RTP report already made: one implementation of the math is the only
+ * reason any published figure — or any two servers' agreement — means anything. The servers still
+ * own what is theirs: *awarding* the feature, the round machine, and the money.
  */
 
 export interface SpinOutcome {

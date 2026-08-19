@@ -2,7 +2,16 @@ import type { ErrorCode, Minor, RoundState } from '@slot/protocol';
 import { SimServer, createSimConfig, createSimState } from '@slot/rgs-sim';
 import type { FaultConfig } from '@slot/rgs-sim';
 import { buildApp } from '@slot/mock-rgs';
-import { buildApp as buildRgsApp } from '@slot/rgs';
+import {
+  MemoryRoundStore,
+  MockWallet,
+  SingleSessionHost,
+  buildApp as buildRgsApp,
+  createGameConfig,
+  createRoundService,
+  spinFingerprint,
+  staticSeedProvider,
+} from '@slot/rgs';
 import { HttpTransport, MockTransport } from '@slot/transport';
 import type { RgsTransport } from '@slot/transport';
 
@@ -16,9 +25,10 @@ import type { RgsTransport } from '@slot/transport';
  * being built a particular way.
  *
  * Three targets are registered below. Two are the simulator, reached in-process and over a socket;
- * the third is `apps/rgs` — real since R0, and *expected red*: it runs, and the suite holds it to
- * the one thing an honest skeleton can promise — every call refused as `NOT_IMPLEMENTED`, nothing
- * else — until the R-blocks turn the contract green endpoint by endpoint.
+ * the third is `apps/rgs` — a named skip before R0, expected-red through it, and running the full
+ * contract since R1. It is also the one target that declares `unresolvedRounds`: only a server
+ * whose wallet lives outside its database can strand a debit (§5), so the case the simulators
+ * skip by name finally runs here.
  */
 
 /** The subset of fault injection the contract cares about. A real RGS supports none of it. */
@@ -205,36 +215,88 @@ export const httpTarget: ContractTarget = {
 };
 
 /**
- * The real RGS — running, and expected red (R0).
+ * The real RGS — running the full contract since R1.
  *
- * Registered before it existed; real since R0 built the skeleton. Every route is up, validates
- * with the shared schemas, and answers `NOT_IMPLEMENTED` from a domain the R-blocks fill — so the
- * suite runs its red gate here (see `expectedRed` on the type), and drops to the full contract as
- * the endpoints land. The capabilities describe the *finished* server: no `forceOutcome`, no fault
- * injection, and — uniquely — real unresolved rounds, because only a server with a transaction
- * boundary between debit and resolve can strand one (R1 implements `strand()`).
+ * Registered before it existed (a named skip), expected-red through R0 (`NOT_IMPLEMENTED` only,
+ * asserted), and a full target since R1 built the domain. It runs on the in-memory store — the
+ * gate is about the *wire*, and the shared store-contract suite in `apps/rgs` is what holds the
+ * Postgres store to the memory store's semantics — with `MockWallet` and a single demo session,
+ * the seams R2 and R5 replace.
+ *
+ * The control plane is the composition itself, reached in-process: this server has no `/dev/*` by
+ * design, and a real deployment is reset by being someone else's environment. What only this
+ * target can do is `strand()` — a debit whose round never resolved (§5) — because only here does a
+ * wallet the database cannot wrap in a transaction separate the debit from the resolve. The two
+ * capabilities it lacks are honest: no `forceOutcome`, no fault injection, ever.
  */
 export const realRgsTarget: ContractTarget = {
   name: 'apps/rgs',
   supports: { forceOutcome: false, faultInjection: false, unresolvedRounds: true },
-  expectedRed:
-    'R0 skeleton — every call answers NOT_IMPLEMENTED until the R-blocks land (R1: rounds, R5: sessions)',
   async start(options) {
-    const app = buildRgsApp();
+    const playerId = 'demo-player';
+    const store = new MemoryRoundStore();
+    const wallet = new MockWallet({ [playerId]: options.balance });
+    const sessions = new SingleSessionHost();
+    // `devMode` is deliberately unread: this server has no such flag to set (§8), which is
+    // exactly what the suite's dev-gate case asserts from the outside.
+    const rounds = createRoundService({
+      store,
+      wallet,
+      sessions,
+      seeds: staticSeedProvider(SEED),
+      config: createGameConfig(),
+      now: () => NOW,
+    });
+    const app = buildRgsApp({ rounds });
     const baseUrl = await app.listen({ port: 0, host: '127.0.0.1' });
+
+    let issued = 0;
+    let stranded = 0;
 
     return {
       transport: new HttpTransport({ baseUrl }),
-      // There is nothing to reset: no session store exists until R5. The token is any string the
-      // red gate can put in an `authenticate` request that must be refused as NOT_IMPLEMENTED.
-      reset: ({ balance = options.balance } = {}) =>
-        Promise.resolve({ token: 'contract-demo-token', balance }),
-      faults: () =>
-        Promise.reject(new Error('a real RGS supports no fault injection — by design, forever')),
-      state: () =>
-        Promise.reject(
-          new Error('apps/rgs has no state inspection yet — R1 adds it beside the repositories'),
-        ),
+      reset: ({ balance = options.balance } = {}) => {
+        store.clear();
+        wallet.reset({ [playerId]: balance });
+        const token = `contract-rgs-${(issued += 1)}`;
+        sessions.issue(token, { playerId, currency: 'EUR', expiresAt: EXPIRES_AT });
+        return Promise.resolve({ token, balance });
+      },
+      faults: (config) =>
+        Object.keys(config).length === 0
+          ? Promise.resolve()
+          : Promise.reject(new Error('apps/rgs supports no fault injection — by design, forever')),
+      state: async () => ({
+        balance: await wallet.getBalance(playerId),
+        rounds: store.snapshot().map((round) => ({
+          roundId: round.roundId,
+          state: round.state,
+          stake: round.stake,
+          cumulativeWin: round.cumulativeWin,
+          steps: round.steps,
+        })),
+      }),
+      /**
+       * What a crash between the wallet debit and the store commit leaves behind — produced by
+       * doing exactly those two things and stopping. The fingerprint must be the one the honest
+       * retry will present, which is why the domain exports it.
+       */
+      strand: async (stake) => {
+        const roundId = `018f0000-0000-7000-8000-${(stranded += 1).toString(16).padStart(12, '0')}`;
+        await wallet.debit(playerId, stake, roundId);
+        await store.open({
+          roundId,
+          playerId,
+          state: 'OPEN',
+          stake,
+          fingerprint: spinFingerprint(stake, undefined, undefined),
+          cumulativeWin: 0 as Minor,
+          capped: false,
+          steps: 0,
+          openedAt: NOW,
+        });
+        return roundId;
+      },
       close: () => app.close(),
     };
   },

@@ -36,12 +36,14 @@ math-version gate, the max-win ceiling as a multiple of the stake, the telemetry
 found a shutdown hang in `apps/mock-rgs`.
 
 Since then **C6 and C7 landed 2026-08-19** (platform, compliance, dev-tools, perf-harness — see
-`CLAUDE.md` for what each turned out to be) and **R0 landed 2026-08-19**: `apps/rgs` exists, every
-route validating with the shared schemas and answering `NOT_IMPLEMENTED` (D10), the wallet seam
-declared and its mock's semantics tested, and the contract suite's third target turned from a named
-skip into an **expected-red** one whose red gate is a green CI assertion. **Next is C8** —
-packaging: the deploy, the README, rate limiting, the nightly soak and the E2E suite. **R1** runs
-in parallel when wanted, and is what turns the red target's first endpoints green.
+`CLAUDE.md` for what each turned out to be), **R0 landed 2026-08-19** (`apps/rgs` wired and
+honestly empty — every route answering `NOT_IMPLEMENTED` (D10), the wallet seam declared, the
+contract suite's third target expected-red with its red gate a green CI assertion) and **R1 landed
+2026-08-19**: rounds and idempotency behind a store port with in-memory and Postgres
+implementations held to one contract, the outcome engine lifted into `@slot/game-math`, and the
+third target running the **full** contract suite — including the §5 stranded round only it can
+produce. **Next is C8** — packaging: the deploy, the README, rate limiting, the nightly soak and
+the E2E suite. **R2** (a real wallet) and **R5** (sessions for real) are unblocked in parallel.
 
 ---
 
@@ -68,7 +70,7 @@ contract suite. `#` maps each block back to the phase numbering of the original 
 | **S3** | The contract suite — one suite, three targets. **The switch-over gate** | S2, R0 | 2 | ✅ (landed 2026-08-18, ahead of R0 — see the block) |
 | **S4** | `tools/math-sim` — RTP / hit frequency / volatility report | S0 | 8 | ✅ (landed 2026-08-18) |
 | **R0** | `apps/rgs` skeleton — routes stubbed, `NotImplemented`, wallet seam | C1 | 2 | ✅ (landed 2026-08-19) |
-| **R1** | Rounds & idempotency on Postgres | R0, S3 | 10 | ☐ |
+| **R1** | Rounds & idempotency on Postgres | R0, S3 | 10 | ✅ (landed 2026-08-19) |
 | **R2** | Wallet integration behind `WalletProvider` | R1 | 10 | ☐ |
 | **R3** | Double-entry ledger in integer minor units | R2 | 10 | ☐ |
 | **R4** | Server RNG + provably-fair seed commit/reveal | R1 | 10 | ☐ |
@@ -538,15 +540,30 @@ must agree exactly.
 
 ## Block R1 — Rounds & idempotency on Postgres
 
-- [ ] Round table + state machine `OPEN → RESOLVED → SETTLED`, with the transition guarded in a
-      transaction.
-- [ ] Idempotency records keyed on `roundId`, with the original response replayed on a duplicate —
-      **a uniqueness constraint, not a remembering service**.
-- [ ] Committed migrations; indexes on the lookup paths (`roundId`, player + state).
-- [ ] Resume: `authenticate` returns `pendingRound` from the store.
+_Landed **2026-08-19**._
+
+- [x] Round table + state machine `OPEN → RESOLVED → SETTLED`, with the transition guarded in a
+      transaction — a compare-and-swap `UPDATE … WHERE state = $from`, in the same transaction as
+      the idempotency insert, behind a `RoundStore` port with an in-memory twin. One shared
+      store-contract suite holds both implementations to identical semantics; the Postgres half
+      runs whenever `RGS_TEST_DATABASE_URL` is set — always in CI, via a service container.
+- [x] Idempotency records keyed on `(roundId, call, step)`, with the original response replayed on
+      a duplicate — **a uniqueness constraint, not a remembering service**: the primary key makes
+      a duplicate insert *fail*, and that failure routes a racing retry to the recorded answer.
+- [x] Committed migrations (`apps/rgs/migrations/`, a ~40-line runner); indexes on the lookup
+      paths (`round_id` PK, partial indexes on player + state for recovery and history).
+- [x] Resume: `authenticate` returns `pendingRound` from the store — including the stranded shape
+      only this server can produce (debited, never resolved: `OPEN`, no `result`, and no `next`,
+      a protocol refinement made for it in §2.6).
 
 **Done when:** the authenticate/spin contract tests go green against `apps/rgs`, including the
-replay and resume cases.
+replay and resume cases. ✅ — and in practice the *whole* suite went green at once, because a
+natural feature trigger during any hunt exercises `featureSpin` and `settle` too; only the
+`forceOutcome`/`faultInjection` cases remain, as named capability skips a production server earns.
+Two things came with the block: the outcome engine (PRNG + stops-first derivation) moved from
+`rgs-sim` into `@slot/game-math` so both servers draw from one implementation (`apps/rgs` may not
+import the simulator — `rgs-deps`), and `TargetHandle.strand()` got its real implementation, so
+the §5 stranded-round case runs against the one target that can honestly produce it.
 
 ## Block R2 — Wallet integration
 

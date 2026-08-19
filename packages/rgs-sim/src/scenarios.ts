@@ -1,9 +1,8 @@
 import type { GameConfig, SymbolId } from '@slot/protocol';
 import type { ForceOutcomeScenario } from '@slot/protocol';
 import { SCATTER } from '@slot/game-math';
-import { createPrng } from './prng.js';
-import { resolveStops } from './outcome.js';
-import type { SpinOutcome } from './outcome.js';
+import { createPrng, resolveStops } from '@slot/game-math';
+import type { SpinOutcome } from '@slot/game-math';
 
 /**
  * The named `forceOutcome` scenarios, resolved to real stops.

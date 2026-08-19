@@ -1,5 +1,5 @@
 import type { GameConfig, Minor } from '@slot/protocol';
-import { createPrng, freeSpinsFor, resolveStops } from '@slot/rgs-sim';
+import { createPrng, freeSpinsFor, resolveStops } from '@slot/game-math';
 
 /**
  * The RTP simulation — **the same math the game plays on**.

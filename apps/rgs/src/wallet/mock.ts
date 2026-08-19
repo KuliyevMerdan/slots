@@ -31,6 +31,16 @@ export class MockWallet implements WalletProvider {
   readonly #transactions = new Map<string, Transaction>();
 
   constructor(initial: Record<string, Minor> = {}) {
+    this.reset(initial);
+  }
+
+  /**
+   * Forget everything and start from the given balances — the control plane the contract target's
+   * `reset()` needs, on the mock only: a real provider is reset by being someone else's system.
+   */
+  reset(initial: Record<string, Minor>): void {
+    this.#balances.clear();
+    this.#transactions.clear();
     for (const [playerId, balance] of Object.entries(initial)) {
       this.#balances.set(playerId, balance);
     }

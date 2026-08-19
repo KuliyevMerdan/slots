@@ -1,10 +1,9 @@
 import type { GameConfig, Minor, RoundId, SymbolId } from '@slot/protocol';
 import { minor } from '@slot/money';
 import { SCATTER } from '@slot/game-math';
+import { deriveSpinSeed, spinOutcome } from '@slot/game-math';
+import type { SpinOutcome } from '@slot/game-math';
 import { createSimConfig } from '../config.js';
-import { deriveSpinSeed } from '../prng.js';
-import { spinOutcome } from '../outcome.js';
-import type { SpinOutcome } from '../outcome.js';
 import { createSimState } from '../state.js';
 import type { SimState } from '../state.js';
 

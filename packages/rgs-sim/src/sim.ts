@@ -22,7 +22,7 @@ import type {
   SpinRes,
 } from '@slot/protocol';
 import { ZERO, add, min, multiply, subtract } from '@slot/money';
-import { deriveSpinSeed } from './prng.js';
+import { deriveSpinSeed } from '@slot/game-math';
 import { errorPayload } from './errors.js';
 import {
   baseFeatures,
@@ -30,7 +30,7 @@ import {
   retriggerFeatures,
   spinOutcome,
   toRoundResult,
-} from './outcome.js';
+} from '@slot/game-math';
 import { scenarioStops } from './scenarios.js';
 import type { SimOutcome, SimRound, SimState } from './state.js';
 import { MAX_ROUND_HISTORY, findOpenRound, findRound, withRound } from './state.js';

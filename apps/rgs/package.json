@@ -26,10 +26,12 @@
     "@slot/money": "workspace:*",
     "@slot/protocol": "workspace:*",
     "fastify": "catalog:",
+    "pg": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {
     "@types/node": "^20",
+    "@types/pg": "^8",
     "tsx": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

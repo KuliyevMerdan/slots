@@ -1,6 +1,6 @@
 import type { ErrorCode } from '@slot/protocol';
 import { classOf } from '@slot/protocol';
-import { createPrng } from './prng.js';
+import { createPrng } from '@slot/game-math';
 
 /**
  * Fault injection — **decided here, enacted by the caller.**
