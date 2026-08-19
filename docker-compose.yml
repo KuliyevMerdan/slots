@@ -1,0 +1,65 @@
+# The production-shaped deployment, as one file (R7, ADR-0009): the RGS in production mode,
+# Postgres under it, and the wallet sim across a real wire — the same three-process shape an
+# operator integration has, with the operator's wallet simulated instead of absent.
+#
+#   RGS_DB_PASSWORD=... RGS_OPERATOR_KEY=... docker compose up --build
+#
+# No secrets are committed, so the two required variables must come from the shell — the compose
+# file refuses to interpolate without them, which is the same fail-fast rule the RGS itself
+# applies to its environment (docs/deploy.md walks through it).
+#
+# RGS_DEMO_TOKEN is optional: set it and the server issues itself a playable demo session at
+# boot; leave it unset and tokens come only from POST /operator/sessions, the lobby's face (§7).
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: ${RGS_DB_PASSWORD:?set a database password}
+      POSTGRES_DB: rgs
+    volumes:
+      - rgs-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  wallet:
+    build:
+      context: .
+      dockerfile: apps/rgs/Dockerfile
+    command: ['node', 'dist/wallet/sim-main.js']
+    environment:
+      WALLET_SIM_HOST: 0.0.0.0
+      WALLET_SIM_PLAYER: demo-player
+      WALLET_SIM_BALANCE: 1000000
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:8789/health || exit 1']
+      interval: 5s
+      timeout: 4s
+      retries: 10
+
+  rgs:
+    build:
+      context: .
+      dockerfile: apps/rgs/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      wallet:
+        condition: service_healthy
+    environment:
+      RGS_ENV: production
+      RGS_DATABASE_URL: postgres://postgres:${RGS_DB_PASSWORD}@postgres:5432/rgs
+      RGS_WALLET_URL: http://wallet:8789
+      RGS_OPERATOR_KEY: ${RGS_OPERATOR_KEY:?mint an operator key of 24+ characters}
+      RGS_DEMO_TOKEN: ${RGS_DEMO_TOKEN:-}
+      # The scrape on its own listener (R6/R7): 8790 is deliberately not published below —
+      # inside-the-perimeter surface, reachable by a scraper on the compose network only.
+      RGS_METRICS_PORT: 8790
+    ports:
+      - '8788:8788'
+
+volumes:
+  rgs-postgres:

@@ -28,7 +28,7 @@ const int8 = (value: string): number => Number.parseInt(value, 10);
 
 export interface PostgresStoreOptions {
   databaseUrl: string;
-  /** The wire's `history.retention`. Rows are kept, not evicted — archival is an ops job (R7). */
+  /** The wire's `history.retention` — and since R7 a real eviction, the memory twin's semantics. */
   retention?: number;
   /** Injected for tests; defaults to a fresh pool over `databaseUrl`. */
   pool?: Pool;
@@ -146,6 +146,24 @@ export class PostgresRoundStore implements RoundStore {
     } finally {
       client.release();
     }
+    // The memory twin's eviction, made real here too (R7): only a commit that just settled a
+    // round can push the settled count past retention, so that is the only time to ask. Outside
+    // the transaction on purpose — eviction is retention housekeeping, and a failure to evict
+    // must not fail the round's own commit.
+    if (patch.state === 'SETTLED') await this.#evict();
+  }
+
+  /**
+   * Drop the oldest settled rounds beyond `retention`, records with them (`on delete cascade`).
+   * In-flight rounds are never touched — recovery outranks retention, exactly as in memory.
+   */
+  async #evict(): Promise<void> {
+    await this.#pool.query(
+      `delete from rounds where round_id in (
+         select round_id from rounds where state = 'SETTLED' order by seq desc offset $1
+       )`,
+      [this.retention],
+    );
   }
 
   async pendingFor(playerId: string): Promise<StoredRound | undefined> {

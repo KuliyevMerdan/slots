@@ -141,6 +141,11 @@ module.exports = {
      * that could reach the renderer would be a tool that could measure something other than the game.
      */
     consumerMayOnlyDependOn('tools', 'math-sim', 'protocol', 'money', 'game-math', 'rgs-sim'),
+    /**
+     * The load tool is a swarm of honest clients: it speaks the wire contract and nothing else.
+     * Reaching a server implementation would let it measure shortcuts a real client cannot take.
+     */
+    consumerMayOnlyDependOn('tools', 'load-test', 'protocol'),
     {
       name: 'apps-import-entry-points-only',
       comment:

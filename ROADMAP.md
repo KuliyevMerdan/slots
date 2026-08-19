@@ -71,8 +71,17 @@ a hand-rolled metrics registry on `GET /metrics` with the round-state gauge aske
 scrape time; `/ready` probing the store and the wallet (by refusal) and naming the check that
 failed. The gate — one `roundId` retrieves the round's full story across logs, traces and
 metrics — is a test over the real HTTP binding.
-**Next is C8** — packaging: the deploy, the README, rate limiting on `mock-rgs`, the nightly soak
-and the E2E suite. **R7** (production readiness) is the last R-block, now unblocked.
+**R7 landed 2026-08-20** (ADR-0009): the boot contract (`RGS_ENV=production` refuses every dev
+placeholder, all violations named at once), one image with two commands (the RGS and the wallet
+sim) behind a health-gated rollout with rollback and backup documented in
+[docs/deploy.md](docs/deploy.md), CI building the image on every push; the race suite firing
+simultaneous duplicates over the real binding against both stores — which found and fixed two
+real windows in the domain — plus `pnpm load`, the balance-checking throughput tool; the restore
+drill as a CI test; retention made real on Postgres; the metrics scrape movable to its own
+listener; and the client's out-of-band token (`VITE_RGS_TOKEN`), closing the switch-over
+argument: the real RGS is now a configuration change, end to end. **The R-blocks are complete.**
+**Next is C8** — packaging: the deploy of the demo, the README, rate limiting on `mock-rgs`, the
+nightly soak and the E2E suite — the last block on the map.
 
 ---
 
@@ -105,7 +114,7 @@ contract suite. `#` maps each block back to the phase numbering of the original 
 | **R4** | Server RNG + provably-fair seed commit/reveal | R1 | 10 | ✅ (landed 2026-08-19) |
 | **R5** | Sessions, auth, limits — the `PLAYER` error class for real | R1 | 10 | ✅ (landed 2026-08-19) |
 | **R6** | Observability — structured logs, metrics, OTel on `roundId` | R1 | 10 | ✅ |
-| **R7** | Production readiness — config validation, load test, deploy | R3, R6 | 10 | ☐ |
+| **R7** | Production readiness — config validation, load test, deploy | R3, R6 | 10 | ✅ |
 
 **Legend:** ☐ not started · ◐ in progress · ✅ landed (add the date, as `✅ (landed 2026-09-04)`).
 
@@ -739,15 +748,40 @@ loud, correlation id intact.
 
 ## Block R7 — Production readiness
 
-- [ ] Fail-fast env validation at boot; **no dev default accepted in production** (secrets, wallet
-      URL, seeds).
-- [ ] Containerized build; health-gated rollout; documented rollback.
-- [ ] Load test on the spin path — concurrency against the same player and the same `roundId`, to
-      prove idempotency holds under races rather than under tests.
-- [ ] Backup + restore drill for the round and ledger tables.
+- [x] Fail-fast env validation at boot; **no dev default accepted in production** — `RGS_ENV` is
+      a two-mode contract (ADR-0009): development fills every gap so the dev loop stays
+      zero-config; production requires Postgres and a real wallet URL, refuses the placeholder
+      operator key and demo token by value, treats an empty string as absence (what compose
+      delivers), and names **every** violation in one error. The image defaults to production.
+- [x] Containerized build; health-gated rollout; documented rollback — one image, two commands
+      (`apps/rgs/Dockerfile`: the RGS, and the wallet sim via `wallet/sim-main.ts`);
+      `docker-compose.yml` is the three-process production shape with no secret committed; the
+      rollout gate is R6's dependency-probing `/ready` behind a `HEALTHCHECK`; rollback,
+      additive-only migrations and the backup procedure are [docs/deploy.md](docs/deploy.md).
+      CI builds the image on every push.
+- [x] Load test on the spin path — answered twice (ADR-0009). Correctness under races is a CI
+      gate: `races-contract.ts` fires identical, conflicting and duplicate calls simultaneously
+      over the real binding against both stores — and found two real windows (a wallet
+      `REF_CONFLICT` mid-race surfaced as retryable `WALLET_UNAVAILABLE` instead of
+      `ROUND_CONFLICT`; a raced settle answered `ILLEGAL_TRANSITION` instead of replaying the
+      recorded answer), both fixed in the domain. Throughput is `pnpm load` — hand-rolled honest
+      clients, latency percentiles, and a closing-balance check that exits non-zero on drift;
+      its first confirmed finding was a lost-update race in its own accounting.
+- [x] Backup + restore drill for the round and ledger tables — a CI test in the Postgres suite:
+      dump the four tables mid-session (an open round one feature-spin deep), truncate, restore,
+      and a fresh composition reports the same pending round, replays the same answers,
+      reproduces the ledger to the entry and finishes the feature with the credit arriving
+      exactly once. The `pg_dump` twin is documented in deploy.md.
 
 **Done when:** the whole contract suite is green against `apps/rgs`, and the client switches to it by
 changing one URL — **no client changes at all**. That is the deliverable's closing argument.
+✅ — the suite has been green against `apps/rgs` since R1 and stays so; the client's one missing
+seam (a lobby for a server that deliberately has no `/demo/session`) closed as `VITE_RGS_TOKEN`,
+the environment standing in for the operator (§7) — so the switch is
+`VITE_RGS_TRANSPORT=http`, the proxy target, and a token: configuration, not code. R7 also made
+retention real on Postgres (eviction past `retention`, both twins under one contract case) and
+moved `GET /metrics` onto its own listener when `RGS_METRICS_PORT` asks (the perimeter split the
+R6 gaps note called for).
 
 ## RGS build order
 

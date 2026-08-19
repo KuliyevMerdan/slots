@@ -76,6 +76,12 @@ export interface ObservabilityOptions {
   tracer?: Tracer;
   /** The instruments `/metrics` renders. Absent, a fresh bundle with no round-state gauge. */
   metrics?: RgsMetrics;
+  /**
+   * Whether this listener serves `GET /metrics`. `false` when the composition put the scrape on
+   * its own port (`buildOpsApp`, R7) — the instruments are still fed either way; only the
+   * exposition moves.
+   */
+  exposeMetrics?: boolean;
   /** What `/ready` pings — the composition names its dependencies (store, wallet). */
   readiness?: readonly ReadinessCheck[];
   /** How long one probe may take before it counts as failed. */
@@ -161,6 +167,7 @@ export function buildApp({
   const {
     tracer = defaultTracer(),
     metrics = createRgsMetrics(),
+    exposeMetrics = true,
     readiness = [],
     readinessTimeoutMs = 2_000,
   } = observability ?? {};
@@ -338,11 +345,14 @@ export function buildApp({
   /** Liveness: the process is up and answering. Deliberately says nothing about the game. */
   app.get('/health', () => ({ status: 'ok' }));
 
-  /** The instruments, in the exposition format every scraper reads (R6). */
-  app.get('/metrics', async (_request, reply) => {
-    const text = await metrics.registry.render();
-    return reply.type('text/plain; version=0.0.4').send(text);
-  });
+  /** The instruments, in the exposition format every scraper reads (R6) — unless the composition
+   * moved the scrape to its own listener (`buildOpsApp`, R7). */
+  if (exposeMetrics) {
+    app.get('/metrics', async (_request, reply) => {
+      const text = await metrics.registry.render();
+      return reply.type('text/plain; version=0.0.4').send(text);
+    });
+  }
 
   /**
    * Readiness — honest either way, and since R6 honest about the *dependencies*: each probe the

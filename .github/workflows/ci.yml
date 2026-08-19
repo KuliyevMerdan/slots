@@ -66,3 +66,14 @@ jobs:
 
       - name: Formatting
         run: pnpm run format:check
+
+  # The containerized build (R7): the image is part of what a push must keep green. Build only —
+  # the tests above already prove the code; this proves the Dockerfile still produces it.
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the production image
+        run: docker build -f apps/rgs/Dockerfile .

@@ -5,7 +5,8 @@ import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { BatchSpanProcessor } from '@opentelemetry/sdk-trace-node';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { buildApp } from './http/app.js';
-import { createGameConfig, readEnv } from './config.js';
+import { buildOpsApp } from './http/ops.js';
+import { createGameConfig, hardenEnv, readEnv } from './config.js';
 import { createRoundService } from './domain/rounds.js';
 import { MemorySessionStore, createSessionService } from './domain/sessions.js';
 import { createPostgresSessionStore } from './domain/sessions-postgres.js';
@@ -37,9 +38,14 @@ import type { Minor } from '@slot/protocol';
  * domain's observer, so a round's lines interleave in one stream; the tracer is the OTel API's —
  * real only when `OTEL_EXPORTER_OTLP_ENDPOINT` names a collector; the metrics bundle carries the
  * round-state gauge wired to the store; `/ready` probes the store and the wallet.
+ *
+ * The environment is hardened since R7 (ADR-0009): `RGS_ENV=production` refuses every dev
+ * placeholder before anything listens — Postgres and a real wallet required, no public keys, and
+ * the demo session only exists when a token was explicitly minted. The metrics scrape moves to
+ * its own listener when `RGS_METRICS_PORT` says the perimeter wants it apart.
  */
 
-const env = readEnv();
+const env = hardenEnv(readEnv());
 const config = createGameConfig();
 const PLAYER_ID = 'demo-player';
 
@@ -85,7 +91,11 @@ const sessions = createSessionService({
   now: Date.now,
   defaultTtlMs: env.RGS_SESSION_HOURS * 3_600_000,
 });
-await sessions.issue({ playerId: PLAYER_ID, currency: 'EUR', token: env.RGS_DEMO_TOKEN });
+// The demo session, only when the contract yielded a token (§7, R7): development always, and a
+// production deploy only by explicit choice. Without one, tokens come from /operator/sessions.
+if (env.demoToken !== undefined) {
+  await sessions.issue({ playerId: PLAYER_ID, currency: 'EUR', token: env.demoToken });
+}
 
 const rounds = createRoundService({
   store,
@@ -99,6 +109,11 @@ const rounds = createRoundService({
   observe,
 });
 
+/* The scrape on its own listener when the perimeter wants it apart (R7) — the instruments are
+ * shared; only the exposition moves off the player port. */
+const opsApp =
+  env.RGS_METRICS_PORT === undefined ? undefined : buildOpsApp({ metrics, loggerInstance: logger });
+
 const app = buildApp({
   loggerInstance: logger,
   rounds,
@@ -111,6 +126,7 @@ const app = buildApp({
   observability: {
     tracer,
     metrics,
+    exposeMetrics: opsApp === undefined,
     readiness: [
       // The gauge's read doubles as the database ping — one question both surfaces ask.
       { name: 'store', check: () => store.countByState() },
@@ -140,12 +156,17 @@ if (env.RGS_RECONCILE_INTERVAL_MS > 0) {
   let baseline: { opening: Minor; since: number } | undefined;
   const tick = async (): Promise<void> => {
     try {
-      baseline ??= { opening: await wallet.getBalance(PLAYER_ID), since: Date.now() };
+      // Per-player truing needs a player the composition knows about — the demo player, when a
+      // demo session exists. Without one (a production deploy, §7) the tick still runs the
+      // whole-journal orphan scan, which needs no baseline and no player list.
+      if (env.demoToken !== undefined) {
+        baseline ??= { opening: await wallet.getBalance(PLAYER_ID), since: Date.now() };
+      }
       const report = await reconcile({
         ledger,
         wallet,
         store,
-        players: [{ playerId: PLAYER_ID, ...baseline }],
+        players: baseline === undefined ? [] : [{ playerId: PLAYER_ID, ...baseline }],
       });
       if (report.clean) app.log.debug({ report }, 'ledger reconciled: clean');
       else app.log.warn({ report }, 'ledger reconciliation found drift');
@@ -160,6 +181,7 @@ const shutdown = (signal: string): void => {
   app.log.info({ signal }, 'shutting down');
   void app
     .close()
+    .then(() => opsApp?.close())
     // Flush what the batch processor is still holding — spans lost at shutdown are the ones
     // that explain why the process was shutting down.
     .then(() => tracerProvider?.shutdown())
@@ -178,16 +200,23 @@ process.on('SIGTERM', () => {
 
 try {
   const address = await app.listen({ port: env.RGS_PORT, host: env.RGS_HOST });
+  const metricsAddress =
+    opsApp === undefined
+      ? undefined
+      : await opsApp.listen({ port: env.RGS_METRICS_PORT as number, host: env.RGS_HOST });
   app.log.info(
     {
       address,
+      env: env.RGS_ENV,
       store: env.RGS_DATABASE_URL === undefined ? 'memory' : 'postgres',
       wallet: env.RGS_WALLET_URL ?? 'mock (in-process)',
       gameId: config.gameId,
       mathVersion: config.mathVersion,
+      ...(metricsAddress === undefined ? {} : { metrics: metricsAddress }),
       // Printed for the same reason mock-rgs prints its token: it is the demo session (§7), and
-      // the alternative is a server nobody can authenticate against.
-      token: env.RGS_DEMO_TOKEN,
+      // a dev server nobody can authenticate against is not a server. A production deploy that
+      // issued no demo session prints none — there is nothing to leak.
+      ...(env.demoToken === undefined ? {} : { token: env.demoToken }),
     },
     'rgs listening',
   );

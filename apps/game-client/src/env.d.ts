@@ -11,7 +11,14 @@ declare const __DEV_TOOLS__: boolean;
 declare const __ASSERT_MATH__: boolean;
 
 interface ImportMetaEnv {
-  /** `mock` — the simulator in this tab — or `http`, which talks to apps/mock-rgs. */
+  /** `mock` — the simulator in this tab — or `http`, which talks to a server over the wire. */
   readonly VITE_RGS_TRANSPORT?: 'mock' | 'http';
   readonly VITE_RGS_BASE_URL?: string;
+  /**
+   * An out-of-band session token for the `http` transport (§7: tokens are issued outside the
+   * game wire, and in development the environment is the out-of-band channel). Set, the client
+   * uses it instead of asking `POST /demo/session` — which is how it plays against `apps/rgs`,
+   * a server that deliberately has no demo lobby (R7).
+   */
+  readonly VITE_RGS_TOKEN?: string;
 }

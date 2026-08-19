@@ -20,6 +20,7 @@
     "dev:rgs": "pnpm --filter @slot/mock-rgs dev",
     "math-sim": "pnpm --filter @slot/math-sim start",
     "perf": "pnpm --filter @slot/perf-harness start",
+    "load": "pnpm --filter @slot/load-test start",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "prepare": "husky",

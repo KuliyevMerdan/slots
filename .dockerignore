@@ -1,0 +1,8 @@
+# The build runs inside the image; nothing prebuilt or environment-local goes in.
+node_modules
+**/node_modules
+**/dist
+**/.turbo
+.git
+.env
+tools/perf-harness/traces

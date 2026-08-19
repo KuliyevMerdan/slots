@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project status
 
 > ⚠️ **The game is a game, its math is a designed 96%, and the real RGS plays it against a real wallet seam.**
-> As of **2026-08-19**, **C0, C1, S0, S1, C2, S2, C3, C4, C5, S4, S3, C6, C7, R0, R1, R2, R3, R4, R5 and R6 have landed** — the
+> As of **2026-08-20**, **C0, C1, S0, S1, C2, S2, C3, C4, C5, S4, S3, C6, C7, R0, R1, R2, R3, R4, R5, R6 and R7 have landed** — the
 > workspace, the contracts (`protocol`, `money`, `game-math`), `rgs-sim`, the `RgsTransport` seam
 > with `MockTransport`, `HttpTransport` and the retry policy, `engine`, `apps/mock-rgs`, `renderer`,
 > `ui` and `apps/game-client`, `tools/math-sim` — the RTP report that tuned the strips —
@@ -69,10 +69,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > count is the stranded-round alarm, restart-proof); and `/ready` probing the store and the
 > wallet (by refusal: a `WalletError` proves the wire answers) and naming the check that failed.
 > The R6 gate is a test over the real HTTP binding: one `roundId` retrieves the round's full
-> story across logs, traces and metrics. The contract suite's third target runs the whole suite
+> story across logs, traces and metrics. **The server is deployable since R7** (ADR-0009,
+> [`docs/deploy.md`](docs/deploy.md)): `RGS_ENV=production` is a boot contract that refuses every
+> dev placeholder and names all violations at once (development stays zero-config); one image
+> carries two commands — the RGS and the wallet sim (`wallet/sim-main.ts`) — behind a
+> `/ready`-gated `HEALTHCHECK`, with `docker-compose.yml` as the three-process production shape
+> and CI building the image on every push; the race suite (`races-contract.ts`) fires identical,
+> conflicting and duplicate calls *simultaneously* over the real binding against both stores —
+> it found and fixed two real windows (a mid-race wallet `REF_CONFLICT` now surfaces as
+> `ROUND_CONFLICT`, a raced settle now replays instead of `ILLEGAL_TRANSITION`) — and
+> `pnpm load` is the throughput half, honest clients whose closing-balance check exits non-zero
+> on drift; the backup/restore drill is a CI test (dump → truncate → restore → the interrupted
+> feature finishes, credited once); retention became a real eviction on Postgres; the metrics
+> scrape moves to its own listener under `RGS_METRICS_PORT`; and the client gained the one seam
+> the switch-over needed — `VITE_RGS_TOKEN`, the out-of-band token (§7) — so playing the real
+> RGS is configuration end to end. The contract suite's third target runs the whole suite
 > over the full production chain — client→HTTP→rgs→HTTP→wallet — its fault case enacted by
 > refusing the *real* wallet, and the §5 stranded round runs against the one target that can
-> honestly produce it. 1020 tests locally, 1044 in CI, `pnpm check` green.
+> honestly produce it. 1039 tests locally, 1069 in CI, `pnpm check` green.
 >
 > **`pnpm dev:client` opens a playable slot.** It authenticates, spins, lands on the server's
 > `stops[]`, lights the paylines it was told won, counts the win up, runs the feature and settles —
@@ -93,9 +107,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > included since R1: the same suite that gated the simulators now gates the real server, and the
 > §5 stranded-round case runs against the one target that can honestly produce it.
 >
-> **What is deliberately not there yet:** packaging, the README, rate limiting on `mock-rgs`, the
-> nightly soak and the E2E suite (**C8**). The next block is **C8**; **R7** (production
-> readiness) is the last R-block, now unblocked.
+> **What is deliberately not there yet:** packaging of the demo, the README, rate limiting on
+> `mock-rgs`, the nightly soak and the E2E suite (**C8**). The R-blocks are complete; **C8** is
+> the last block on the map.
 >
 > The canon is four documents: `CLAUDE.md` (this file), [`ROADMAP.md`](ROADMAP.md) (the task map),
 > [`RECOMMENDATIONS.md`](RECOMMENDATIONS.md) (the strategic registry) and
@@ -152,7 +166,7 @@ empty, and the block named is the commitment.
 | ------------------- | -------------------- | -------------------------------------------------------- | ----- |
 | `@slot/game-client` | `apps/game-client`   | The deliverable — Pixi client on Vite                     | ✅ C3 |
 | `@slot/mock-rgs`    | `apps/mock-rgs`      | Fastify wrapper around `rgs-sim` — proves the network path | ✅ S2 |
-| `@slot/rgs`         | `apps/rgs`           | Node.js RGS — rounds & idempotency on Postgres (in-memory twin); wallet over HTTP behind the R0 seam (docs/wallet-api.md); double-entry ledger + reconciliation (R3); per-round commit/reveal on a CSPRNG (R4); real sessions on a bearer binding + operator surface + pacing + rate limits (R5); logs/traces/metrics joined on `roundId` + dependency-probing readiness (R6) | ✅ R6 |
+| `@slot/rgs`         | `apps/rgs`           | Node.js RGS — rounds & idempotency on Postgres (in-memory twin); wallet over HTTP behind the R0 seam (docs/wallet-api.md); double-entry ledger + reconciliation (R3); per-round commit/reveal on a CSPRNG (R4); real sessions on a bearer binding + operator surface + pacing + rate limits (R5); logs/traces/metrics joined on `roundId` + dependency-probing readiness (R6); production boot contract, container image, races/restore drills (R7) | ✅ R7 |
 | `@slot/protocol`    | `packages/protocol`  | ★ Contracts: zod schemas + inferred TS types + error taxonomy | ✅ C1 |
 | `@slot/money`       | `packages/money`     | Branded `Minor` integer units, exact arithmetic, formatting | ✅ C1 |
 | `@slot/game-math`   | `packages/game-math` | Reel strips, paytable, payline evaluator — and, since R1, the outcome engine (PRNG + stops-first derivation) both servers draw from | ✅ C1 |
@@ -166,6 +180,7 @@ empty, and the block named is the commitment.
 | `@slot/dev-tools`   | `packages/dev-tools` | Debug panel, event log, force-outcome UI                  | ✅ C7 |
 | —                   | `tools/math-sim`     | RTP / volatility / hit-frequency simulation CLI           | ✅ S4 |
 | —                   | `tools/perf-harness` | Scripted fps / draw-call / heap capture                   | ✅ C7 |
+| —                   | `tools/load-test`    | Multi-client load CLI — latency percentiles + a closing-balance check that exits non-zero on drift | ✅ R7 |
 
 Plus `config/` (shared tsconfig, eslint, prettier, vitest presets), `docs/` (`architecture.md`,
 `protocol.md`, `round-lifecycle.md`, `adr/`) and `.github/workflows/`.
@@ -267,6 +282,7 @@ pnpm check
 | `pnpm e2e`             | Playwright, fixed seed + forced outcomes _(C8)_                                      |
 | `pnpm math-sim`        | RTP report — `pnpm math-sim --spins 50000000` _(S4)_                                 |
 | `pnpm perf`            | fps / draw-calls / heap for a scripted session — `pnpm perf --spins 100 --throttle 4` |
+| `pnpm load`            | Multi-client load on a running RGS — `pnpm load --url http://host:8788 --connections 50`. Drift in the closing balance exits non-zero |
 | `pnpm verify:strip`    | Prove the production bundle contains no dev tooling. Runs inside `check`, after build |
 
 Scoped work uses pnpm filters:
@@ -996,24 +1012,29 @@ playable over HTTP. Configuration is
 environment, validated with a schema like anything else that crosses a boundary — a mistyped server
 seed silently changes every outcome the session produces.
 
-### The real RGS — `apps/rgs` (R0 laid it out; R1 made it play; R2 made the wallet real; R3 made the money auditable; R4 made the outcomes provable; R5 made the sessions real; R6 made the server observable)
+### The real RGS — `apps/rgs` (R0 laid it out; R1 made it play; R2 made the wallet real; R3 made the money auditable; R4 made the outcomes provable; R5 made the sessions real; R6 made the server observable; R7 made it deployable)
 
 ```
 apps/rgs/src/
 ├─ http/          routes from the CALLS table; schema validation; bearer extraction, rate
 │                 limiting and the operator surface (R5); the access line, call spans,
-│                 /metrics and the probing /ready (R6)
+│                 /metrics and the probing /ready (R6); ops.ts — the separate metrics
+│                 listener — and races-contract.ts, the concurrency gate (R7)
 ├─ domain/        createRoundService — the real lifecycle (R1), caller-bound since R5;
 │                 sessions.ts — the SessionStore port, its twins' contract, the minting service
-├─ wallet/        the R0 seam, real at the wire (R2): RemoteWallet + wire schemas + the wallet sim
+├─ wallet/        the R0 seam, real at the wire (R2): RemoteWallet + wire schemas + the wallet
+│                 sim — and sim-main.ts, the sim as the image's second command (R7)
 ├─ ledger/        double-entry journal (R3): port + memory/Postgres twins, one contract; reconcile
 ├─ math/          re-exports @slot/game-math — never a second copy
 ├─ rng/           the commitment chain (R4): per-round seed pairs over injected entropy
-├─ persistence/   the RoundStore port: memory + Postgres (migrations committed), one contract
+├─ persistence/   the RoundStore port: memory + Postgres (migrations committed), one contract —
+│                 retention a real eviction on both since R7
 └─ observability/ correlation id minted/adopted + echoed; and since R6 (ADR-0008): the
                   RgsObserver port + pino/metrics adapters, the hand-rolled metrics registry,
                   the OTel seam (call spans + the tracedWallet decorator), the story gate test
 ```
+Plus `Dockerfile` (one image, two commands — the RGS and the wallet sim) and, at the repo root,
+`docker-compose.yml` — the three-process production shape, health-gated, no secret committed.
 
 **The domain is real since R1** — `createRoundService` implements docs/protocol.md §3/§4/§5 over
 injected ports, with the simulator as its reference semantics and one structural difference that
@@ -1143,6 +1164,39 @@ composed exactly as `main.ts` composes, real rounds over the real binding, one `
 retrieving the round's full story from logs, traces and `/metrics` — and the swallowed failures
 asserted loud, correlation id intact.
 
+**The server is deployable since R7** (ADR-0009; [`docs/deploy.md`](docs/deploy.md) is the
+operator's document). The environment is a two-mode boot contract (`hardenEnv`):
+`RGS_ENV=development` fills every gap with placeholders so the dev loop needs zero
+configuration; `RGS_ENV=production` — the image's default — requires Postgres and a real wallet
+URL, refuses the placeholder operator key and demo token *by value*, reads an empty string as
+absence (what compose delivers for an unset variable), and names **every** violation in one
+error. A production boot without `RGS_DEMO_TOKEN` issues no demo session: tokens come only from
+`/operator/sessions`. One image carries two commands — the RGS and the wallet sim
+(`wallet/sim-main.ts`) — so `docker-compose.yml` reproduces the three-process production shape
+(RGS, Postgres, operator wallet across a real wire) with a `/ready`-gated `HEALTHCHECK` and no
+committed secret; CI builds the image on every push. **The load question is answered twice.**
+Correctness under concurrency is a CI gate — [`races-contract.ts`](apps/rgs/src/http/races-contract.ts)
+fires identical, conflicting and duplicate calls *simultaneously* over the real binding, against
+the memory twins always and Postgres in CI — and it earned its keep the day it was written, by
+finding two real windows no sequential test could produce: a wallet `REF_CONFLICT` reached
+mid-race surfaced as retryable `WALLET_UNAVAILABLE` (now `ROUND_CONFLICT` — the wallet's "same
+ref, different parameters" is the game's conflict in the operator's vocabulary), and a settle
+racing a concurrent duplicate's commit answered `ILLEGAL_TRANSITION` where it now replays the
+recorded answer. Throughput is `pnpm load` (`tools/load-test`): hand-rolled honest clients —
+full rounds, idempotent retries under the same `roundId`, `retryAfterMs` honoured, being paced
+never exhausts the retry budget — reporting latency percentiles per call and checking the
+server's closing balance against its own account of every stake and credit, non-zero exit on
+drift. Its first confirmed finding was a lost-update race in its own accounting
+(`credited += (await …)` reads the left side before suspending), which is exactly the class of
+bug it exists to surface. **The restore drill is a CI test**, not a runbook paragraph: the
+Postgres suite dumps the four tables mid-session — an open round one feature spin deep —
+truncates, restores (`OVERRIDING SYSTEM VALUE` + `setval`, what `pg_dump` output does), and a
+fresh composition reports the same pending round, replays the same recorded answers, reproduces
+the ledger to the entry and finishes the interrupted feature with the credit arriving exactly
+once. Retention became a real eviction on Postgres (the memory twin's semantics, one contract
+case over both), and `GET /metrics` moves to its own listener (`http/ops.ts`) when
+`RGS_METRICS_PORT` says the perimeter wants the scrape off the player port.
+
 What is deliberately absent, and stays absent: `/dev/*` (a production server is not driveable),
 `/demo/session` (tokens come from the operator's lobby, §7 — `/operator/sessions` is its
 validating half since R5), and
@@ -1251,6 +1305,8 @@ not — a remote server's regime is that server's configuration) without either 
 | **Ledger** | `apps/rgs` (`ledger/`) | One contract suite, two ledgers (memory always; Postgres in CI, where a trigger proves append-only); the R3 gate — a scripted session's journal sums to zero, reproduces the exact balance history, reconciles clean, and reports then heals the orphaned stake |
 | **Fairness** | `apps/rgs` (`rng/fairness.test.ts`) + the contract suite | The R4 gate: the "player" recomputes every step's `stops[]` from the reveal and their own inputs — hash, chain continuity, stranded-round binding — with `@slot/game-math` only; the suite repeats it over the production chain, `sha256Hex` is held to NIST vectors |
 | **Observability** | `apps/rgs` (`observability/story.test.ts`) | The R6 gate: a composition wired as `main.ts` wires it plays real rounds over the real binding, and one `roundId` retrieves the round's full story — log lines (with the correlation id), spans (`rgs.round_id`, wallet spans nested), `/metrics` — plus the swallowed money-side failures asserted loud at the failure site |
+| **Races** | `apps/rgs` (`http/races-contract.ts`) | The R7 concurrency gate: identical concurrent spins collapse to one round, one debit, one byte-identical answer; a conflicting race has exactly one winning fingerprint and every loser is `ROUND_CONFLICT`; concurrent settles credit once; a storm of parallel rounds leaves the balance exact. Memory always; Postgres in CI, on real row locks |
+| **Restore drill** | `apps/rgs` (`postgres.test.ts`) | The R7 backup gate: dump all four tables mid-session (an open round one feature spin deep), truncate, restore — a fresh composition reports the same pending round, replays the same answers, reproduces the ledger to the entry, and finishes the feature credited exactly once |
 | **Wallet seam** | `apps/rgs` (`wallet/`) | `RemoteWallet` against the wallet sim over a real socket: an outage outlived by bounded retries, a lost confirmation healed by the idempotent ref, a refusal surfaced once and never retried (docs/wallet-api.md §4) |
 | **E2E** | Playwright, in CI | Fixed seed + forced outcomes: spin, win, feature, resume after reload |
 | **Perf** | `tools/perf-harness` | `pnpm perf`: 30 spins against the production bundle, 4× CPU throttle, headless Chrome — ~120 fps avg, p95 9.2 ms, 7 draw calls/frame (max 8: the symbol layer batches), heap sawtooths 9.8 → 14.1 → 9.4 MB. Frames from a rAF probe, draw calls by wrapping the WebGL entry points, heap over CDP; driven through the DOM control layer, so no dev hook is needed and the measured bundle is the shipped one |
@@ -1327,13 +1383,11 @@ D8, D9 — jurisdiction rules on the wire, no renew call, transparent mid-round 
 
 - **The network soak is a test, not a load test.** `tests/http-soak.test.ts` plays 300 rounds over a
   real socket, including a faulty-line run and a shutdown with a hundred abandoned responses in
-  flight — which is what found the `preClose` bug. What it is not is *load*: one client, no
-  concurrency, no memory measurement over time. Sustained multi-client load and a heap trend belong
-  to R7, and the nightly run `RECOMMENDATIONS.md` asks for.
+  flight — which is what found the `preClose` bug. Multi-client load landed with R7 (`pnpm load`
+  and the CI race suite); what remains missing is the *duration* axis: a heap trend over hours.
   **Decision (2026-08-19, build in C8):** a scheduled nightly CI job runs the existing soak with the
   round count from an environment variable (~5,000) plus a heap-trend assertion — the PR gate keeps
-  300, because load in a merge gate is flake with a purpose. Multi-client load (k6/autocannon) waits
-  for R7, where there is a server worth loading.
+  300, because load in a merge gate is flake with a purpose.
 - **The cross-origin question is deferred, not answered.** Development works because Vite proxies
   `/rgs`, `/demo` and `/dev` to `apps/mock-rgs`, so the browser makes same-origin requests and the
   server never widens CORS. A *deployed* client (C8) has no proxy: either it is served from the same
@@ -1348,8 +1402,8 @@ D8, D9 — jurisdiction rules on the wire, no renew call, transparent mid-round 
   `SCHEMA_MISMATCH` — a payload no honest client produces is not a retry invitation.
   **Decision (2026-08-19):** `@fastify/rate-limit` with a per-IP budget arrives in C8, the moment
   this server first faces a network that is not `127.0.0.1`. `apps/rgs`'s half landed in R5
-  (per-token and per-IP buckets, `RATE_LIMITED` + `Retry-After`); backpressure under real load
-  stays R7's.
+  (per-token and per-IP buckets, `RATE_LIMITED` + `Retry-After`), and R7's load tool now measures
+  behaviour under that pacing rather than promising it.
 
 **Simulator (`packages/rgs-sim`) — behaviour the real RGS will have to earn**
 
@@ -1375,13 +1429,14 @@ D8, D9 — jurisdiction rules on the wire, no renew call, transparent mid-round 
 
 **Real RGS (`apps/rgs`) — playing since R1; what remains is the seams' real halves**
 
-- **History retention on Postgres is a number, not an eviction.** The memory store evicts settled
-  rounds past `retention`; the Postgres store keeps every row and reports its configured figure —
-  honest for now, but archival/partitioning is an ops job that belongs to R7.
-- **The metrics endpoint is as public as the game routes.** `GET /metrics` answers unauthenticated
-  on the same listener — right for a demo and for scrape-inside-the-perimeter deploys, but a real
-  operator integration wants it on a separate port or behind the infrastructure's own guard.
-  R7's containerized deploy is where that split belongs.
+- **Concurrent spins of one session can bind the same fairness pair.** The seed chain reads
+  `seeds.current()` at open and rotates only after the open succeeds, with the wallet debit's
+  await in between — so two spins in flight at once can both bind the offered pair, and the
+  reveal that closes one round then discloses the seed a still-open round is playing under. Found
+  by the R7 race suite; harmless for the demo's one sequential player (the client's FSM opens
+  rounds one at a time), and §9 now states the one-round-in-flight assumption out loud. The
+  implementation half — per-session chains, or an atomic take-and-rotate re-published between
+  concurrent opens — belongs with a real operator integration, where it is a protocol amendment.
 
 **Client — implied by the domain, built by no block**
 

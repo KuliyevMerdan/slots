@@ -11,6 +11,8 @@ import {
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from './app.js';
 import type { RateLimitOptions } from './app.js';
+import { buildOpsApp } from './ops.js';
+import { createRgsMetrics } from '../observability/metrics.js';
 import { createGameConfig } from '../config.js';
 import { createRoundService, notImplementedRounds } from '../domain/rounds.js';
 import { MemorySessionStore, createSessionService } from '../domain/sessions.js';
@@ -166,6 +168,28 @@ describe('the real composition plays', () => {
     const body = response.json() as { ready: boolean; mathVersion: string };
     expect(body.ready).toBe(true);
     expect(body.mathVersion).toMatch(/^\d+\.\d+\.\d+$/);
+  });
+});
+
+describe('the metrics scrape moves listeners, never disappears (R7)', () => {
+  it('a composition that split the scrape stops serving /metrics on the game listener', async () => {
+    const metrics = createRgsMetrics();
+    const game = buildApp({
+      rounds: notImplementedRounds(),
+      ready: false,
+      observability: { metrics, exposeMetrics: false },
+    });
+
+    expect((await game.inject({ method: 'GET', url: '/metrics' })).statusCode).toBe(404);
+
+    // The ops listener serves the same instruments — only the exposition moved.
+    metrics.callsTotal.inc({ call: 'spin', outcome: 'ok' });
+    const ops = buildOpsApp({ metrics });
+    const scrape = await ops.inject({ method: 'GET', url: '/metrics' });
+    expect(scrape.statusCode).toBe(200);
+    expect(scrape.headers['content-type']).toContain('text/plain');
+    expect(scrape.body).toContain('rgs_calls_total{call="spin",outcome="ok"} 1');
+    expect((await ops.inject({ method: 'GET', url: '/health' })).statusCode).toBe(200);
   });
 });
 

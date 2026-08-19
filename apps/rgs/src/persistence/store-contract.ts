@@ -40,7 +40,15 @@ const conflictOf = async (promise: Promise<unknown>): Promise<string> => {
   return (caught as { conflict: string }).conflict;
 };
 
-export function runStoreContract(name: string, makeStore: () => Promise<RoundStore>): void {
+export interface StoreContractOptions {
+  /** A small retention for the eviction case — the twins' defaults are too roomy to test against. */
+  retention?: number;
+}
+
+export function runStoreContract(
+  name: string,
+  makeStore: (options?: StoreContractOptions) => Promise<RoundStore>,
+): void {
   describe(`store contract · ${name}`, () => {
     it('stores and finds a round, and does not invent one', async () => {
       const store = await makeStore();
@@ -222,6 +230,39 @@ export function runStoreContract(name: string, makeStore: () => Promise<RoundSto
 
       expect(await store.lastOpenedAt(PLAYER)).toBe(1_700_000_005_000);
       expect(await store.lastOpenedAt(OTHER)).toBe(1_700_000_009_000);
+    });
+
+    it('evicts settled rounds past retention, oldest first — and never an in-flight round (R7)', async () => {
+      const store = await makeStore({ retention: 2 });
+
+      const inFlight = roundOf();
+      await store.open(inFlight);
+
+      const settled: StoredRound[] = [];
+      for (let index = 0; index < 4; index += 1) {
+        const round = roundOf();
+        settled.push(round);
+        await store.open(round);
+        await store.commit({
+          roundId: round.roundId,
+          from: 'OPEN',
+          patch: { state: 'SETTLED' },
+          records: [
+            { roundId: round.roundId, call: 'settle', step: 0, fingerprint: 'fp', response: {} },
+          ],
+        });
+      }
+
+      const kept = await store.settledFor(PLAYER, 10);
+      expect(kept.map((round) => round.roundId)).toEqual([
+        settled[3]?.roundId,
+        settled[2]?.roundId,
+      ]);
+      // The evicted round is gone whole — its replay evidence with it, exactly as in memory.
+      expect(await store.find(settled[0]?.roundId ?? '')).toBeUndefined();
+      expect(await store.record(settled[0]?.roundId ?? '', 'settle', 0)).toBeUndefined();
+      // Recovery outranks retention: the oldest round on the table is untouched because it is open.
+      expect(await store.find(inFlight.roundId)).toMatchObject({ state: 'OPEN' });
     });
 
     it('counts rounds by state, all three states always present — the gauge read (R6)', async () => {

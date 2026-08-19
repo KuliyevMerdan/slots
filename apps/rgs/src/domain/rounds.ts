@@ -147,6 +147,21 @@ const walletFailure = (error: unknown, roundId?: string): SlotError => {
       ...(roundId === undefined ? {} : { roundId }),
     });
   }
+  if (error instanceof WalletError && error.code === 'REF_CONFLICT') {
+    // The wallet's "same ref, different parameters" is the game's ROUND_CONFLICT wearing the
+    // operator's vocabulary. Mapping it to WALLET_UNAVAILABLE — as this code did until the R7
+    // race suite produced the window — invited a RECOVERABLE retry of a request that can never
+    // succeed: a conflicting duplicate can reach the wallet *before* the winner has opened the
+    // round, and only the wallet has seen the collision yet.
+    return new SlotError(
+      'ROUND_CONFLICT',
+      'this roundId was already used with different parameters',
+      {
+        ...(roundId === undefined ? {} : { roundId }),
+        cause: error,
+      },
+    );
+  }
   return new SlotError(
     'WALLET_UNAVAILABLE',
     `the wallet did not complete the operation: ${error instanceof Error ? error.message : String(error)}`,
@@ -712,6 +727,13 @@ export function createRoundService({
       throw new SlotError('UNKNOWN_ROUND', 'no such round', { roundId: request.roundId });
     }
     if (round.state !== 'RESOLVED') {
+      // A concurrent duplicate can settle the round between our record read above and this state
+      // read — found by the R7 race suite on Postgres, where the two reads have real daylight
+      // between them. A settled round with a recorded answer is a replay, not a violation.
+      if (round.state === 'SETTLED') {
+        const racedRecord = await store.record(request.roundId, 'settle', 0);
+        if (racedRecord !== undefined) return racedRecord.response as SettleRes;
+      }
       throw new SlotError(
         'ILLEGAL_TRANSITION',
         `round is ${round.state}; it has nothing to settle yet`,

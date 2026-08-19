@@ -531,6 +531,14 @@ One round derives every step from one committed seed, which is why a single reve
 whole round, feature and all. Idempotent replays carry the fairness block verbatim — a duplicate
 `settle` reveals the same seed, not a second one.
 
+**The commitment chain assumes one round in flight per session.** "The commitment on offer" is
+well-defined because a session opens rounds one at a time — the ordinary shape of play, and what
+the client's FSM enforces. A client that opens rounds concurrently under one session may find two
+rounds bound to the same offered pair, and the reveal that closes one then discloses the seed the
+other is still playing under (found by R7's race suite; recorded in the gaps registry). A server
+integration that must serve concurrent opens wants per-session chains — a protocol amendment, not
+a patch.
+
 ---
 
 ## 10. Persisted state

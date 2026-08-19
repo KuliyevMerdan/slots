@@ -445,6 +445,22 @@ importers:
         specifier: 'catalog:'
         version: 3.2.7(@types/node@20.19.43)(lightningcss@1.33.0)(tsx@4.23.12)(yaml@2.9.0)
 
+  tools/load-test:
+    dependencies:
+      '@slot/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+    devDependencies:
+      '@types/node':
+        specifier: ^20
+        version: 20.19.43
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vitest:
+        specifier: 'catalog:'
+        version: 3.2.7(@types/node@20.19.43)(lightningcss@1.33.0)(tsx@4.23.12)(yaml@2.9.0)
+
   tools/math-sim:
     dependencies:
       '@slot/game-math':

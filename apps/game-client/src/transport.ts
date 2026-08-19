@@ -158,22 +158,33 @@ function mockDevPlane(sim: SimServer): DevPlane {
 /**
  * The HTTP path.
  *
- * The base URL is empty in development because Vite proxies `/rgs` and `/demo` to `apps/mock-rgs`,
+ * The base URL is empty in development because Vite proxies `/rgs` and `/demo` to the server,
  * so the browser makes same-origin requests and nobody has to widen CORS to make a dev loop work.
+ *
+ * Where the token comes from is the lobby seam, and it has two honest shapes (§7). Against
+ * `apps/mock-rgs`, `POST /demo/session` issues-and-renews — the demo lobby. Against `apps/rgs`
+ * there is deliberately no demo lobby, so the token arrives out of band in `VITE_RGS_TOKEN` —
+ * the environment standing in for the operator that would normally mint it through
+ * `/operator/sessions`. Renewal under a static token answers the same token: the session either
+ * still stands (and re-authenticating re-attaches, §5) or the operator must issue a new one,
+ * which no client-side code can do for it.
  */
-function overHttp(baseUrl: string): Connection {
+function overHttp(baseUrl: string, staticToken: string | undefined): Connection {
   return {
     kind: 'http',
     transport: withRetry(new HttpTransport({ baseUrl })),
-    token: async () => {
-      const response = await fetch(`${baseUrl}/demo/session`, { method: 'POST' });
-      if (!response.ok) {
-        throw new Error(`the demo lobby refused to issue a token: HTTP ${response.status}`);
-      }
-      const body = (await response.json()) as { token?: string };
-      if (typeof body.token !== 'string') throw new Error('the demo lobby sent no token');
-      return body.token;
-    },
+    token:
+      staticToken !== undefined
+        ? () => Promise.resolve(staticToken)
+        : async () => {
+            const response = await fetch(`${baseUrl}/demo/session`, { method: 'POST' });
+            if (!response.ok) {
+              throw new Error(`the demo lobby refused to issue a token: HTTP ${response.status}`);
+            }
+            const body = (await response.json()) as { token?: string };
+            if (typeof body.token !== 'string') throw new Error('the demo lobby sent no token');
+            return body.token;
+          },
     ...(__DEV_TOOLS__ ? { dev: httpDevPlane(baseUrl) } : {}),
   };
 }
@@ -212,4 +223,6 @@ function httpDevPlane(baseUrl: string): DevPlane {
 }
 
 export const connect = (): Connection =>
-  import.meta.env.VITE_RGS_TRANSPORT === 'http' ? overHttp('') : inProcess();
+  import.meta.env.VITE_RGS_TRANSPORT === 'http'
+    ? overHttp('', import.meta.env.VITE_RGS_TOKEN)
+    : inProcess();
