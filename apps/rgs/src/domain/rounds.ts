@@ -28,6 +28,7 @@ import type { RoundStore, StoredRecord, StoredRound } from '../persistence/store
 import { isStoreConflict } from '../persistence/store.js';
 import type { WalletProvider } from '../wallet/provider.js';
 import { WalletError } from '../wallet/provider.js';
+import type { Ledger, MovementKind } from '../ledger/ledger.js';
 import type { ServerSeedProvider } from '../rng/seeds.js';
 import type { SessionPort } from './sessions.js';
 import { featureSpinFingerprint, settleFingerprint, spinFingerprint } from './fingerprint.js';
@@ -55,6 +56,8 @@ export type RoundService = {
 export interface RoundServiceDeps {
   store: RoundStore;
   wallet: WalletProvider;
+  /** The double-entry journal (R3). Observes every confirmed wallet movement; decides nothing. */
+  ledger: Ledger;
   sessions: SessionPort;
   seeds: ServerSeedProvider;
   config: GameConfig;
@@ -131,11 +134,38 @@ const pendingRoundOf = (round: StoredRound): PendingRound => {
 export function createRoundService({
   store,
   wallet,
+  ledger,
   sessions,
   seeds,
   config,
   now,
 }: RoundServiceDeps): RoundService {
+  /**
+   * Journal one confirmed wallet movement — after the wallet said yes, never instead of asking.
+   * A failure is swallowed by design (ADR-0005): the money already moved, and refusing the call
+   * over its own audit trail would leave the player a debit with no round. The drift a lost entry
+   * creates is what the reconciliation job exists to find, and R6's structured logging is where
+   * the failure itself becomes a loud event. The ledger's own idempotency (mirroring the
+   * wallet's) is what lets every retry path report its movement unconditionally: a replayed
+   * movement journals nothing.
+   */
+  const journal = (
+    kind: MovementKind,
+    roundId: string,
+    playerId: string,
+    amount: Minor,
+  ): Promise<void> =>
+    ledger
+      .record({
+        kind,
+        roundId,
+        playerId,
+        amount,
+        ref: kind === 'WIN' ? `${roundId}:settle` : roundId,
+        at: now(),
+      })
+      .catch(() => undefined);
+
   /** The session every non-authenticate call runs under — expiry checked on every call (§5, D9). */
   const activeSession = (): Session => {
     const session = sessions.active();
@@ -227,6 +257,10 @@ export function createRoundService({
       balance = await wallet.getBalance(session.playerId).catch((error: unknown) => {
         throw walletFailure(error, request.roundId);
       });
+      // The debit happened when the round opened; journaling it again is a no-op unless the
+      // original entry was lost to a crash — in which case this is the retry healing the journal
+      // exactly as it heals the round.
+      await journal('STAKE', request.roundId, round.playerId, round.stake);
     } else {
       // This server never honours forceOutcome — there is no dev mode to enable it (§8). Refused
       // before anything else is considered, so a tampered request learns nothing.
@@ -246,6 +280,7 @@ export function createRoundService({
         .catch((error: unknown) => {
           throw walletFailure(error, request.roundId);
         });
+      await journal('STAKE', request.roundId, session.playerId, request.stake);
 
       const opened: StoredRound = {
         roundId: request.roundId,
@@ -267,10 +302,14 @@ export function createRoundService({
           // The debit is confirmed and the round cannot exist — the one state the rollback
           // exists for (docs/wallet-api.md §4). Undo the stake, then surface the store failure
           // as-is: it is `RECOVERABLE`, and the client's same-`roundId` retry starts clean
-          // because a rolled-back ref is debitable again (§3). If the rollback itself cannot be
-          // delivered, the orphan is what R3's reconciliation exists to find — and hiding the
-          // original failure behind the rollback's would help nobody.
-          await wallet.rollback(request.roundId).catch(() => undefined);
+          // because a rolled-back ref is debitable again (§3). A delivered rollback is journaled
+          // like any movement; one that cannot be delivered leaves a standing stake with no
+          // round, which is the orphan the reconciliation job reports — and hiding the original
+          // failure behind the rollback's would help nobody.
+          await wallet
+            .rollback(request.roundId)
+            .then(() => journal('ROLLBACK', request.roundId, session.playerId, request.stake))
+            .catch(() => undefined);
           throw error;
         }
         // A concurrent duplicate opened it first. The debit replayed idempotently, the round is
@@ -516,6 +555,9 @@ export function createRoundService({
       .catch((error: unknown) => {
         throw walletFailure(error, request.roundId);
       });
+    // Zero included: a feature round can settle with nothing to pay, and the credit still ran —
+    // one wallet movement, one entry, even when the amount is 0.
+    await journal('WIN', request.roundId, round.playerId, credited);
 
     const response: SettleRes = {
       roundId: request.roundId,

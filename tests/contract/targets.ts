@@ -3,6 +3,7 @@ import { SimServer, createSimConfig, createSimState } from '@slot/rgs-sim';
 import type { FaultConfig } from '@slot/rgs-sim';
 import { buildApp } from '@slot/mock-rgs';
 import {
+  MemoryLedger,
   MemoryRoundStore,
   RemoteWallet,
   SingleSessionHost,
@@ -238,6 +239,7 @@ export const realRgsTarget: ContractTarget = {
   async start(options) {
     const playerId = 'demo-player';
     const store = new MemoryRoundStore();
+    const ledger = new MemoryLedger();
     const walletSim = new WalletSim({ [playerId]: options.balance });
     const walletApp = buildWalletSimApp(walletSim);
     const walletUrl = await walletApp.listen({ port: 0, host: '127.0.0.1' });
@@ -248,6 +250,7 @@ export const realRgsTarget: ContractTarget = {
     const rounds = createRoundService({
       store,
       wallet,
+      ledger,
       sessions,
       seeds: staticSeedProvider(SEED),
       config: createGameConfig(),
@@ -263,6 +266,7 @@ export const realRgsTarget: ContractTarget = {
       transport: new HttpTransport({ baseUrl }),
       reset: ({ balance = options.balance } = {}) => {
         store.clear();
+        ledger.clear();
         walletSim.reset({ [playerId]: balance });
         const token = `contract-rgs-${(issued += 1)}`;
         sessions.issue(token, { playerId, currency: 'EUR', expiresAt: EXPIRES_AT });

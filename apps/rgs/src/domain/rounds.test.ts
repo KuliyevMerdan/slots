@@ -9,6 +9,7 @@ import {
 } from '@slot/protocol';
 import { createGameConfig } from '../config.js';
 import { MemoryRoundStore } from '../persistence/memory.js';
+import { MemoryLedger } from '../ledger/memory.js';
 import { MockWallet } from '../wallet/mock.js';
 import { staticSeedProvider } from '../rng/seeds.js';
 import { SingleSessionHost } from './sessions.js';
@@ -35,18 +36,20 @@ const nextRoundId = (): string =>
 const harness = ({ balance = 1_000_000 as Minor, now = NOW } = {}) => {
   const store = new MemoryRoundStore();
   const wallet = new MockWallet({ [PLAYER]: balance });
+  const ledger = new MemoryLedger();
   const sessions = new SingleSessionHost();
   sessions.issue(TOKEN, { playerId: PLAYER, currency: 'EUR', expiresAt: EXPIRES });
   const clock = { now };
   const service = createRoundService({
     store,
     wallet,
+    ledger,
     sessions,
     seeds: staticSeedProvider('rgs-test-seed'),
     config: createGameConfig(),
     now: () => clock.now,
   });
-  return { store, wallet, sessions, service, clock };
+  return { store, wallet, ledger, sessions, service, clock };
 };
 
 const rejection = async (promise: Promise<unknown>): Promise<SlotError> => {
@@ -350,6 +353,7 @@ describe('the rollback path — a wallet failure mid-round leaves no orphaned de
     const service = createRoundService({
       store: failingStore,
       wallet: h.wallet,
+      ledger: h.ledger,
       sessions: h.sessions,
       seeds: staticSeedProvider('rgs-test-seed'),
       config: createGameConfig(),
@@ -394,6 +398,7 @@ describe('the rollback path — a wallet failure mid-round leaves no orphaned de
     const service = createRoundService({
       store: h.store,
       wallet: flakyWallet,
+      ledger: h.ledger,
       sessions: h.sessions,
       seeds: staticSeedProvider('rgs-test-seed'),
       config: createGameConfig(),
@@ -424,6 +429,7 @@ describe('the wallet as an upstream', () => {
         credit: () => Promise.reject(new Error('wallet is down')),
         rollback: () => Promise.reject(new Error('wallet is down')),
       },
+      ledger: h.ledger,
       sessions: h.sessions,
       seeds: staticSeedProvider('rgs-test-seed'),
       config: createGameConfig(),

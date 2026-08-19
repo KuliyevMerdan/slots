@@ -15,6 +15,7 @@ import { createRoundService, notImplementedRounds } from '../domain/rounds.js';
 import { SingleSessionHost } from '../domain/sessions.js';
 import { staticSeedProvider } from '../rng/seeds.js';
 import { MemoryRoundStore } from '../persistence/memory.js';
+import { MemoryLedger } from '../ledger/memory.js';
 import { MockWallet } from '../wallet/mock.js';
 
 /**
@@ -50,6 +51,7 @@ const realApp = (): FastifyInstance => {
     rounds: createRoundService({
       store: new MemoryRoundStore(),
       wallet: new MockWallet({ 'demo-player': 1_000_000 as Minor }),
+      ledger: new MemoryLedger(),
       sessions,
       seeds: staticSeedProvider('app-test-seed'),
       config: createGameConfig(),

@@ -35,6 +35,8 @@ const EnvSchema = z.object({
    * timeouts and bounded retries. Absent means the in-process `MockWallet` (dev and demo).
    */
   RGS_WALLET_URL: z.string().min(1).optional(),
+  /** How often the ledger is trued against the wallet (R3). 0 disables the job. */
+  RGS_RECONCILE_INTERVAL_MS: z.coerce.number().int().min(0).default(60_000),
 });
 
 export type RgsEnv = z.infer<typeof EnvSchema>;

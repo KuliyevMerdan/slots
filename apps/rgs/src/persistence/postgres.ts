@@ -220,20 +220,28 @@ export class PostgresRoundStore implements RoundStore {
   }
 }
 
+/**
+ * A pool that parses `int8` as number — safe because minor units are safe integers. Per-pool
+ * rather than pg's global `setTypeParser`: a library mutating process-wide parser state on import
+ * is exactly the kind of spooky action this workspace bans elsewhere. Exported so the composition
+ * can hand one pool to both the store and the ledger.
+ */
+export function createPgPool(databaseUrl: string): Pool {
+  const INT8_OID = 20;
+  const types = {
+    getTypeParser: (oid: number, format?: 'text' | 'binary') =>
+      oid === INT8_OID && format !== 'binary' ? int8 : pg.types.getTypeParser(oid, format as never),
+  } as pg.CustomTypesConfig;
+  return new pg.Pool({ connectionString: databaseUrl, types });
+}
+
 /** Connect, parse bigints as numbers (safe: minor units are safe integers), migrate, serve. */
 export async function createPostgresStore({
   databaseUrl,
   retention,
   pool,
 }: PostgresStoreOptions): Promise<PostgresRoundStore> {
-  // Per-pool rather than pg's global `setTypeParser`: a library mutating process-wide parser
-  // state on import is exactly the kind of spooky action this workspace bans elsewhere.
-  const INT8_OID = 20;
-  const types = {
-    getTypeParser: (oid: number, format?: 'text' | 'binary') =>
-      oid === INT8_OID && format !== 'binary' ? int8 : pg.types.getTypeParser(oid, format as never),
-  } as pg.CustomTypesConfig;
-  const connected = pool ?? new pg.Pool({ connectionString: databaseUrl, types });
+  const connected = pool ?? createPgPool(databaseUrl);
   await migrate(connected);
   return new PostgresRoundStore(connected, retention);
 }

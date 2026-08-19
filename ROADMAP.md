@@ -46,9 +46,12 @@ produce. **R2 landed 2026-08-19** as well: the wallet seam is real at the wire �
 `RemoteWallet` with deadlines and bounded retries against any wallet speaking
 [`docs/wallet-api.md`](docs/wallet-api.md), the rollback path closing the confirmed-debit-no-round
 window, and the third contract target running client→HTTP→rgs→HTTP→wallet with faults enacted by
-refusing the real wallet. **Next is C8** — packaging: the deploy, the README, rate limiting, the
-nightly soak and the E2E suite. **R3** (the ledger), **R4** (commit/reveal) and **R5** (sessions
-for real) are unblocked in parallel.
+refusing the real wallet. **R3 landed 2026-08-19**: the double-entry ledger — append-only on both
+stores (a trigger enforces it on Postgres), every wallet movement journaled with idempotency
+mirroring the wallet's own, and a reconciliation job that trues the journal against the wallet and
+finds the orphaned stake balance-truing cannot see (ADR-0005). **Next is C8** — packaging: the
+deploy, the README, rate limiting, the nightly soak and the E2E suite. **R4** (commit/reveal) and
+**R5** (sessions for real) are unblocked in parallel; **R7** now gates only on R6.
 
 ---
 
@@ -77,7 +80,7 @@ contract suite. `#` maps each block back to the phase numbering of the original 
 | **R0** | `apps/rgs` skeleton — routes stubbed, `NotImplemented`, wallet seam | C1 | 2 | ✅ (landed 2026-08-19) |
 | **R1** | Rounds & idempotency on Postgres | R0, S3 | 10 | ✅ (landed 2026-08-19) |
 | **R2** | Wallet integration behind `WalletProvider` | R1 | 10 | ✅ (landed 2026-08-19) |
-| **R3** | Double-entry ledger in integer minor units | R2 | 10 | ☐ |
+| **R3** | Double-entry ledger in integer minor units | R2 | 10 | ✅ (landed 2026-08-19) |
 | **R4** | Server RNG + provably-fair seed commit/reveal | R1 | 10 | ☐ |
 | **R5** | Sessions, auth, limits — the `PLAYER` error class for real | R1 | 10 | ☐ |
 | **R6** | Observability — structured logs, metrics, OTel on `roundId` | R1 | 10 | ☐ |
@@ -597,11 +600,33 @@ capability turned honestly true: `WALLET_UNAVAILABLE` is demanded by refusing th
 
 ## Block R3 — Double-entry ledger
 
-- [ ] Append-only, double-entry, **integer minor units**, one entry pair per money movement.
-- [ ] Every round's debit and credit reconcilable from the ledger alone.
-- [ ] A reconciliation job that trues the ledger against the wallet and reports drift.
+_Landed **2026-08-19**._
+
+- [x] Append-only, double-entry, **integer minor units**, one entry pair per money movement. Two
+      implementations behind one `Ledger` port — in-memory and Postgres, held to one shared
+      contract suite exactly as the round store is — with append-only *enforced* on Postgres by a
+      trigger, not promised by review. The domain journals after every confirmed wallet movement
+      (`STAKE` on debit, `WIN` on credit, `ROLLBACK` on a delivered reversal), and `record`'s
+      idempotency mirrors the wallet's, movement for movement: a standing stake replays, a
+      rolled-back ref is stakeable again, a win happens once per ref — so every retry path reports
+      its movement unconditionally and one movement is one entry (ADR-0005).
+- [x] Every round's debit and credit reconcilable from the ledger alone — `entriesFor(roundId)`,
+      with the stake journaled *before* the round opens and no foreign key to `rounds`, because
+      the debit-with-no-round state is the orphan the scan below exists to find.
+- [x] A reconciliation job that trues the ledger against the wallet and reports drift —
+      `reconcile()`: per-player balance truing against a caller-supplied opening (windowed by
+      `since`), plus a whole-journal orphan scan that catches the state balance-truing cannot see
+      (the wallet and the ledger *agree* on an orphan). Run on an interval by `main.ts`
+      (`RGS_RECONCILE_INTERVAL_MS`), reported through the app log.
 
 **Done when:** a scripted session's ledger sums to zero and reproduces the exact balance history.
+✅ — `ledger/session.test.ts` plays dead rounds, a settled win, a full feature and an
+aborted-then-retried spin through the real domain, then retells the whole session from the journal
+alone: the accounts cancel, folding the player legs from the opening balance reproduces every
+balance the wire reported in order, the house's take is stakes − rollbacks − wins, and
+`reconcile()` answers clean. The companion case loses the rollback on purpose: the orphaned stake
+is reported at zero drift, and the client's same-`roundId` retry heals the journal without a
+correction ever being written.
 
 ## Block R4 — Server RNG & provable fairness
 
