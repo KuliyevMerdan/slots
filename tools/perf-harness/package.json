@@ -1,5 +1,5 @@
 {
-  "name": "@slot/dev-tools",
+  "name": "@slot/perf-harness",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -11,20 +11,23 @@
       "default": "./dist/index.js"
     }
   },
+  "bin": {
+    "perf-harness": "./dist/main.js"
+  },
   "files": [
     "dist"
   ],
-  "sideEffects": false,
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "vitest run --config ../../config/vitest.package.ts"
+    "test": "vitest run --config ../../config/vitest.package.ts",
+    "start": "node dist/main.js"
   },
   "dependencies": {
-    "@slot/engine": "workspace:*",
-    "@slot/protocol": "workspace:*"
+    "playwright-core": "^1.49.0"
   },
   "devDependencies": {
+    "@types/node": "^20",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }

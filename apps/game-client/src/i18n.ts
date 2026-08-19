@@ -59,6 +59,18 @@ export interface Strings {
   realityContinue: string;
   notice: string;
 
+  /* The round-history drawer — the player-visible half of the wire's `history` call. */
+  historyOpen: string;
+  historyTitle: string;
+  historyEmpty: string;
+  historyError: string;
+  historyFreeSpins(count: number): string;
+  /** Marks a win the ceiling capped. */
+  historyCappedMark: string;
+  /** States `retention` honestly: this server keeps this many rounds, and no more. */
+  historyRetention(kept: number): string;
+  drawerClose: string;
+
   /* The Pixi surfaces, injected at construction. */
   panel: PanelLabels;
   feature: FeatureLabels;
@@ -97,6 +109,16 @@ const EN: Strings = {
     `You have been playing for ${String(minutes)} ${minutes === 1 ? 'minute' : 'minutes'}. Do you want to continue?`,
   realityContinue: 'CONTINUE',
   notice: '18+ · Demo · Play money only — no real money and no payments',
+
+  historyOpen: 'HISTORY',
+  historyTitle: 'ROUND HISTORY',
+  historyEmpty: 'No settled rounds yet.',
+  historyError: 'Could not load the history.',
+  historyFreeSpins: (count) => `${String(count)} free ${count === 1 ? 'spin' : 'spins'}`,
+  historyCappedMark: 'MAX',
+  historyRetention: (kept) =>
+    `This demo server keeps only the last ${String(kept)} settled rounds.`,
+  drawerClose: 'CLOSE',
 
   panel: { bet: 'BET', balance: 'BALANCE', win: 'WIN', turbo: 'TURBO', auto: 'AUTO' },
   feature: {
@@ -156,6 +178,17 @@ const RU: Strings = {
     `Вы играете уже ${String(minutes)} ${ruPlural(minutes, 'минуту', 'минуты', 'минут')}. Продолжить?`,
   realityContinue: 'ПРОДОЛЖИТЬ',
   notice: '18+ · Демо · Только игровые деньги — без реальных денег и платежей',
+
+  historyOpen: 'ИСТОРИЯ',
+  historyTitle: 'ИСТОРИЯ РАУНДОВ',
+  historyEmpty: 'Завершённых раундов пока нет.',
+  historyError: 'Не удалось загрузить историю.',
+  historyFreeSpins: (count) =>
+    `${String(count)} ${ruPlural(count, 'фриспин', 'фриспина', 'фриспинов')}`,
+  historyCappedMark: 'МАКС',
+  historyRetention: (kept) =>
+    `Этот демо-сервер хранит только последние ${String(kept)} ${ruPlural(kept, 'завершённый раунд', 'завершённых раунда', 'завершённых раундов')}.`,
+  drawerClose: 'ЗАКРЫТЬ',
 
   panel: { bet: 'СТАВКА', balance: 'БАЛАНС', win: 'ВЫИГРЫШ', turbo: 'ТУРБО', auto: 'АВТО' },
   feature: {

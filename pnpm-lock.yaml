@@ -104,6 +104,9 @@ importers:
       '@slot/compliance':
         specifier: workspace:*
         version: link:../../packages/compliance
+      '@slot/dev-tools':
+        specifier: workspace:*
+        version: link:../../packages/dev-tools
       '@slot/engine':
         specifier: workspace:*
         version: link:../../packages/engine
@@ -202,6 +205,13 @@ importers:
         version: 3.2.7(@types/node@20.19.43)(lightningcss@1.33.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/dev-tools:
+    dependencies:
+      '@slot/engine':
+        specifier: workspace:*
+        version: link:../engine
+      '@slot/protocol':
+        specifier: workspace:*
+        version: link:../protocol
     devDependencies:
       typescript:
         specifier: 'catalog:'
@@ -370,6 +380,22 @@ importers:
       '@slot/rgs-sim':
         specifier: workspace:*
         version: link:../../packages/rgs-sim
+    devDependencies:
+      '@types/node':
+        specifier: ^20
+        version: 20.19.43
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vitest:
+        specifier: 'catalog:'
+        version: 3.2.7(@types/node@20.19.43)(lightningcss@1.33.0)(tsx@4.23.12)(yaml@2.9.0)
+
+  tools/perf-harness:
+    dependencies:
+      playwright-core:
+        specifier: ^1.49.0
+        version: 1.62.1
     devDependencies:
       '@types/node':
         specifier: ^20
@@ -1668,6 +1694,11 @@ packages:
 
   pixi.js@8.19.0:
     resolution: {integrity: sha512-pq1O6emA/GFjjeF+8d3Pb5t7knD8FsnfWGqQcRjYjsqFZ7QdzG1XgjLDUu0DFJRbafjV5+g8iNLFBx0b9649lg==}
+
+  playwright-core@1.62.1:
+    resolution: {integrity: sha512-wPYSwEBJY9GHraISXqyqtx0na0LpO3XEX7jNDhntbex7tzUS7kLnZsOlFruFJB4Hi/rhDMjXGqHewDZ68nYZVw==}
+    engines: {node: '>=20'}
+    hasBin: true
 
   postcss@8.5.26:
     resolution: {integrity: sha512-u82N74LFzG8ca+dD8puPnplTXoGH4fTPpVGuIbt36G3qvNlkvfD0lEAZSxaly3KX8TS/L1A1gsCEmvKmBcVbkQ==}
@@ -3263,6 +3294,8 @@ snapshots:
       ismobilejs: 1.1.1
       parse-svg-path: 0.2.0
       tiny-lru: 11.4.7
+
+  playwright-core@1.62.1: {}
 
   postcss@8.5.26:
     dependencies:

@@ -9,7 +9,7 @@ import { errorBody } from './errors.js';
 /**
  * The debug surface: fault injection, reset, and a look at the session.
  *
- * These are the controls the debug panel (C7) drives, and the reason they are HTTP routes rather
+ * These are the controls the debug panel drives, and the reason they are HTTP routes rather
  * than a browser-only affordance is that the *interesting* faults are network faults. Flipping a
  * drop rate in-process proves the client survives a promise that never settles; flipping it here
  * proves it survives a socket that goes quiet, which is the thing that actually happens to players.
@@ -118,6 +118,18 @@ export function registerDevRoutes(app: FastifyInstance, sim: SimServer): void {
 
     request.log.info({ serverSeed, balance }, 'session reset');
     return reply.code(200).send({ token: sim.state.token, balance: sim.state.balance });
+  });
+
+  /**
+   * End the session now — the HTTP face of `SimServer.expireSession()`.
+   *
+   * The debug panel's EXPIRE button over HTTP, and the on-demand producer of `SESSION_EXPIRED`
+   * mid-round (docs/protocol.md §5) — otherwise a twelve-hour wait.
+   */
+  app.post('/dev/expire', (request) => {
+    sim.expireSession();
+    request.log.info('session expired on demand');
+    return { expiresAt: sim.state.session.expiresAt };
   });
 
   /**

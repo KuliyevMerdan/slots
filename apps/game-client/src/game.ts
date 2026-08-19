@@ -29,6 +29,9 @@ import { createAnnouncer } from './announce.js';
 import { STRINGS, resolveLocale } from './i18n.js';
 import type { Strings } from './i18n.js';
 import { createDomControls } from './dom-controls.js';
+import { createDrawer, trapFocus } from './drawer.js';
+import type { Drawer, DrawerView } from './drawer.js';
+import { createHistoryPanel } from './history.js';
 
 /**
  * The wiring site — the one place that knows every piece exists.
@@ -45,8 +48,9 @@ import { createDomControls } from './dom-controls.js';
 const MARGIN = 28;
 
 /**
- * The demo's autoplay plan. A player-facing picker is C7 (the debug panel's frame); the stop
- * conditions are the point here, and stop-on-feature is the one every regulator asks about first.
+ * The demo's autoplay plan. A player-facing picker is C8's, in the drawer the history panel
+ * shares; the stop conditions are the point here, and stop-on-feature is the one every regulator
+ * asks about first.
  */
 const AUTOPLAY_PLAN = { spins: 25, stopOnFeature: true } as const;
 
@@ -367,6 +371,10 @@ export async function startGame(root: HTMLElement, options: GameOptions = {}): P
     render();
   });
 
+  // The dialog moves focus in when it opens; the trap keeps Tab from walking out into a page the
+  // overlay is covering — the WAI-ARIA dialog pattern's answer, wired once for the modal's life.
+  const untrapReality = realityRoot === null ? undefined : trapFocus(realityRoot);
+
   /* ── the sound toggle ─────────────────────────────────────────────────────────────────────── */
   const soundToggle = document.getElementById('sound-toggle');
   if (audio !== null && soundToggle instanceof HTMLButtonElement) {
@@ -381,6 +389,119 @@ export async function startGame(root: HTMLElement, options: GameOptions = {}): P
       applyMute(!audio.muted);
       remember();
     });
+  }
+
+  /* ── the drawer: round history for players, dev tools for developers ────────────────────────
+   * One DOM frame in the shell, two documents behind it. The history panel is every build's — a
+   * regulated market requires the player to be able to see their rounds, and the server half
+   * (`history`, `retention`) has been on the wire since S3. The debug panel arrives by dynamic
+   * import inside a compile-stripped branch, so a production bundle carries neither the panel nor
+   * the package behind it — which `verify:strip` checks against the built output.
+   */
+  const drawerRoot = document.getElementById('drawer');
+  const drawerTitle = document.getElementById('drawer-title');
+  const drawerClose = document.getElementById('drawer-close');
+  const drawerBody = document.getElementById('drawer-body');
+
+  let drawer: Drawer | undefined;
+  let destroyPanels: (() => void)[] = [];
+
+  if (
+    drawerRoot !== null &&
+    drawerTitle !== null &&
+    drawerClose instanceof HTMLButtonElement &&
+    drawerBody !== null
+  ) {
+    const frame = createDrawer({
+      root: drawerRoot,
+      title: drawerTitle,
+      close: drawerClose,
+      closeLabel: strings.drawerClose,
+    });
+    drawer = frame;
+
+    const history = createHistoryPanel({
+      doc: document,
+      host: drawerBody,
+      currency,
+      strings,
+      // The server's own account, fetched fresh on every open — never a client-side ledger.
+      fetchHistory: () => connection.transport.history({}),
+    });
+    history.element.hidden = true;
+    destroyPanels.push(() => {
+      history.destroy();
+    });
+    const historyView: DrawerView = {
+      title: strings.historyTitle,
+      element: history.element,
+      onOpen: () => void history.refresh(),
+    };
+
+    const historyToggle = document.getElementById('history-toggle');
+    if (historyToggle instanceof HTMLButtonElement) {
+      historyToggle.textContent = strings.historyOpen;
+      historyToggle.hidden = false;
+      historyToggle.addEventListener('click', () => {
+        frame.toggle(historyView);
+      });
+    }
+
+    if (__DEV_TOOLS__) {
+      // Dynamic on purpose: the production build deletes this branch at define time, so the
+      // import — and the whole package behind it — never enters the bundle.
+      void import('@slot/dev-tools').then(({ createDebugPanel, DEVTOOLS_CSS }) => {
+        // The panel's styling travels with the panel (see style.ts) — injecting it here keeps the
+        // shipped index.html free of dev selectors, which verify:strip asserts.
+        const style = document.createElement('style');
+        style.textContent = DEVTOOLS_CSS;
+        document.head.appendChild(style);
+
+        const dev = connection.dev;
+        const panel = createDebugPanel({
+          doc: document,
+          host: drawerBody,
+          engine,
+          force: (outcome: ForceOutcome) => {
+            pendingForce = outcome;
+          },
+          download: (filename, text) => {
+            const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = filename;
+            link.click();
+            URL.revokeObjectURL(url);
+          },
+          ...(dev === undefined
+            ? {}
+            : {
+                faults: dev.faults,
+                session: dev.session,
+                serverState: dev.serverState,
+                ...(dev.jurisdiction === undefined ? {} : { jurisdiction: dev.jurisdiction }),
+              }),
+        });
+        panel.element.hidden = true;
+        destroyPanels.push(() => {
+          panel.destroy();
+        });
+        const devView: DrawerView = { title: 'DEV TOOLS', element: panel.element };
+
+        // Created here rather than in the shell, so a production page carries no DEV button to
+        // find. Developer surface, deliberately unlocalised — like the panel's own labels.
+        const corner = document.querySelector('.corner-left');
+        if (corner !== null) {
+          const devToggle = document.createElement('button');
+          devToggle.type = 'button';
+          devToggle.textContent = 'DEV';
+          devToggle.addEventListener('click', () => {
+            frame.toggle(devView);
+          });
+          corner.appendChild(devToggle);
+        }
+      });
+    }
   }
 
   /**
@@ -567,9 +688,9 @@ export async function startGame(root: HTMLElement, options: GameOptions = {}): P
   render();
 
   if (__DEV_TOOLS__) {
-    // The debug panel is C7; this is the handle it will hang off, and what makes a browser console
-    // a usable inspector in the meantime. `force('MAX_WIN')` is how C4 and C5 are developed at all:
-    // a max win, a near miss or a feature on demand, instead of waiting for one.
+    // The debug panel drives the same seams through its own ports; this handle is what keeps the
+    // browser console a usable inspector beside it. `force('MAX_WIN')` is how C4 and C5 were
+    // developed at all: a max win, a near miss or a feature on demand, instead of waiting for one.
     (window as unknown as { __slot?: unknown }).__slot = {
       app,
       engine,
@@ -587,6 +708,10 @@ export async function startGame(root: HTMLElement, options: GameOptions = {}): P
     destroy: () => {
       autoplay.destroy();
       domControls.destroy();
+      drawer?.destroy();
+      for (const destroyPanel of destroyPanels) destroyPanel();
+      destroyPanels = [];
+      untrapReality?.();
       if (unlockTimer !== undefined) clearTimeout(unlockTimer);
       detachUnlock?.();
       stopWatchingVisibility?.();

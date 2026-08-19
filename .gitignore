@@ -4,6 +4,12 @@ coverage/
 .turbo/
 *.tsbuildinfo
 
+# perf-harness output — a Chrome trace is a working artifact, not a source
+tools/perf-harness/traces/
+
+# local agent/editor launch config — absolute paths, machine-specific
+.claude/
+
 .env
 .env.*
 !.env.example

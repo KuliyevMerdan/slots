@@ -116,7 +116,7 @@ export class SimServer {
     return this.#faults;
   }
 
-  /** Runtime-toggleable, which is the point: the debug panel (C7) flips these mid-session. */
+  /** Runtime-toggleable, which is the point: the debug panel flips these mid-session. */
   setFaults(faults: FaultConfig): void {
     this.#faults = faults;
   }
@@ -167,7 +167,7 @@ export class SimServer {
   /**
    * End the session now — the producer the expiry path needs on demand.
    *
-   * A test or the debug panel (C7) calls this mid-round and the next call fails `SESSION_EXPIRED`,
+   * A test or the debug panel calls this mid-round and the next call fails `SESSION_EXPIRED`,
    * which is otherwise a twelve-hour wait.
    */
   expireSession(): void {

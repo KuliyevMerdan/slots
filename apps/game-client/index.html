@@ -214,6 +214,127 @@
         color: var(--muted);
       }
 
+      /* The top-left cluster: the history drawer's launcher (every build) and the dev panel's
+         (revealed by the wiring only when __DEV_TOOLS__ is on — a production build has neither
+         the button's label nor the panel behind it). Same pill as the sound toggle. */
+      .corner-left {
+        position: fixed;
+        top: max(10px, env(safe-area-inset-top));
+        left: max(10px, env(safe-area-inset-left));
+        display: flex;
+        gap: 8px;
+        z-index: 5;
+      }
+
+      .corner-left button {
+        padding: 8px 14px;
+        border: 1px solid #2c3860;
+        border-radius: 999px;
+        background: rgba(16, 24, 48, 0.8);
+        color: var(--muted);
+        font: 600 11px/1 inherit;
+        letter-spacing: 0.12em;
+        cursor: pointer;
+      }
+
+      .corner-left button:focus-visible {
+        outline: 2px solid #39d98a;
+        outline-offset: 2px;
+      }
+
+      /* The shared drawer: one frame, two documents — the round history and the dev panel. A side
+         panel rather than a modal: the game keeps running and stays visible beside it. */
+      #drawer {
+        position: fixed;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 15;
+        width: min(420px, 92vw);
+        display: flex;
+        flex-direction: column;
+        background: rgba(10, 15, 32, 0.97);
+        border-left: 1px solid #2c3860;
+        padding: max(10px, env(safe-area-inset-top)) 16px max(10px, env(safe-area-inset-bottom));
+        overflow-y: auto;
+      }
+
+      #drawer[hidden] {
+        display: none;
+      }
+
+      #drawer header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 6px 0 12px;
+        border-bottom: 1px solid #2c3860;
+      }
+
+      #drawer h2 {
+        margin: 0;
+        font-size: 13px;
+        letter-spacing: 0.14em;
+      }
+
+      #drawer-close {
+        padding: 6px 12px;
+        border: 1px solid #2c3860;
+        border-radius: 999px;
+        background: transparent;
+        color: var(--muted);
+        font: 600 11px/1 inherit;
+        letter-spacing: 0.12em;
+        cursor: pointer;
+      }
+
+      #drawer-close:focus-visible {
+        outline: 2px solid #39d98a;
+        outline-offset: 2px;
+      }
+
+      /* The history document. */
+      .history-status,
+      .history-retention {
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.5;
+      }
+
+      .history-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 12px;
+        padding: 10px 0;
+        border-bottom: 1px solid rgba(44, 56, 96, 0.5);
+        font-size: 13px;
+      }
+
+      .history-when {
+        color: var(--muted);
+        flex-basis: 100%;
+        font-size: 11px;
+      }
+
+      .history-win {
+        color: var(--muted);
+      }
+
+      .history-win-paid {
+        color: #39d98a;
+        font-weight: 600;
+      }
+
+      .history-feature {
+        color: #e8b339;
+        font-size: 12px;
+      }
+
+      /* The dev panel's styling is deliberately NOT here: it ships inside @slot/dev-tools
+         (DEVTOOLS_CSS) and is injected by the same compile-stripped branch that creates the
+         panel — verify:strip holds this page to containing no trace of it. */
+
       /* Present to assistive technology, absent from the layout. Not `display: none` and not
          `visibility: hidden` — either of those removes the element from the accessibility tree,
          which is the one thing this element exists to be in. */
@@ -250,6 +371,28 @@
 
     <!-- Hidden until the client knows WebAudio exists; wired in game.ts, persisted as a preference. -->
     <button id="sound-toggle" type="button" aria-pressed="true" hidden>SOUND ON</button>
+
+    <!--
+      The drawer's launchers. HISTORY is player-facing and appears once the session is up. The DEV
+      button is not here at all: dev-build wiring creates it, so a production page carries neither
+      the button nor the panel it would open.
+    -->
+    <div class="corner-left">
+      <button id="history-toggle" type="button" hidden>HISTORY</button>
+    </div>
+
+    <!--
+      The shared drawer (drawer.ts): the round history and the dev panel are documents, and a
+      document wants DOM — scroll, focus order, a screen-reader story — not canvas. Non-modal on
+      purpose: the game stays visible and playable beside it.
+    -->
+    <aside id="drawer" role="dialog" aria-labelledby="drawer-title" hidden>
+      <header>
+        <h2 id="drawer-title"></h2>
+        <button id="drawer-close" type="button">CLOSE</button>
+      </header>
+      <div id="drawer-body"></div>
+    </aside>
 
     <!--
       The reality check (jurisdictionRules.realityCheckIntervalMs). DOM rather than canvas for the

@@ -4,20 +4,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-> ⚠️ **The game is a game, its math is a designed 96%, and the platform layer is real.**
-> As of **2026-08-19**, **C0, C1, S0, S1, C2, S2, C3, C4, C5, S4, S3 and C6 have landed** — the
+> ⚠️ **The game is a game, its math is a designed 96%, and the tooling now watches itself.**
+> As of **2026-08-19**, **C0, C1, S0, S1, C2, S2, C3, C4, C5, S4, S3, C6 and C7 have landed** — the
 > workspace, the contracts (`protocol`, `money`, `game-math`), `rgs-sim`, the `RgsTransport` seam
 > with `MockTransport`, `HttpTransport` and the retry policy, `engine`, `apps/mock-rgs`, `renderer`,
 > `ui` and `apps/game-client`, `tools/math-sim` — the RTP report that tuned the strips —
-> `tests/contract/`, the switch-over gate, and now `packages/platform` and `packages/compliance`:
-> jurisdiction rules travel **on the wire** (`GameConfig.jurisdictionRules`, D8), the sim enforces
-> the half it can see (spin cadence, `LIMIT_REACHED`), a session that expires under an open round
-> **re-authenticates transparently** and resumes from `pendingRound` (§5, D9, the engine's
-> `REAUTHENTICATING` phase), autoplay runs above an untouched engine and stops at its limits, audio
-> is synthesized at boot, the client speaks en/ru under a glyph-coverage test, a DOM control layer
-> gives the keyboard the same panel, and both palettes hold WCAG AA in CI. 801 tests, `pnpm check`
-> green. One `packages/*` remains scaffolded and empty — `dev-tools` (C7) — with its dependency
-> rule, fixtures and named block already in place.
+> `tests/contract/`, the switch-over gate, `packages/platform` and `packages/compliance` —
+> jurisdiction rules **on the wire** (D8), the transparent mid-round re-authenticate (§5, D9),
+> autoplay, synthesized audio, en/ru under a glyph-coverage test, WCAG AA in CI — and now
+> **`packages/dev-tools` and `tools/perf-harness`**: a debug panel that drives every seam the
+> architecture already had (force outcome, fault injection, jurisdiction switch, session expiry, a
+> state inspector, an exportable event log correlated on `roundId`), a player-facing round-history
+> drawer over the wire's `history` call, and a perf harness whose numbers are measured rather than
+> promised — ~120 fps at a 4× CPU throttle, 7 draw calls a frame, a heap that sawtooths flat. The
+> production bundle is **proven** free of all of it: `verify:strip` fails `pnpm check` if any dev
+> marker reaches `dist/`. 835 tests, `pnpm check` green. Every `packages/*` is now real; no
+> scaffolds remain.
 >
 > **`pnpm dev:client` opens a playable slot.** It authenticates, spins, lands on the server's
 > `stops[]`, lights the paylines it was told won, counts the win up, runs the feature and settles —
@@ -37,10 +39,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > `pendingRound` recovery, every error class — against **every registered target**, naming in its
 > own output the one target it could not run.
 >
-> **What is deliberately not there yet:** the debug panel, the round-history panel and the
-> performance pass (**C7**), packaging, the README and the E2E suite (**C8**). The next block is
-> **C7**; **R0** — the `apps/rgs` skeleton — is available in parallel and is what fills the
-> contract suite's third target.
+> **What is deliberately not there yet:** packaging, the README, rate limiting, the nightly soak
+> and the E2E suite (**C8**). The next block is **C8**; **R0** — the `apps/rgs` skeleton — is
+> available in parallel and is what fills the contract suite's third target.
 >
 > The canon is four documents: `CLAUDE.md` (this file), [`ROADMAP.md`](ROADMAP.md) (the task map),
 > [`RECOMMENDATIONS.md`](RECOMMENDATIONS.md) (the strategic registry) and
@@ -108,9 +109,9 @@ empty, and the block named is the commitment.
 | `@slot/transport`   | `packages/transport` | `RgsTransport` interface + Mock/Http implementations      | ✅ S2 |
 | `@slot/platform`    | `packages/platform`  | Audio, storage, visibility, safe-area, device capabilities | ✅ C6 |
 | `@slot/compliance`  | `packages/compliance`| Jurisdiction rules, reality check, session/loss/stake limits | ✅ C6 |
-| `@slot/dev-tools`   | `packages/dev-tools` | Debug panel, event log, force-outcome UI                  | C7    |
-| —                   | `tools/math-sim`     | RTP / volatility / hit-frequency simulation CLI           | S4    |
-| —                   | `tools/perf-harness` | Scripted fps / memory capture                             | C7    |
+| `@slot/dev-tools`   | `packages/dev-tools` | Debug panel, event log, force-outcome UI                  | ✅ C7 |
+| —                   | `tools/math-sim`     | RTP / volatility / hit-frequency simulation CLI           | ✅ S4 |
+| —                   | `tools/perf-harness` | Scripted fps / draw-call / heap capture                   | ✅ C7 |
 
 Plus `config/` (shared tsconfig, eslint, prettier, vitest presets), `docs/` (`architecture.md`,
 `protocol.md`, `round-lifecycle.md`, `adr/`) and `.github/workflows/`.
@@ -202,7 +203,8 @@ pnpm check
 | `pnpm test:contract`   | The contract suite against every registered target — the switch-over gate            |
 | `pnpm e2e`             | Playwright, fixed seed + forced outcomes _(C8)_                                      |
 | `pnpm math-sim`        | RTP report — `pnpm math-sim --spins 50000000` _(S4)_                                 |
-| `pnpm perf`            | Scripted fps/memory capture via `tools/perf-harness` _(C7)_                          |
+| `pnpm perf`            | fps / draw-calls / heap for a scripted session — `pnpm perf --spins 100 --throttle 4` |
+| `pnpm verify:strip`    | Prove the production bundle contains no dev tooling. Runs inside `check`, after build |
 
 Scoped work uses pnpm filters:
 
@@ -234,8 +236,7 @@ real home directory.
 
 - **pnpm workspaces** define the packages (`packages/*`, `apps/*`, `tools/*`); **Turborepo**
   orchestrates `build`/`dev`/`typecheck`/`test` with caching and `^build` ordering (`turbo.json`).
-  All eleven `packages/*` are scaffolded and empty — each `src/index.ts` names the block that fills
-  it. `apps/*` and `tools/*` arrive with their own blocks (C3, S2, R0, S4, C7).
+  Every `packages/*` is real; of `apps/*` only `apps/rgs` (R0) is still to come.
 - **One version per tool, in the pnpm catalog** (`pnpm-workspace.yaml`). Packages say
   `"typescript": "catalog:"`, so the workspace moves in one edit and drift is impossible.
 - **TypeScript strict, plus `noUncheckedIndexedAccess`** — `config/tsconfig-base.json`, extended by
@@ -557,8 +558,14 @@ frame. Real art replaces this file and nothing else.
   frame, which is what keeps the curve pure and testable, and is five small objects against a budget
   that bans per-frame closures.
 - Reels are masked with a rectangle, not a filter.
-- Target **60 fps on a mid-range Android**. The trace and the numbers are **C7**; nothing here claims
-  them yet.
+- Target **60 fps on a mid-range Android** — and since C7 the claim is measured rather than made:
+  `pnpm perf` plays the production bundle at a 4× CPU throttle and reports ~120 fps average
+  (p95 9.2 ms, one dropped frame in 3,888), **7 draw calls a frame** (max 8 — the batching, as a
+  figure), and a heap that sawtooths 9.8 → 14.1 → 9.4 MB over thirty rounds — no climb, which is
+  what "zero allocation in the ticker" looks like from outside. The Chrome trace lands in
+  `tools/perf-harness/traces/`. The instruments live outside the game (a rAF probe, wrapped WebGL
+  entry points, CDP heap metrics, the DOM control layer pressing the button), so the bundle being
+  measured is the bundle that ships, dev hooks and all their absence included.
 
 **The win presentation is a `Timeline`, and that is the whole interruption story.** A sequence of
 steps with durations, built from the server's `wins[]`: the total counts up over every winning cell,
@@ -657,6 +664,17 @@ onto a button label.
   for the next spin, which is how a win presentation is developed at all rather than waited for.
   Both flags are `define`d to literal booleans, so a production build contains neither the flag nor
   the code behind it, and the server refuses `forceOutcome` outside dev mode regardless.
+- **One drawer, two documents** ([`drawer.ts`](apps/game-client/src/drawer.ts)). The round-history
+  panel ([`history.ts`](apps/game-client/src/history.ts)) is every build's: the wire's `history`
+  response listed verbatim — stake, win, capped mark, free spins, formatted by `@slot/money` with
+  the session's currency — refetched on every open, with `retention` stated honestly ("this demo
+  server keeps only the last N settled rounds"), in both languages. The debug panel is dev builds':
+  the same frame, reached by a DEV button the dev branch itself creates, wired to the panel from
+  `@slot/dev-tools` with the connection's `dev` control plane (in-process `SimServer` methods, or
+  `/dev/*` over HTTP — one port shape, two enactments, chosen in `transport.ts`). A failed history
+  fetch is a sentence in the panel, never an error screen over a working game. The reality-check
+  dialog now also traps focus (`trapFocus`, the WAI-ARIA dialog pattern) — Tab cannot walk out into
+  a page the overlay covers.
 - **The renderer attaches to a machine already in motion.** The stage cannot be built until
   `authenticate` has answered — the strips arrive in that response — so a resumed round is announced
   before anything is listening, and events are not replayed. `GameStage.attach(state)` reads the
@@ -881,7 +899,7 @@ The binding is pinned in [docs/protocol.md §2.7](docs/protocol.md) and argued i
   deliberately still absent (see the gaps registry): it arrives in C8, when this server first faces
   a network that is not `127.0.0.1`.
 
-`/dev/*` — fault injection, session reset, a state summary — is what the debug panel (C7) drives and
+`/dev/*` — fault injection, session reset and expiry, a state summary — is what the debug panel drives and
 what lets the contract suite *demand* a failure rather than wait for one; it is mounted only
 when `devRoutes` is on, and `apps/rgs` will not have it. `POST /demo/session` is not gated, because a
 server you cannot obtain a token for is not a server (docs/protocol.md §7) — and issuing **renews**
@@ -963,12 +981,34 @@ feature banner learned), stops on any error, and paces its own presses through t
 `spinDelay` a human press obeys. The engine cannot tell the difference, which is the demonstration
 that the FSM's input contract is right.
 
-### Dev-tools
+### Dev-tools — `packages/dev-tools`
 
-- **`dev-tools`** — debug panel (force outcome, fault injection, jurisdiction switch, state
-  inspector, exportable event log correlated on `roundId`), **stripped from production by the
-  `__DEV_TOOLS__` Vite define**. Verify the strip in the bundle; a debug panel that ships is a bug.
-  Fills in C7.
+The developer's hands on every seam the architecture already exposes — **nothing in it is a new
+capability**, which is why removing it removes nothing the game uses. Forcing an outcome is the
+client's existing one-shot provider; fault injection is `setFaults` (in-process) or `PUT
+/dev/faults` (HTTP); expiring the session is `expireSession`; the inspector reads the engine's own
+`state` and the `/dev/state` summary. Everything DOM arrives injected and structural (the
+`dom-controls.ts` pattern), so the whole panel tests headless in Node — and every capability is an
+**optional port**: a section whose port is absent is not rendered, so the same panel serves the
+in-process sim (which has a live jurisdiction switch) and the HTTP path (which deliberately does
+not — a remote server's regime is that server's configuration) without either pretending.
+
+- **The event log** (`log.ts`) correlates on `roundId`: events that do not name their round are
+  attributed to the round that is open, so an export reads as rounds rather than a stream. Capped
+  (oldest dropped, `seq` monotonic across the cut), timestamped from an injected clock, exported as
+  JSON through a `download` port — the client turns it into a file save.
+- **The jurisdiction switch restarts, never hot-swaps**: the choice is remembered under a dev-only
+  key and the client reloads, so the new rules arrive the only honest way — on the wire, from
+  `authenticate` (D8). The wire stays the authority even for a developer toggle.
+- **The panel's CSS ships inside the package** (`style.ts`, injected by the wiring), not in the
+  shell's `index.html` — because the shell ships to production and `verify:strip` failed on exactly
+  that, first run. The styles are stripped with the code they style, by the same branch.
+- **Two gates, verified**: the client's dev wiring is a compile-stripped branch around a *dynamic*
+  import, so the package never enters the production graph — and `verify:strip` (in `pnpm check`)
+  proves it against the built output: five markers the dev surface cannot exist without, each first
+  shown to still exist at its source (a stale marker fails the check rather than passing it
+  vacuously), then asserted absent from every built file. The server refusing `forceOutcome`
+  outside dev mode remains gate two.
 
 ### Testing layers
 
@@ -986,7 +1026,7 @@ that the FSM's input contract is right.
 | **Network soak** | `tests/http-soak.test.ts` | 300 rounds over a real socket, a faulty-line run, and a shutdown with a hundred abandoned responses in flight — the failures that only exist on a connection |
 | **Contract** | `tests/contract/`, one suite per target | `rgs-sim` in-process · sim over HTTP · `apps/rgs` (registered, unavailable until R0) — the switch-over gate |
 | **E2E** | Playwright, in CI | Fixed seed + forced outcomes: spin, win, feature, resume after reload |
-| **Perf** | `tools/perf-harness` | fps/memory on a throttled mobile profile — numbers, not adjectives |
+| **Perf** | `tools/perf-harness` | `pnpm perf`: 30 spins against the production bundle, 4× CPU throttle, headless Chrome — ~120 fps avg, p95 9.2 ms, 7 draw calls/frame (max 8: the symbol layer batches), heap sawtooths 9.8 → 14.1 → 9.4 MB. Frames from a rAF probe, draw calls by wrapping the WebGL entry points, heap over CDP; driven through the DOM control layer, so no dev hook is needed and the measured bundle is the shipped one |
 
 The contract suite is the load-bearing one: it is the only reason "swap the transport URL" is a
 credible claim.
@@ -1109,27 +1149,18 @@ D8, D9 — jurisdiction rules on the wire, no renew call, transparent mid-round 
 
 **Client — implied by the domain, built by no block**
 
-- **Round history has a server but no screen.** `history` is on the wire, the simulator serves it and
-  the contract suite holds every target to it — and nothing in `apps/game-client` shows it to a
-  player. It wants the debug panel's frame (C7) or a panel of its own (C8). The other half is
-  retention: this server keeps `MAX_ROUND_HISTORY` rounds in a browser store, which is not what a
-  regulator means by a round history, and `retention` is on the wire so the client can say so
-  honestly until R1 puts months of rows behind it.
-  **Decision (2026-08-19, build in C7):** a DOM overlay, not a Pixi screen — a history is a
-  document, and DOM gives it scroll, focus order and a screen-reader story for free while spending
-  nothing from the ticker budget. It lists the `history` response verbatim and states `retention`
-  honestly. Built beside the debug panel, whose frame it shares.
 - **The reality check offers CONTINUE and nothing else.** Regulated markets require the pause to
   also offer a way *out* — quit the game, show the session's elapsed time on demand — and the demo's
   dialog has one button, because "exit" in an operator-embedded game is the lobby's affordance and
   there is no lobby. When C8 packages the demo behind a real URL, the dialog should gain an honest
-  second action (reload to the landing page, if nothing else). The dialog also moves focus in but
-  does not trap it — C7 polish, alongside the panel work.
+  second action (reload to the landing page, if nothing else). The focus half landed with C7: the
+  dialog traps Tab (`trapFocus`, drawer.ts), so only the missing second action remains.
 - **Autoplay's plan is fixed at the wiring site.** `{ spins: 25, stopOnFeature: true }` — the stop
   conditions regulators care about (loss limit, single-win limit) are implemented and tested in
   `@slot/compliance` but nothing lets a player *set* them, and the same is true of the session
-  limits (`limits.ts` has trackers and no settings surface). Both want the debug panel's frame (C7)
-  for a picker, honestly labelled as player-protection settings.
+  limits (`limits.ts` has trackers and no settings surface). The drawer frame these settings wanted
+  now exists (C7); the picker itself — honestly labelled as player-protection settings, and
+  player-facing rather than dev-gated — is C8's to add beside the history panel.
 
 **Assets & content**
 

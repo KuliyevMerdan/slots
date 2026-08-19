@@ -1,7 +1,7 @@
 /**
  * WCAG 2.1 contrast arithmetic, over the packed `0xrrggbb` numbers the palettes use.
  *
- * Here rather than in a test, because the debug panel (C7) will want to display the same numbers —
+ * Here rather than in a test, because the debug panel will want to display the same numbers —
  * and because a contrast rule enforced in CI should be computed by the code under test's own maths,
  * not by a copy in the test file that can drift from it.
  */

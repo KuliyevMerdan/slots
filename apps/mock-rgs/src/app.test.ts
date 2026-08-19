@@ -374,6 +374,19 @@ describe('the debug surface', () => {
     expect(sim.state.balance).toBe(500);
   });
 
+  it('expires the session on demand, so the next call is refused', async () => {
+    const { app } = open();
+    await post(app, '/rgs/spin', { roundId: roundId(13), stake: STAKE });
+
+    const expired = await app.inject({ method: 'POST', url: '/dev/expire' });
+    expect(expired.statusCode).toBe(200);
+    expect(expired.json()).toEqual({ expiresAt: NOW });
+
+    const refused = await post(app, '/rgs/settle', { roundId: roundId(13) });
+    expect(refused.statusCode).toBe(401);
+    expect(refused.json()).toMatchObject({ code: 'SESSION_EXPIRED' });
+  });
+
   it('summarises the session without dumping every stored response', async () => {
     const { sim, app } = open();
     await post(app, '/rgs/spin', { roundId: roundId(11), stake: STAKE });

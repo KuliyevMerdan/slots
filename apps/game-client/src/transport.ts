@@ -1,7 +1,10 @@
 import type { RgsTransport } from '@slot/transport';
 import { HttpTransport, MockTransport, withRetry } from '@slot/transport';
 import { SimServer, WebStorageStore, createSimConfig, createSimState } from '@slot/rgs-sim';
-import type { Minor } from '@slot/protocol';
+import type { FaultConfig } from '@slot/rgs-sim';
+import { JURISDICTIONS } from '@slot/protocol';
+import type { JurisdictionId, Minor } from '@slot/protocol';
+import type { FaultView } from '@slot/dev-tools';
 
 /**
  * Which server this client talks to — **the one decision that is a config change rather than a
@@ -25,9 +28,52 @@ export interface Connection {
   transport: RgsTransport;
   /** How the client gets a token: from the in-process sim, or from the demo lobby endpoint (§7). */
   token(): Promise<string>;
-  /** For the debug panel (C7) and the dev overlay: which target this is. */
+  /** For the debug panel and the dev overlay: which target this is. */
   readonly kind: 'mock' | 'http';
+  /** The developer's control plane — the seams the debug panel drives. Dev builds only. */
+  readonly dev?: DevPlane;
 }
+
+/**
+ * What the debug panel can do to the server, as ports.
+ *
+ * The same controls exist for both targets — in-process they are `SimServer`'s own methods, over
+ * HTTP they are `apps/mock-rgs`'s `/dev/*` routes — except the jurisdiction switch, which is
+ * absent over HTTP: a remote server's regime is that server's configuration, and pretending a
+ * client-side toggle changes it would be the panel lying.
+ */
+export interface DevPlane {
+  faults: {
+    get(): Promise<FaultView>;
+    set(view: FaultView): Promise<void>;
+  };
+  session: {
+    expire(): void;
+  };
+  serverState(): Promise<unknown>;
+  jurisdiction?: {
+    current: JurisdictionId;
+    options: readonly JurisdictionId[];
+    set(id: JurisdictionId): void;
+  };
+}
+
+/**
+ * The dev-build jurisdiction override, remembered across the reload a regime change requires.
+ *
+ * A dev affordance, not a preference: it lives beside `PersistedEnvelope`, not inside it, because
+ * the envelope is player state and this is a developer impersonating a different lobby. The wire
+ * stays honest — the sim is *constructed* with the regime, and the rules still arrive in
+ * `GameConfig.jurisdictionRules` like they would from any server (D8).
+ */
+const DEV_JURISDICTION_KEY = 'slot.dev.jurisdiction';
+
+const rememberedJurisdiction = (storage: Storage): JurisdictionId | undefined => {
+  const stored = storage.getItem(DEV_JURISDICTION_KEY);
+  return stored !== null && (JURISDICTIONS as readonly string[]).includes(stored)
+    ? (stored as JurisdictionId)
+    : undefined;
+};
 
 /**
  * The in-process simulator, persisted to `localStorage`.
@@ -38,13 +84,17 @@ export interface Connection {
  * `localStorage` is a lint error inside it (ADR-0003).
  */
 function inProcess(): Connection {
+  const jurisdiction = __DEV_TOOLS__ ? rememberedJurisdiction(localStorage) : undefined;
   const sim = new SimServer({
     initialState: createSimState({
       serverSeed: SEED,
       balance: DEMO_BALANCE,
       expiresAt: Date.now() + SESSION_HOURS * 3_600_000,
     }),
-    config: createSimConfig({ devMode: __DEV_TOOLS__ }),
+    config: createSimConfig({
+      devMode: __DEV_TOOLS__,
+      ...(jurisdiction === undefined ? {} : { jurisdiction }),
+    }),
     store: new WebStorageStore(localStorage),
     now: () => Date.now(),
   });
@@ -56,6 +106,52 @@ function inProcess(): Connection {
     // does against the demo lobby endpoint over HTTP.
     transport: withRetry(new MockTransport({ backend: sim })),
     token: () => Promise.resolve(sim.issueSession().token),
+    ...(__DEV_TOOLS__ ? { dev: mockDevPlane(sim) } : {}),
+  };
+}
+
+/** The in-process control plane: `SimServer`'s own methods, behind the same ports HTTP gets. */
+function mockDevPlane(sim: SimServer): DevPlane {
+  return {
+    faults: {
+      get: () => Promise.resolve({ ...sim.faults }),
+      set: (view) => {
+        sim.setFaults(view as FaultConfig);
+        return Promise.resolve();
+      },
+    },
+    session: {
+      expire: () => {
+        sim.expireSession();
+      },
+    },
+    // The same summary `/dev/state` serves over HTTP, and for the same reason it is a summary:
+    // the rounds carry their full stored responses, and the inspector wants four fields.
+    serverState: () =>
+      Promise.resolve({
+        serverSeed: sim.state.serverSeed,
+        token: sim.state.token,
+        balance: sim.state.balance,
+        seq: sim.state.seq,
+        session: sim.state.session,
+        rounds: sim.state.rounds.map((round) => ({
+          roundId: round.roundId,
+          state: round.state,
+          stake: round.stake,
+          cumulativeWin: round.cumulativeWin,
+          steps: round.steps.length,
+        })),
+      }),
+    jurisdiction: {
+      current: sim.config.jurisdiction,
+      options: JURISDICTIONS,
+      set: (id) => {
+        // A regime is not hot-swapped: the choice is remembered and the client restarts, so the
+        // new rules arrive the only honest way — on the wire, from `authenticate`.
+        localStorage.setItem(DEV_JURISDICTION_KEY, id);
+        window.location.reload();
+      },
+    },
   };
 }
 
@@ -78,6 +174,40 @@ function overHttp(baseUrl: string): Connection {
       if (typeof body.token !== 'string') throw new Error('the demo lobby sent no token');
       return body.token;
     },
+    ...(__DEV_TOOLS__ ? { dev: httpDevPlane(baseUrl) } : {}),
+  };
+}
+
+/** The HTTP control plane: `apps/mock-rgs`'s `/dev/*` routes, reached through the Vite proxy. */
+function httpDevPlane(baseUrl: string): DevPlane {
+  const call = async <T>(path: string, init?: RequestInit): Promise<T> => {
+    const response = await fetch(`${baseUrl}${path}`, init);
+    if (!response.ok) {
+      throw new Error(`the dev route refused: HTTP ${String(response.status)}`);
+    }
+    return (await response.json()) as T;
+  };
+
+  return {
+    faults: {
+      get: () => call<FaultView>('/dev/faults'),
+      set: async (view) => {
+        await call('/dev/faults', {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(view),
+        });
+      },
+    },
+    session: {
+      // Fire and forget, like the in-process port: the proof it worked is the next call failing
+      // SESSION_EXPIRED, which is the entire point of pressing the button.
+      expire: () => {
+        void call('/dev/expire', { method: 'POST' });
+      },
+    },
+    serverState: () => call('/dev/state'),
+    // No jurisdiction switch over HTTP: a remote server's regime is that server's configuration.
   };
 }
 

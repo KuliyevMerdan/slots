@@ -55,10 +55,11 @@ shortly after the project is shown to a studio. The same maintenance rules apply
 
 **Performance**
 
-- **Make the perf harness a gate, not a report.** `tools/perf-harness` (C7) is planned to print
-  numbers a human reads. A threshold that fails CI when a scripted session drops below a frame-time
-  budget is a small addition and turns the performance claim from a snapshot into a property. The
-  README number stays honest even after twenty more commits.
+- **Make the perf harness a gate, not a report.** `tools/perf-harness` (landed C7) prints numbers a
+  human reads — fps, draw calls, heap — and deliberately exits zero. A threshold that fails CI when
+  a scripted session drops below a frame-time budget is a small addition and turns the performance
+  claim from a snapshot into a property. The README number stays honest even after twenty more
+  commits.
 - **Add a bundle-size budget and pack the atlas in CI.** Load time is the first thing a mobile player
   experiences and the first thing a reviewer notices. A size budget on the built client plus an
   atlas-packing step (rather than a committed pre-packed sheet) keeps both the bundle and the source

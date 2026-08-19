@@ -56,7 +56,7 @@ contract suite. `#` maps each block back to the phase numbering of the original 
 | **C4** | Win presentation + interruptibility (slam stop, skip-anything) | C3 | 5 | ✅ (landed 2026-08-18) |
 | **C5** | Features + resume — free spins, retrigger, mid-feature reload | C4, S0 | 6 | ✅ (landed 2026-08-18) |
 | **C6** | Platform layer — responsive, audio, i18n, compliance | C4 | 7 | ✅ (landed 2026-08-19) |
-| **C7** | Dev tools + performance pass | C5, S1 | 8 | ☐ |
+| **C7** | Dev tools + performance pass | C5, S1 | 8 | ✅ (landed 2026-08-19) |
 | **C8** | Packaging — deploy, README, Playwright E2E in CI | C6, C7, S4 | 9 | ☐ |
 | **S0** | `rgs-sim` pure core — PRNG, round machine, idempotency, persistence | C1 | 2 | ✅ (landed 2026-08-18) |
 | **S1** | Fault injection + force outcome + `MockTransport` | S0 | 2 | ✅ (landed 2026-08-18) |
@@ -242,10 +242,10 @@ _5–6 days._
       repository ships no image and licenses nothing.
 
 **Done when:** it spins, stops exactly on the server's `stops[]`, and holds 60 fps on a throttled
-mobile profile. ✅ for the first two — landing is asserted stop by stop in `curve.test.ts` and the
-drawn grid is compared against the server's view on every spin (`__ASSERT_MATH__`). **The fps claim
-is not made yet:** `tools/perf-harness` and the measured numbers are C7, and until then the README
-says nothing about frame rate.
+mobile profile. ✅ — landing is asserted stop by stop in `curve.test.ts`, the drawn grid is
+compared against the server's view on every spin (`__ASSERT_MATH__`), and the fps claim is measured
+since C7: `pnpm perf` reports ~120 fps average at a 4× CPU throttle (p95 9.2 ms, one dropped frame
+in 3,888) against the production bundle in headless Chrome.
 
 ## Block C4 — Win presentation & interruptibility
 
@@ -340,18 +340,25 @@ enforced by the glyph-coverage test rather than promised.
 
 _3–4 days._
 
-- [ ] `packages/dev-tools`: debug panel — force outcome, fault injection, jurisdiction switch, state
+- [x] `packages/dev-tools`: debug panel — force outcome, fault injection, jurisdiction switch, state
       inspector, exportable event log correlated on `roundId`.
-- [ ] **Round-history panel** beside it, in the same DOM frame: the `history` response, listed
+- [x] **Round-history panel** beside it, in the same DOM frame: the `history` response, listed
       verbatim, with `retention` stated honestly (decided 2026-08-19 — a history is a document, so
       it is DOM, not canvas).
-- [ ] Stripped from production by `__DEV_TOOLS__`; **verify the strip in the built bundle**.
-- [ ] `tools/perf-harness`: scripted fps/memory capture on a throttled profile.
-- [ ] Performance pass against the rules in `CLAUDE.md` — draw calls, allocation in the ticker, atlas
+- [x] Stripped from production by `__DEV_TOOLS__`; **verify the strip in the built bundle**.
+- [x] `tools/perf-harness`: scripted fps/memory capture on a throttled profile.
+- [x] Performance pass against the rules in `CLAUDE.md` — draw calls, allocation in the ticker, atlas
       batching. Capture the trace.
 
 **Done when:** the perf harness prints fps/draw-calls/heap for a scripted session, and a production
-build contains no debug-panel code.
+build contains no debug-panel code. ✅ — `pnpm perf` played 30 rounds against the production bundle
+at a 4× CPU throttle and printed ~120 fps average (p95 9.2 ms), **7 draw calls a frame** (max 8 —
+the symbol layer batches, as the atlas rules promised) and a heap that sawtooths 9.8 → 14.1 → 9.4 MB
+(no climb, so nothing allocates per frame), with the Chrome trace saved beside it. The strip is a
+gate, not a hope: `verify:strip` runs inside `pnpm check`, proves five dev-surface markers still
+exist at their sources, and fails the build if any reaches `dist/` — it caught the panel's CSS
+sitting in the shell's `index.html` on its first run, which is why the styles now live in
+`@slot/dev-tools` and are injected by the same stripped branch that builds the panel.
 
 ## Block C8 — Packaging & release
 
