@@ -13,8 +13,8 @@ import { MemoryLedger } from '../ledger/memory.js';
 import { MockWallet } from '../wallet/mock.js';
 import { commitmentOf } from '@slot/game-math';
 import { committingSeedProvider, seededBytes } from '../rng/seeds.js';
-import { SingleSessionHost } from './sessions.js';
-import { createRoundService } from './rounds.js';
+import { MemorySessionStore, createSessionService } from './sessions.js';
+import { boundTo, createRoundService } from './rounds.js';
 import { spinFingerprint } from './fingerprint.js';
 
 /**
@@ -34,23 +34,43 @@ let minted = 0;
 const nextRoundId = (): string =>
   `018b0000-0000-7000-8000-${(minted += 1).toString(16).padStart(12, '0')}`;
 
-const harness = ({ balance = 1_000_000 as Minor, now = NOW } = {}) => {
+const harness = ({ balance = 1_000_000 as Minor, now = NOW, minSpinIntervalMs = 0 } = {}) => {
   const store = new MemoryRoundStore();
   const wallet = new MockWallet({ [PLAYER]: balance });
   const ledger = new MemoryLedger();
-  const sessions = new SingleSessionHost();
-  sessions.issue(TOKEN, { playerId: PLAYER, currency: 'EUR', expiresAt: EXPIRES });
   const clock = { now };
-  const service = createRoundService({
+  const config = createGameConfig(
+    minSpinIntervalMs === 0
+      ? {}
+      : {
+          jurisdictionRules: {
+            minSpinIntervalMs,
+            turboAllowed: true,
+            autoplayAllowed: true,
+            realityCheckIntervalMs: 0,
+          },
+        },
+  );
+  const sessionStore = new MemorySessionStore();
+  void sessionStore.put(TOKEN, { playerId: PLAYER, currency: 'EUR', expiresAt: EXPIRES });
+  const sessions = createSessionService({
+    store: sessionStore,
+    randomBytes: seededBytes('rgs-test-tokens'),
+    now: () => clock.now,
+  });
+  const unbound = createRoundService({
     store,
     wallet,
     ledger,
     sessions,
     seeds: committingSeedProvider(seededBytes('rgs-test-seed')),
-    config: createGameConfig(),
+    config,
     now: () => clock.now,
   });
-  return { store, wallet, ledger, sessions, service, clock };
+  // The domain's tests speak as one caller holding the issued token — exactly what the HTTP
+  // layer resolves per request from the Authorization header (§2.7, D12).
+  const service = boundTo(unbound, { token: TOKEN });
+  return { store, wallet, ledger, sessions, service, unbound, clock };
 };
 
 const rejection = async (promise: Promise<unknown>): Promise<SlotError> => {
@@ -170,6 +190,71 @@ describe('spin', () => {
       service.history({}),
     ]) {
       expect((await rejection(call)).code).toBe('SESSION_EXPIRED');
+    }
+  });
+
+  it('refuses a caller with no token, and one whose token names no session (§2.7, D12)', async () => {
+    const { unbound } = harness();
+
+    expect((await rejection(unbound.history({}, {}))).code).toBe('SESSION_EXPIRED');
+    expect(
+      (await rejection(unbound.spin({ roundId: nextRoundId(), stake: STAKE }, { token: 'nope' })))
+        .code,
+    ).toBe('SESSION_EXPIRED');
+  });
+});
+
+describe('the pacing rule — the jurisdiction, enforced server-side (R5)', () => {
+  it('refuses a spin inside the window as LIMIT_REACHED, and allows it once the window opens', async () => {
+    const { service, clock } = harness({ minSpinIntervalMs: 2_500 });
+
+    await service.spin({ roundId: nextRoundId(), stake: STAKE });
+
+    const refused = await rejection(service.spin({ roundId: nextRoundId(), stake: STAKE }));
+    expect(refused.code).toBe('LIMIT_REACHED');
+
+    clock.now += 2_500;
+    const allowed = await service.spin({ roundId: nextRoundId(), stake: STAKE });
+    expect(allowed.roundId).toBeDefined();
+  });
+
+  it('exempts the idempotent replay, and a refused call does not push the window', async () => {
+    const { service, clock } = harness({ minSpinIntervalMs: 2_500 });
+
+    const first = await service.spin({ roundId: nextRoundId(), stake: STAKE });
+
+    // The replay answers from the record — no pacing, no second debit (§4).
+    const replayed = await service.spin({ roundId: first.roundId, stake: STAKE });
+    expect(replayed).toEqual(first);
+
+    // A refused fresh spin is measured against the *accepted* one, so the window is unchanged:
+    // one interval after the accepted spin, the next is allowed regardless of the refusals.
+    await rejection(service.spin({ roundId: nextRoundId(), stake: STAKE }));
+    clock.now += 2_500;
+    await service.spin({ roundId: nextRoundId(), stake: STAKE });
+  });
+
+  it('never paces free spins — steps inside a round are presentation-paced (§2.1)', async () => {
+    const { service, clock } = harness({ minSpinIntervalMs: 60_000 });
+
+    // Hunt for a feature with the clock stepping past the window each time.
+    let feature: SpinRes | undefined;
+    for (let attempt = 0; attempt < 2_000 && feature === undefined; attempt += 1) {
+      clock.now += 60_000;
+      const spin = await service.spin({ roundId: nextRoundId(), stake: STAKE });
+      if (spin.feature !== undefined) {
+        feature = spin;
+      } else if (spin.next === 'SETTLE') {
+        await service.settle({ roundId: spin.roundId });
+      }
+    }
+    if (feature === undefined) throw new Error('no feature in 2000 rounds — seed drifted?');
+
+    // Two steps back to back, no clock movement: a paced featureSpin would refuse the first.
+    const step1 = await service.featureSpin({ roundId: feature.roundId, step: 1 });
+    expect(step1.step).toBe(1);
+    if (step1.next === 'FEATURE_SPIN') {
+      expect((await service.featureSpin({ roundId: feature.roundId, step: 2 })).step).toBe(2);
     }
   });
 });
@@ -353,15 +438,18 @@ describe('the rollback path — a wallet failure mid-round leaves no orphaned de
         return typeof value === 'function' ? (value as CallableFunction).bind(target) : value;
       },
     });
-    const service = createRoundService({
-      store: failingStore,
-      wallet: h.wallet,
-      ledger: h.ledger,
-      sessions: h.sessions,
-      seeds: committingSeedProvider(seededBytes('rgs-test-seed')),
-      config: createGameConfig(),
-      now: () => NOW,
-    });
+    const service = boundTo(
+      createRoundService({
+        store: failingStore,
+        wallet: h.wallet,
+        ledger: h.ledger,
+        sessions: h.sessions,
+        seeds: committingSeedProvider(seededBytes('rgs-test-seed')),
+        config: createGameConfig(),
+        now: () => NOW,
+      }),
+      { token: TOKEN },
+    );
     const roundId = nextRoundId();
 
     // The spin fails — RECOVERABLE from the client's side — and the debit was undone: the wallet
@@ -384,7 +472,10 @@ describe('the rollback path — a wallet failure mid-round leaves no orphaned de
 
   it('leaves the round RESOLVED through a credit outage, and the later settle credits once', async () => {
     const h = harness();
-    let failCredits = 1;
+    // Armed only after the hunt below has found its round — the hunt settles the wins it is not
+    // looking for, and this outage belongs to the settle under test, not to whichever round the
+    // seed happens to deal first.
+    let failCredits = 0;
     const wallet = h.wallet;
     const flakyWallet = new Proxy(wallet, {
       get(target, property, receiver) {
@@ -398,17 +489,21 @@ describe('the rollback path — a wallet failure mid-round leaves no orphaned de
         return typeof value === 'function' ? (value as CallableFunction).bind(target) : value;
       },
     });
-    const service = createRoundService({
-      store: h.store,
-      wallet: flakyWallet,
-      ledger: h.ledger,
-      sessions: h.sessions,
-      seeds: committingSeedProvider(seededBytes('rgs-test-seed')),
-      config: createGameConfig(),
-      now: () => NOW,
-    });
+    const service = boundTo(
+      createRoundService({
+        store: h.store,
+        wallet: flakyWallet,
+        ledger: h.ledger,
+        sessions: h.sessions,
+        seeds: committingSeedProvider(seededBytes('rgs-test-seed')),
+        config: createGameConfig(),
+        now: () => NOW,
+      }),
+      { token: TOKEN },
+    );
     const win = await spinUntil(service, (spin) => spin.next === 'SETTLE');
 
+    failCredits = 1;
     const outage = await rejection(service.settle({ roundId: win.roundId }));
     expect(outage.code).toBe('WALLET_UNAVAILABLE');
     expect(outage.isRetryable).toBe(true);
@@ -424,20 +519,23 @@ describe('the rollback path — a wallet failure mid-round leaves no orphaned de
 describe('the wallet as an upstream', () => {
   it('surfaces a wallet outage as WALLET_UNAVAILABLE, having moved nothing', async () => {
     const h = harness();
-    const broken = createRoundService({
-      store: h.store,
-      wallet: {
-        getBalance: () => Promise.reject(new Error('wallet is down')),
-        debit: () => Promise.reject(new Error('wallet is down')),
-        credit: () => Promise.reject(new Error('wallet is down')),
-        rollback: () => Promise.reject(new Error('wallet is down')),
-      },
-      ledger: h.ledger,
-      sessions: h.sessions,
-      seeds: committingSeedProvider(seededBytes('rgs-test-seed')),
-      config: createGameConfig(),
-      now: () => NOW,
-    });
+    const broken = boundTo(
+      createRoundService({
+        store: h.store,
+        wallet: {
+          getBalance: () => Promise.reject(new Error('wallet is down')),
+          debit: () => Promise.reject(new Error('wallet is down')),
+          credit: () => Promise.reject(new Error('wallet is down')),
+          rollback: () => Promise.reject(new Error('wallet is down')),
+        },
+        ledger: h.ledger,
+        sessions: h.sessions,
+        seeds: committingSeedProvider(seededBytes('rgs-test-seed')),
+        config: createGameConfig(),
+        now: () => NOW,
+      }),
+      { token: TOKEN },
+    );
 
     const error = await rejection(broken.spin({ roundId: nextRoundId(), stake: STAKE }));
 

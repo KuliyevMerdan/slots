@@ -85,6 +85,16 @@ export class MemoryRoundStore implements RoundStore {
     return Promise.resolve(open[0]);
   }
 
+  lastOpenedAt(playerId: string): Promise<number | undefined> {
+    let latest: number | undefined;
+    for (const round of this.#rounds.values()) {
+      if (round.playerId === playerId && (latest === undefined || round.openedAt > latest)) {
+        latest = round.openedAt;
+      }
+    }
+    return Promise.resolve(latest);
+  }
+
   settledFor(playerId: string, limit: number): Promise<readonly StoredRound[]> {
     const settled = [...this.#rounds.values()]
       .filter((round) => round.playerId === playerId && round.state === 'SETTLED')

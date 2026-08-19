@@ -77,9 +77,10 @@ shortly after the project is shown to a studio. The same maintenance rules apply
   public dependency surface. Pin versions with a committed lockfile (given), run `pnpm audit` in CI,
   and put a dependency-update bot on it — Pixi, Vite and the Fastify stack all move fast enough that
   a six-month-old portfolio project starts failing audits on its own. Cheap now, embarrassing later.
-- **Rate-limit the spin path before anything is publicly deployed.** Even a play-money demo on a free
-  tier is a public endpoint doing work per request. A per-session and per-IP budget on `mock-rgs`
-  costs a middleware and prevents your demo from being someone's load generator.
+- **Rate-limit `mock-rgs` before the demo is publicly deployed.** Even a play-money demo on a free
+  tier is a public endpoint doing work per request. `apps/rgs` got its per-token and per-IP budgets
+  in R5; the demo server's per-IP middleware is C8's, the moment it faces a network that is not
+  `127.0.0.1`.
 
 **Testing & CI**
 

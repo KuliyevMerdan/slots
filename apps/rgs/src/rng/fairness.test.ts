@@ -5,8 +5,8 @@ import { createGameConfig } from '../config.js';
 import { MemoryRoundStore } from '../persistence/memory.js';
 import { MemoryLedger } from '../ledger/memory.js';
 import { MockWallet } from '../wallet/mock.js';
-import { SingleSessionHost } from '../domain/sessions.js';
-import { createRoundService } from '../domain/rounds.js';
+import { MemorySessionStore, createSessionService } from '../domain/sessions.js';
+import { boundTo, createRoundService } from '../domain/rounds.js';
 import { spinFingerprint } from '../domain/fingerprint.js';
 import { committingSeedProvider, seededBytes } from './seeds.js';
 
@@ -31,17 +31,25 @@ const nextRoundId = (): string =>
 const world = () => {
   const store = new MemoryRoundStore({ retention: 10_000 });
   const wallet = new MockWallet({ [PLAYER]: 10_000_000 as Minor });
-  const sessions = new SingleSessionHost();
-  sessions.issue(TOKEN, { playerId: PLAYER, currency: 'EUR', expiresAt: 4_102_444_800_000 });
-  const service = createRoundService({
-    store,
-    wallet,
-    ledger: new MemoryLedger(),
-    sessions,
-    seeds: committingSeedProvider(seededBytes('fairness-chain')),
-    config: createGameConfig(),
+  const sessionStore = new MemorySessionStore();
+  void sessionStore.put(TOKEN, { playerId: PLAYER, currency: 'EUR', expiresAt: 4_102_444_800_000 });
+  const sessions = createSessionService({
+    store: sessionStore,
+    randomBytes: seededBytes('fairness-tokens'),
     now: () => NOW,
   });
+  const service = boundTo(
+    createRoundService({
+      store,
+      wallet,
+      ledger: new MemoryLedger(),
+      sessions,
+      seeds: committingSeedProvider(seededBytes('fairness-chain')),
+      config: createGameConfig(),
+      now: () => NOW,
+    }),
+    { token: TOKEN },
+  );
   return { store, wallet, service };
 };
 

@@ -558,6 +558,88 @@ export function runContractSuite(target: ContractTarget): void {
     });
 
     /**
+     * The §5/D9 story, held at the wire: a session ends mid-round, the refusal is `PLAYER`, and
+     * the lobby's renewal re-attaches to the same round — credited exactly once. Every target
+     * runs this; expiry-on-every-call has had a producer in the sim since C6 and in `apps/rgs`
+     * since R5.
+     */
+    describe('session expiry mid-round (§5, D9)', () => {
+      it('refuses under an expired session, and the renewed one resumes and credits once', async () => {
+        await transport.authenticate({ token });
+        const win = await spinUntil(transport, STAKE, (spin) => spin.next === 'SETTLE');
+
+        await handle.expire();
+        const refused = await rejection(transport.settle({ roundId: win.roundId }));
+        expect(refused.code).toBe('SESSION_EXPIRED');
+        expect(refused.errorClass).toBe('PLAYER');
+
+        // The lobby seam (§7): a renewed token onto the same player. §5 does the rest.
+        const { token: renewed } = await handle.renew();
+        const resumed = await transport.authenticate({ token: renewed });
+        const pending = resumed.pendingRound;
+        expect(pending?.roundId).toBe(win.roundId);
+        expect(pending?.state).toBe('RESOLVED');
+        expect(pending?.next).toBe('SETTLE');
+        expect(pending?.roundWin).toBe(win.roundWin);
+
+        const settle = await transport.settle({ roundId: win.roundId });
+        expect(settle.totalWin).toBe(win.roundWin);
+        expect(settle.balance).toBe(resumed.balance + win.roundWin);
+
+        // Credited exactly once, by the server's own account.
+        const snapshot = await handle.state();
+        expect(snapshot.balance).toBe(settle.balance);
+        expect(snapshot.rounds.filter((round) => round.roundId === win.roundId)).toHaveLength(1);
+      });
+    });
+
+    /**
+     * The jurisdiction's pacing rule (§2.1), server half — enforced by the sim since C6 and by
+     * `apps/rgs` since R5. A dedicated instance, because the shared one deliberately serves the
+     * unpaced demo regime: the whole rest of this suite is the proof that `minSpinIntervalMs: 0`
+     * means what it says.
+     */
+    describe('the pacing rule (§2.1, R5)', () => {
+      it('refuses a spin inside minSpinIntervalMs as LIMIT_REACHED; the idempotent replay is exempt', async () => {
+        const paced = await target.start({
+          devMode: false,
+          balance: START_BALANCE,
+          jurisdictionRules: {
+            minSpinIntervalMs: 60_000,
+            turboAllowed: true,
+            autoplayAllowed: true,
+            realityCheckIntervalMs: 0,
+          },
+        });
+        try {
+          const opened = await paced.reset({ balance: START_BALANCE });
+          const served = await paced.transport.authenticate({ token: opened.token });
+          expect(served.config.jurisdictionRules.minSpinIntervalMs).toBe(60_000);
+
+          const first = await paced.transport.spin({ roundId: nextRoundId(), stake: STAKE });
+
+          // The clocks these targets run on are frozen, so the second fresh spin is always
+          // inside the window — and must be refused as the PLAYER class, no retry invited.
+          const refused = await rejection(
+            paced.transport.spin({ roundId: nextRoundId(), stake: STAKE }),
+          );
+          expect(refused.code).toBe('LIMIT_REACHED');
+          expect(refused.errorClass).toBe('PLAYER');
+
+          // The replay answers from the record — pacing measures accepted spins, not retries (§4).
+          expect(await paced.transport.spin({ roundId: first.roundId, stake: STAKE })).toEqual(
+            first,
+          );
+
+          // The server accepted exactly one round.
+          expect((await paced.state()).rounds).toHaveLength(1);
+        } finally {
+          await paced.close();
+        }
+      });
+    });
+
+    /**
      * Read-only, outside the round lifecycle, and the one call a regulator asks about by name. What
      * it must never do is show a round that has not finished — that round is `pendingRound`.
      */

@@ -214,3 +214,104 @@ describe('HttpTransport', () => {
     expect(sent[0]?.init.signal).toBe(controller.signal);
   });
 });
+
+describe('the session binding (docs/protocol.md §2.7, D12)', () => {
+  const AUTH_RES = {
+    session: { playerId: 'demo-player', currency: 'EUR', expiresAt: 4_102_444_800_000 },
+    balance: 1_000_000,
+    config: {
+      gameId: 'demo',
+      mathVersion: '1.0.0',
+      reels: 3,
+      rows: 3,
+      strips: [
+        ['A', 'B', 'C'],
+        ['A', 'B', 'C'],
+        ['A', 'B', 'C'],
+      ],
+      paytable: [{ symbol: 'A', kind: 'LINE', pays: [{ count: 3, multiplier: 10 }] }],
+      paylines: [[1, 1, 1]],
+      betLevels: [50, 100],
+      limits: { minStake: 50, maxStake: 10_000, maxWinMultiplier: 5_000 },
+      jurisdiction: 'DEFAULT',
+      jurisdictionRules: {
+        minSpinIntervalMs: 0,
+        turboAllowed: true,
+        autoplayAllowed: true,
+        realityCheckIntervalMs: 0,
+      },
+      devMode: false,
+    },
+  };
+
+  it('remembers the token authenticate carried and binds every later call with it', async () => {
+    const { fetch, sent } = answering({ body: AUTH_RES }, { body: SETTLED });
+    const transport = transportOver(fetch);
+
+    await transport.authenticate({ token: 'session-token-1' });
+    await transport.settle({ roundId: ROUND_ID });
+
+    // The establishing call itself carries no binding — the token is in its body.
+    expect(sent[0]?.init.headers['authorization']).toBeUndefined();
+    expect(sent[1]?.init.headers['authorization']).toBe('Bearer session-token-1');
+  });
+
+  it('sends nothing before any authenticate has succeeded', async () => {
+    const { fetch, sent } = answering({ body: SETTLED });
+
+    await transportOver(fetch).settle({ roundId: ROUND_ID });
+
+    expect(sent[0]?.init.headers['authorization']).toBeUndefined();
+  });
+
+  it('does not adopt a token the server refused', async () => {
+    const { fetch, sent } = answering(
+      { body: AUTH_RES },
+      {
+        status: 401,
+        body: {
+          class: 'PLAYER',
+          code: 'SESSION_EXPIRED',
+          message: 'the token is not valid for this session',
+          correlationId: 'srv-1',
+        },
+      },
+      { body: SETTLED },
+    );
+    const transport = transportOver(fetch);
+
+    await transport.authenticate({ token: 'good-token' });
+    await expect(transport.authenticate({ token: 'bad-token' })).rejects.toMatchObject({
+      code: 'SESSION_EXPIRED',
+    });
+    await transport.settle({ roundId: ROUND_ID });
+
+    expect(sent[2]?.init.headers['authorization']).toBe('Bearer good-token');
+  });
+
+  it('re-binds on a renewal — the fresh token replaces the old', async () => {
+    const { fetch, sent } = answering({ body: AUTH_RES }, { body: AUTH_RES }, { body: SETTLED });
+    const transport = transportOver(fetch);
+
+    await transport.authenticate({ token: 'first' });
+    await transport.authenticate({ token: 'renewed' });
+    await transport.settle({ roundId: ROUND_ID });
+
+    expect(sent[2]?.init.headers['authorization']).toBe('Bearer renewed');
+  });
+
+  it('lets a caller-supplied header win over the remembered binding', async () => {
+    const { fetch, sent } = answering({ body: AUTH_RES }, { body: SETTLED });
+    const transport = new HttpTransport({
+      baseUrl: 'http://rgs.test',
+      fetch,
+      correlationId: () => 'cid-1',
+      headers: () => ({ authorization: 'Bearer operator-managed' }),
+    });
+
+    await transport.authenticate({ token: 'remembered' });
+    await transport.settle({ roundId: ROUND_ID });
+
+    expect(sent[1]?.init.headers['authorization']).toBe('Bearer operator-managed');
+  });
+});

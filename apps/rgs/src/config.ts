@@ -19,11 +19,21 @@ const EnvSchema = z.object({
     .default('info'),
   /**
    * The demo session this server issues to itself at boot (§7: tokens are issued out of band, and
-   * in development the environment *is* the out-of-band channel). R5 replaces this with real
-   * operator-issued sessions.
+   * in development the environment *is* the out-of-band channel). Since R5 it goes through the
+   * same session service the operator surface uses — one issuing path, two channels.
    */
   RGS_DEMO_TOKEN: z.string().min(1).default('rgs-demo-token'),
   RGS_SESSION_HOURS: z.coerce.number().min(0.1).default(12),
+  /**
+   * The shared key `/operator/sessions` requires in `x-operator-key` (§7, R5). The default is a
+   * dev placeholder by design; R7's fail-fast boot is where dev defaults stop being accepted.
+   */
+  RGS_OPERATOR_KEY: z.string().min(8).default('rgs-operator-dev-key'),
+  /** Rate limits on the game routes (R5), sustained calls/second. 0 disables an axis. */
+  RGS_RATE_LIMIT_PER_TOKEN: z.coerce.number().min(0).default(20),
+  RGS_RATE_LIMIT_PER_IP: z.coerce.number().min(0).default(50),
+  /** Bucket depth — calls that may arrive at once before the sustained rate applies. */
+  RGS_RATE_LIMIT_BURST: z.coerce.number().min(1).default(60),
   /** Demo wallet balance, minor units — the MockWallet's until R2 integrates a real provider. */
   RGS_BALANCE: z.coerce.number().int().min(0).default(1_000_000),
   /** postgres://… — selects the Postgres store. Absent means in-memory. */

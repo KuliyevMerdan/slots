@@ -17,6 +17,8 @@ export const errorBody = (error: SlotError, correlationId: string): ProtocolErro
   message: error.message,
   correlationId,
   ...(error.roundId === undefined ? {} : { roundId: error.roundId }),
+  // The server's own arithmetic beats the client's backoff guess (§6) — RATE_LIMITED carries it.
+  ...(error.retryAfterMs === undefined ? {} : { retryAfterMs: error.retryAfterMs }),
 });
 
 /**

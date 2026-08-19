@@ -210,5 +210,18 @@ export function runStoreContract(name: string, makeStore: () => Promise<RoundSto
 
       expect(await store.settledFor(PLAYER, 10)).toEqual([]);
     });
+
+    it('reports when the newest round opened, per player — the pacing read (R5)', async () => {
+      const store = await makeStore();
+
+      expect(await store.lastOpenedAt(PLAYER)).toBeUndefined();
+
+      await store.open(roundOf({ openedAt: 1_700_000_000_000 }));
+      await store.open(roundOf({ openedAt: 1_700_000_005_000 }));
+      await store.open(roundOf({ playerId: OTHER, openedAt: 1_700_000_009_000 }));
+
+      expect(await store.lastOpenedAt(PLAYER)).toBe(1_700_000_005_000);
+      expect(await store.lastOpenedAt(OTHER)).toBe(1_700_000_009_000);
+    });
   });
 }

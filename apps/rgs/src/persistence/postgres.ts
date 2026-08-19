@@ -165,6 +165,15 @@ export class PostgresRoundStore implements RoundStore {
     return result.rows.map(roundOfRow);
   }
 
+  async lastOpenedAt(playerId: string): Promise<number | undefined> {
+    const result = await this.#pool.query<{ last: number | null }>(
+      'select max(opened_at) as last from rounds where player_id = $1',
+      [playerId],
+    );
+    const last = result.rows[0]?.last;
+    return last === null || last === undefined ? undefined : last;
+  }
+
   /** Drain the pool — tests and orderly shutdowns; the process exit path never waits on it. */
   async close(): Promise<void> {
     await this.#pool.end();

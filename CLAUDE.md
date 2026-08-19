@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project status
 
 > ⚠️ **The game is a game, its math is a designed 96%, and the real RGS plays it against a real wallet seam.**
-> As of **2026-08-19**, **C0, C1, S0, S1, C2, S2, C3, C4, C5, S4, S3, C6, C7, R0, R1, R2, R3 and R4 have landed** — the
+> As of **2026-08-19**, **C0, C1, S0, S1, C2, S2, C3, C4, C5, S4, S3, C6, C7, R0, R1, R2, R3, R4 and R5 have landed** — the
 > workspace, the contracts (`protocol`, `money`, `game-math`), `rgs-sim`, the `RgsTransport` seam
 > with `MockTransport`, `HttpTransport` and the retry policy, `engine`, `apps/mock-rgs`, `renderer`,
 > `ui` and `apps/game-client`, `tools/math-sim` — the RTP report that tuned the strips —
@@ -46,11 +46,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > `stopsForStep`), documented in [`docs/fairness.md`](docs/fairness.md). Fairness is a contract
 > *capability*, mutually exclusive with `forceOutcome` by construction: the simulators skip the
 > cases by name, `apps/rgs` — which refuses `forceOutcome` always — is held to them over the full
-> production chain. The session is still a single demo one (R5 builds
-> the operator seam). The contract suite's third target runs the whole suite over the full
-> production chain — client→HTTP→rgs→HTTP→wallet — its fault case enacted by refusing the *real*
-> wallet, and the §5 stranded round runs against the one target that can honestly produce it.
-> 965 tests locally, 983 in CI, `pnpm check` green.
+> production chain. **The sessions are real since R5** (§2.7, §7, D12, ADR-0007): every
+> non-authenticate call binds its session with an `Authorization: Bearer` header — carried by
+> `HttpTransport` itself, so nothing above the transport learns HTTP has headers — verified
+> against a `SessionStore` with memory and Postgres twins held to one contract (Postgres over the
+> planned Redis: one database until scale demands two), tokens minted from the CSPRNG through the
+> key-guarded operator surface (`POST /operator/sessions`, the lobby's face; the demo token still
+> self-issues at boot through the same service). The server now also enforces what it can observe
+> of the jurisdiction (D8): a spin inside `minSpinIntervalMs` is refused `LIMIT_REACHED` off the
+> store's own `lastOpenedAt` — replay-exempt, free spins unpaced — and the game routes sit behind
+> per-token and per-IP token buckets answering `RATE_LIMITED` with `retryAfterMs`. The contract
+> suite gained the mid-round expiry → renew → resume case and the pacing case, both running
+> against **all three targets**. The contract suite's third target runs the whole suite over the
+> full production chain — client→HTTP→rgs→HTTP→wallet — its fault case enacted by refusing the
+> *real* wallet, and the §5 stranded round runs against the one target that can honestly produce
+> it. 1008 tests locally, 1031 in CI, `pnpm check` green.
 >
 > **`pnpm dev:client` opens a playable slot.** It authenticates, spins, lands on the server's
 > `stops[]`, lights the paylines it was told won, counts the win up, runs the feature and settles —
@@ -71,8 +81,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > included since R1: the same suite that gated the simulators now gates the real server, and the
 > §5 stranded-round case runs against the one target that can honestly produce it.
 >
-> **What is deliberately not there yet:** packaging, the README, rate limiting, the nightly soak
-> and the E2E suite (**C8**). The next block is **C8**; **R5** (sessions and auth for real) is
+> **What is deliberately not there yet:** packaging, the README, rate limiting on `mock-rgs`, the
+> nightly soak and the E2E suite (**C8**). The next block is **C8**; **R6** (observability) is
 > the R-block now unblocked, and **R7** waits only on R6.
 >
 > The canon is four documents: `CLAUDE.md` (this file), [`ROADMAP.md`](ROADMAP.md) (the task map),
@@ -130,7 +140,7 @@ empty, and the block named is the commitment.
 | ------------------- | -------------------- | -------------------------------------------------------- | ----- |
 | `@slot/game-client` | `apps/game-client`   | The deliverable — Pixi client on Vite                     | ✅ C3 |
 | `@slot/mock-rgs`    | `apps/mock-rgs`      | Fastify wrapper around `rgs-sim` — proves the network path | ✅ S2 |
-| `@slot/rgs`         | `apps/rgs`           | Node.js RGS — rounds & idempotency on Postgres (in-memory twin); wallet over HTTP behind the R0 seam (docs/wallet-api.md); double-entry ledger + reconciliation (R3); per-round commit/reveal on a CSPRNG (R4); session seam mocked until R5 | ✅ R4 |
+| `@slot/rgs`         | `apps/rgs`           | Node.js RGS — rounds & idempotency on Postgres (in-memory twin); wallet over HTTP behind the R0 seam (docs/wallet-api.md); double-entry ledger + reconciliation (R3); per-round commit/reveal on a CSPRNG (R4); real sessions on a bearer binding + operator surface + pacing + rate limits (R5) | ✅ R5 |
 | `@slot/protocol`    | `packages/protocol`  | ★ Contracts: zod schemas + inferred TS types + error taxonomy | ✅ C1 |
 | `@slot/money`       | `packages/money`     | Branded `Minor` integer units, exact arithmetic, formatting | ✅ C1 |
 | `@slot/game-math`   | `packages/game-math` | Reel strips, paytable, payline evaluator — and, since R1, the outcome engine (PRNG + stops-first derivation) both servers draw from | ✅ C1 |
@@ -211,6 +221,11 @@ Seven design points, all of them load-bearing (six in `rgs-sim`; the seventh is 
   seed bound at open, reveal on the closing response with the next commitment beside it —
   verifiable with `@slot/game-math` alone ([`docs/fairness.md`](docs/fairness.md)). A server that
   honours `forceOutcome` cannot claim it, which is exactly why the simulators do not.
+- **The session binds via `Authorization: Bearer`, carried by the transport** (§2.7, D12, R5):
+  the token travels once in `authenticate`'s body and as a bearer header on every other call.
+  `HttpTransport` remembers it from the last successful `authenticate`, so nothing above the
+  transport learns HTTP has headers; a multi-session server (`apps/rgs`) refuses its absence as
+  `SESSION_EXPIRED`, and the single-session simulators accept and ignore it.
 
 ## Commands
 
@@ -829,7 +844,12 @@ than three animations later), **classifies every failure** — a protocol error 
 the server echoes, so one round is traceable across two processes. The class is always derived from
 the code, so a server that mislabels a `PLAYER` error as `RECOVERABLE` cannot talk the client into
 retrying a spin the player cannot afford. `fetch` arrives as a three-member structural type rather
-than a global, for the same reason the simulator's storage does (ADR-0003).
+than a global, for the same reason the simulator's storage does (ADR-0003). And since R5 it
+**carries the session binding itself** (§2.7, D12): it remembers the token from the last
+successful `authenticate` and sends `Authorization: Bearer` on every other call — held in the
+transport so the engine and the retry policy never learn that HTTP has headers, and a mid-round
+renewal re-binds by simply authenticating again through the same object. The single-session
+simulators accept and ignore the header; `apps/rgs` requires it.
 
 **The one line that decides which server this is, is the base URL.**
 [`tests/http.test.ts`](tests/http.test.ts) is what makes that a statement rather than a hope: one
@@ -964,12 +984,14 @@ playable over HTTP. Configuration is
 environment, validated with a schema like anything else that crosses a boundary — a mistyped server
 seed silently changes every outcome the session produces.
 
-### The real RGS — `apps/rgs` (R0 laid it out; R1 made it play; R2 made the wallet real; R3 made the money auditable; R4 made the outcomes provable)
+### The real RGS — `apps/rgs` (R0 laid it out; R1 made it play; R2 made the wallet real; R3 made the money auditable; R4 made the outcomes provable; R5 made the sessions real)
 
 ```
 apps/rgs/src/
-├─ http/          routes from the CALLS table; request validation via @slot/protocol schemas
-├─ domain/        createRoundService — the real lifecycle (R1); sessions.ts is the R5 seam
+├─ http/          routes from the CALLS table; schema validation; bearer extraction, rate
+│                 limiting and the operator surface (R5)
+├─ domain/        createRoundService — the real lifecycle (R1), caller-bound since R5;
+│                 sessions.ts — the SessionStore port, its twins' contract, the minting service
 ├─ wallet/        the R0 seam, real at the wire (R2): RemoteWallet + wire schemas + the wallet sim
 ├─ ledger/        double-entry journal (R3): port + memory/Postgres twins, one contract; reconcile
 ├─ math/          re-exports @slot/game-math — never a second copy
@@ -1011,8 +1033,7 @@ underneath both, and its tests are the wire's specification. Two rules carry the
 lost confirmation is healed by replaying the ref, and **a rolled-back debit's ref is debitable
 again as a fresh transaction** — what makes the domain's rollback (a confirmed debit whose round's
 `open` failed — the one such state) converge with the client's same-`roundId` retry to exactly one
-standing debit. That sentence is R2's gate, and it is a test, not a promise. Sessions are still
-R1-minimal behind `SessionPort` (R5 replaces the implementation, not the seam), and `forceOutcome`
+standing debit. That sentence is R2's gate, and it is a test, not a promise. `forceOutcome`
 is refused always — there is no dev flag to mis-set.
 
 **The ledger is real since R3** — append-only, double-entry, integer minor units, one entry pair
@@ -1057,8 +1078,31 @@ exclusive with `forceOutcome` by construction — a server that will play whatev
 publish a hash of an outcome it has not been told yet — which is why the simulators skip these
 cases by name and always will.
 
+**The sessions are real since R5** (docs/protocol.md §2.7, §7, D12; ADR-0007). The wire's
+amendment is the binding: every non-authenticate call carries `Authorization: Bearer <token>` —
+spelled and parsed by one pair of `@slot/protocol` helpers, carried by `HttpTransport` itself
+(it remembers the token from the last successful `authenticate`, so the engine and the retry
+policy never learn HTTP has headers), extracted by the HTTP layer into a `Caller` the domain
+resolves per call. `SessionPort.verify` is now backed by a `SessionStore` — memory and Postgres
+twins (`migrations/0004_sessions.sql`) under one contract suite, Postgres rather than the
+roadmap's Redis because one database until scale demands two is the cheaper truth (ADR-0007) —
+and expiry stays a judgment the *domain* makes against its injected clock, so "expired" and
+"never issued" stay distinguishable in the server's records while refusing identically on the
+wire. Tokens are minted from injected entropy (the R4 arrangement, reused) by a session service
+whose out-of-band face is `POST /operator/sessions` — key-guarded (`x-operator-key`,
+`RGS_OPERATOR_KEY`), outside the game contract exactly as `/demo/session` is, speaking plain
+operator JSON; the demo token still self-issues at boot through the same service. R5 also gave
+the server the jurisdiction half it can observe (D8): a spin arriving inside
+`minSpinIntervalMs` is refused `LIMIT_REACHED`, measured between *opened* rounds off the store's
+`lastOpenedAt` — so idempotent replays are exempt by construction and free spins are never paced
+(§2.1), the sim's semantics since C6 — and the game routes sit behind hand-rolled token buckets
+(injected clock, unit-tested) per session token and per client IP, refusing `RATE_LIMITED` with
+`retryAfterMs` in the body and `Retry-After` on the wire. Test compositions carry no budgets by
+design: the suite hammers on purpose, and `main.ts` always passes the env-configured ones.
+
 What is deliberately absent, and stays absent: `/dev/*` (a production server is not driveable),
-`/demo/session` (tokens come from the operator's lobby, §7 — R5 builds the validating half), and
+`/demo/session` (tokens come from the operator's lobby, §7 — `/operator/sessions` is its
+validating half since R5), and
 any import of `@slot/rgs-sim` or `@slot/transport` — enforced by `rgs-deps`, tested by fixture.
 The HTTP layer still validates before it dispatches, so `SCHEMA_MISMATCH` and a domain refusal
 stay distinguishable — and the stub composition (`notImplementedRounds`) still exists and still
@@ -1158,7 +1202,7 @@ not — a remote server's regime is that server's configuration) without either 
 | **Glyph coverage** | `apps/game-client` (`i18n.test.ts`) | Every character of both string catalogues has a glyph in the shipped Inter woff2, at every shipped weight |
 | **Network soak** | `tests/http-soak.test.ts` | 300 rounds over a real socket, a faulty-line run, and a shutdown with a hundred abandoned responses in flight — the failures that only exist on a connection |
 | **Contract** | `tests/contract/`, one suite per target | `rgs-sim` in-process · sim over HTTP · `apps/rgs` (the full suite since R1, incl. the §5 stranded round only it can produce) — the switch-over gate |
-| **Store contract** | `apps/rgs` (`store-contract.ts`) | One suite, two stores: memory always; Postgres whenever `RGS_TEST_DATABASE_URL` is set — always in CI, via a `postgres:16` service container |
+| **Store contract** | `apps/rgs` (`store-contract.ts`) | One suite, two stores: memory always; Postgres whenever `RGS_TEST_DATABASE_URL` is set — always in CI, via a `postgres:16` service container. The session store (R5) has the same twin pair under its own contract |
 | **Ledger** | `apps/rgs` (`ledger/`) | One contract suite, two ledgers (memory always; Postgres in CI, where a trigger proves append-only); the R3 gate — a scripted session's journal sums to zero, reproduces the exact balance history, reconciles clean, and reports then heals the orphaned stake |
 | **Fairness** | `apps/rgs` (`rng/fairness.test.ts`) + the contract suite | The R4 gate: the "player" recomputes every step's `stops[]` from the reveal and their own inputs — hash, chain continuity, stranded-round binding — with `@slot/game-math` only; the suite repeats it over the production chain, `sha256Hex` is held to NIST vectors |
 | **Wallet seam** | `apps/rgs` (`wallet/`) | `RemoteWallet` against the wallet sim over a real socket: an outage outlived by bounded retries, a lost confirmation healed by the idempotent ref, a refusal surfaced once and never retried (docs/wallet-api.md §4) |
@@ -1251,14 +1295,15 @@ D8, D9 — jurisdiction rules on the wire, no renew call, transparent mid-round 
   **Decision (2026-08-19, build in C8):** same-origin, CORS never widens. `apps/mock-rgs` gains a
   flag-gated `@fastify/static` that serves the built client from the same origin the game API lives
   on — one process, one deploy, zero CORS headers, which is also how operators actually embed games.
-  Record it as an ADR; a genuinely cross-origin operator integration is `apps/rgs`'s problem (R5),
-  with an explicit origin allow-list and never `*`.
-- **The HTTP server has no rate limiting.** The body-size cap (16 KB) and the request timeout landed
+  Record it as an ADR; a genuinely cross-origin operator integration is `apps/rgs`'s problem
+  (post-R5, with the operator that needs it), with an explicit origin allow-list and never `*`.
+- **`apps/mock-rgs` has no rate limiting.** The body-size cap (16 KB) and the request timeout landed
   2026-08-19 as `Fastify` constructor options, with a test pinning the oversized-body refusal to
   `SCHEMA_MISMATCH` — a payload no honest client produces is not a retry invitation.
   **Decision (2026-08-19):** `@fastify/rate-limit` with a per-IP budget arrives in C8, the moment
-  this server first faces a network that is not `127.0.0.1`; per-session budgets and backpressure
-  are `apps/rgs`'s to ship (R5/R7).
+  this server first faces a network that is not `127.0.0.1`. `apps/rgs`'s half landed in R5
+  (per-token and per-IP buckets, `RATE_LIMITED` + `Retry-After`); backpressure under real load
+  stays R7's.
 
 **Simulator (`packages/rgs-sim`) — behaviour the real RGS will have to earn**
 
@@ -1273,27 +1318,17 @@ D8, D9 — jurisdiction rules on the wire, no renew call, transparent mid-round 
   would test fiction. `TargetHandle.strand()` got its real implementation in the `apps/rgs` target
   the same day (R1): the wallet debit and the store commit are genuinely separate systems there,
   and the §5 case now runs green against it while remaining a named skip for both sim targets.
-- **The sim's policy surface is minimal, and regulator-grade enforcement is R5's.** Since C6 the sim
-  refuses a spin arriving before `minSpinIntervalMs` (`LIMIT_REACHED`) and expires sessions on every
-  call — the two rules the client's compliance layer is built against. What a real regulator also
-  requires of the *server* — enforced autoplay limits, acknowledged reality checks, a full
-  jurisdiction rule set behind an operator configuration — has no producer anywhere and belongs to
-  `apps/rgs` (R5).
+- **The sim's policy surface is minimal, and deliberately stays so.** Since C6 the sim refuses a
+  spin arriving before `minSpinIntervalMs` (`LIMIT_REACHED`) and expires sessions on every call —
+  the two rules the client's compliance layer is built against, and since R5 the two `apps/rgs`
+  enforces as well (the contract suite holds all three targets to both). What a real regulator
+  also requires of the *server* — enforced autoplay limits, acknowledged reality checks, a full
+  jurisdiction rule set behind an operator configuration — still has no producer anywhere: it is
+  an operator-configuration surface no block owns yet, and it should arrive with a real operator
+  integration rather than as fiction.
 
 **Real RGS (`apps/rgs`) — playing since R1; what remains is the seams' real halves**
 
-- **The wire carries no session identifier on mutating calls.** The token travels only in
-  `authenticate` (§7); `spin`/`featureSpin`/`settle`/`history` identify nobody, which is fine for
-  the single-session server R1 deliberately is and untenable for a multi-player one.
-  `HttpTransport` already has the `headers` seam the binding will ride on.
-  **Decision (2026-08-19, build in R5):** the session binds via an `Authorization` header, pinned
-  in docs/protocol.md §2.7 when R5 builds real sessions — a protocol amendment, made once, with
-  the operator integration that needs it.
-- **The pacing rule is not enforced by `apps/rgs`.** The sim refuses a spin arriving before
-  `minSpinIntervalMs` (`LIMIT_REACHED`); this server does not, and the contract suite has no
-  pacing case to catch it. The client paces itself, so nothing user-visible depends on it — but
-  server-side enforcement is a regulator's requirement, and it belongs to R5 with the rest of the
-  session/limits surface.
 - **A failed money-side write is found by reconciliation, not announced when it happens.** A
   rollback that cannot be delivered, or a ledger write that fails, is swallowed by design
   (ADR-0005) — the reconciliation job reports the orphan or the drift on its next tick, through

@@ -229,3 +229,27 @@ export const routeFor = (call: CallName): string => `${HTTP_ROUTE_PREFIX}/${call
  * console to a server log without either side inventing a scheme the other has to guess.
  */
 export const CORRELATION_HEADER = 'x-correlation-id';
+
+/**
+ * The session binding on the wire (docs/protocol.md §2.7, D12 — R5).
+ *
+ * The token travels in the body of `authenticate` and in this header on every other call, as a
+ * standard bearer credential. Both halves are here — the client's spelling and the server's
+ * parsing — because two implementations of "what does the header look like" is one too many. The
+ * single-session dev simulators accept and ignore the header; a multi-session server
+ * (`apps/rgs`) refuses a call that does not carry it as `SESSION_EXPIRED`.
+ */
+export const AUTHORIZATION_HEADER = 'authorization';
+
+/** The client's spelling: `Authorization: Bearer <token>`. */
+export const bearerOf = (token: string): string => `Bearer ${token}`;
+
+/**
+ * The server's parsing: the token inside a bearer header, or `undefined` for anything else.
+ * Scheme matching is case-insensitive (RFC 9110 §11.1); the token itself never is.
+ */
+export const tokenOfBearer = (header: string | undefined): string | undefined => {
+  if (header === undefined) return undefined;
+  const match = /^Bearer[ \t]+(\S+)$/i.exec(header.trim());
+  return match?.[1];
+};

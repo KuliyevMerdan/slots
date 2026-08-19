@@ -54,8 +54,17 @@ fairness — per-round seed pairs on a CSPRNG chain, commitment before the bet, 
 and persisted with the round, reveal on the closing response; the player's verification ships in
 `@slot/game-math` (a NIST-vectored `sha256Hex`, `stopsForStep`), the wire half is §9/D11, and the
 contract suite holds `apps/rgs` to it as a capability the simulators honestly lack (ADR-0006).
-**Next is C8** — packaging: the deploy, the README, rate limiting, the nightly soak and the E2E
-suite. **R5** (sessions for real) is unblocked; **R7** now gates only on R6.
+**R5 landed 2026-08-19**: sessions for real — the token binds every call via an
+`Authorization: Bearer` header carried by the transport itself (§2.7, D12), sessions live in a
+store with memory and Postgres twins held to one contract (Postgres rather than the planned Redis
+— ADR-0007), tokens are minted server-side from the CSPRNG through an operator surface
+(`POST /operator/sessions`, §7), the jurisdiction's pacing rule is enforced server-side
+(`LIMIT_REACHED`, replay-exempt), and the game routes sit behind per-token and per-IP token
+buckets answering `RATE_LIMITED` with `retryAfterMs`. The contract suite gained the two
+PLAYER-class cases that run against **all three targets**: mid-round expiry → renewal → resume
+credited once, and the pacing refusal with its idempotent-replay exemption.
+**Next is C8** — packaging: the deploy, the README, rate limiting on `mock-rgs`, the nightly soak
+and the E2E suite. **R6** (observability) is the R-block now unblocked; **R7** gates only on R6.
 
 ---
 
@@ -86,7 +95,7 @@ contract suite. `#` maps each block back to the phase numbering of the original 
 | **R2** | Wallet integration behind `WalletProvider` | R1 | 10 | ✅ (landed 2026-08-19) |
 | **R3** | Double-entry ledger in integer minor units | R2 | 10 | ✅ (landed 2026-08-19) |
 | **R4** | Server RNG + provably-fair seed commit/reveal | R1 | 10 | ✅ (landed 2026-08-19) |
-| **R5** | Sessions, auth, limits — the `PLAYER` error class for real | R1 | 10 | ☐ |
+| **R5** | Sessions, auth, limits — the `PLAYER` error class for real | R1 | 10 | ✅ (landed 2026-08-19) |
 | **R6** | Observability — structured logs, metrics, OTel on `roundId` | R1 | 10 | ☐ |
 | **R7** | Production readiness — config validation, load test, deploy | R3, R6 | 10 | ☐ |
 
@@ -662,14 +671,35 @@ resume. The contract suite repeats the procedure over the full production chain 
 
 ## Block R5 — Sessions, auth & limits
 
-- [ ] Token validation and session store (Redis), with expiry producing the `PLAYER` error class.
-- [ ] Stake/bet-limit and max-win enforcement **server-side** — the client's limits become a UI
-      convenience, not the rule.
-- [ ] Rate limiting per session and per IP on the spin path.
-- [ ] **Jurisdiction policy enforced server-side** (minimum spin duration, autoplay constraints), so
-      the compliance package stops being the only guard.
+- [x] Token validation and session store, with expiry producing the `PLAYER` error class — as
+      built: the session binds every non-authenticate call via an `Authorization: Bearer` header
+      (§2.7, D12), carried by `HttpTransport` itself so nothing above the transport learns HTTP
+      has headers; `SessionStore` has memory and Postgres twins (`migrations/0004_sessions.sql`)
+      held to one contract, **Postgres rather than the planned Redis** — one database until scale
+      demands two (ADR-0007), and the port is where Redis goes if it ever does. Tokens are minted
+      server-side from injected entropy (the R4 arrangement, reused) through
+      `POST /operator/sessions` — the lobby's face, key-guarded, outside the game contract (§7) —
+      and the demo token still self-issues at boot through the same service.
+- [x] Stake/bet-limit and max-win enforcement **server-side** — already real since R1
+      (`STAKE_NOT_ALLOWED`, `INSUFFICIENT_FUNDS`, the accrued ceiling) and asserted by the suite;
+      R5's addition is that the caller behind every stake is now *identified*.
+- [x] Rate limiting per session and per IP on the spin path — a token bucket per axis (injected
+      clock, hand-rolled and unit-tested), refusing as `RATE_LIMITED` with `retryAfterMs` in the
+      body and `Retry-After` on the wire; budgets from the environment, absent in test
+      compositions by design (the suite hammers on purpose).
+- [x] **Jurisdiction policy enforced server-side** — the rules a server can *observe* (D8):
+      `minSpinIntervalMs` refuses an early spin with `LIMIT_REACHED`, measured between accepted
+      spins off the store's own `lastOpenedAt`, replay-exempt, free spins unpaced (§2.1) — the
+      same semantics the sim has enforced since C6. Autoplay, turbo and the reality check remain
+      the client compliance layer's by D8's own doctrine: a server cannot see them, and the
+      operator-configured full rule set is a later block's.
 
-**Done when:** every `PLAYER`-class contract test goes green against `apps/rgs`.
+**Done when:** every `PLAYER`-class contract test goes green against `apps/rgs`. ✅ — all four
+`PLAYER` codes now have suite cases running against the production chain: `SESSION_EXPIRED`
+(a refused foreign token, and mid-round expiry → renewal through the lobby seam → `pendingRound`
+resume credited exactly once), `STAKE_NOT_ALLOWED`, `INSUFFICIENT_FUNDS`, and `LIMIT_REACHED`
+(the pacing refusal, with the idempotent replay proven exempt) — the latter two describes running
+against **all three targets**, because the sims already enforced what `apps/rgs` now does.
 
 ## Block R6 — Observability
 

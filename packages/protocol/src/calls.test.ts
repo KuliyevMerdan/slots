@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { CALLS, SettleResSchema, SpinReqSchema, SpinResSchema } from './calls.js';
+import {
+  CALLS,
+  SettleResSchema,
+  SpinReqSchema,
+  SpinResSchema,
+  bearerOf,
+  tokenOfBearer,
+} from './calls.js';
 import {
   GameConfigSchema,
   JURISDICTIONS,
@@ -194,5 +201,24 @@ describe('the call table', () => {
         .filter(([, call]) => call.mutating)
         .map(([name]) => name),
     ).toEqual(['spin', 'featureSpin', 'settle']);
+  });
+});
+
+describe('the session binding (§2.7, D12)', () => {
+  it('parses back exactly what the client spells', () => {
+    expect(tokenOfBearer(bearerOf('a-session-token'))).toBe('a-session-token');
+  });
+
+  it('matches the scheme case-insensitively, never the token', () => {
+    expect(tokenOfBearer('bearer TokenCase')).toBe('TokenCase');
+    expect(tokenOfBearer('  Bearer \t padded  ')).toBe('padded');
+  });
+
+  it('answers undefined for anything that is not a bearer credential', () => {
+    expect(tokenOfBearer(undefined)).toBeUndefined();
+    expect(tokenOfBearer('')).toBeUndefined();
+    expect(tokenOfBearer('Basic dXNlcjpwYXNz')).toBeUndefined();
+    expect(tokenOfBearer('Bearer')).toBeUndefined();
+    expect(tokenOfBearer('Bearer two tokens')).toBeUndefined();
   });
 });

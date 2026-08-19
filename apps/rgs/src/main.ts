@@ -2,7 +2,8 @@ import { randomBytes } from 'node:crypto';
 import { buildApp } from './http/app.js';
 import { createGameConfig, readEnv } from './config.js';
 import { createRoundService } from './domain/rounds.js';
-import { SingleSessionHost } from './domain/sessions.js';
+import { MemorySessionStore, createSessionService } from './domain/sessions.js';
+import { createPostgresSessionStore } from './domain/sessions-postgres.js';
 import { committingSeedProvider } from './rng/seeds.js';
 import { MemoryRoundStore } from './persistence/memory.js';
 import { createPgPool, createPostgresStore } from './persistence/postgres.js';
@@ -17,10 +18,11 @@ import type { Minor } from '@slot/protocol';
  * The entry point: composition, and nothing else. Every decision lives in the modules being
  * composed; this is deliberately the only file in the package that touches `process`.
  *
- * The session is a single demo one issued from the environment until R5 builds the operator seam
- * (§7 — the environment *is* the out-of-band channel in development). The store and the ledger
- * are real either way: Postgres when `RGS_DATABASE_URL` is set — one pool serves both — and
- * in-memory otherwise.
+ * Sessions are real since R5: a store (Postgres when `RGS_DATABASE_URL` is set — one pool serves
+ * rounds, ledger and sessions — in-memory otherwise), a service minting tokens from the CSPRNG,
+ * and the operator surface (`/operator/sessions`, §7) as the lobby's face. The demo session is
+ * still issued at boot from the environment — through the same service, because a server nobody
+ * can authenticate against is not a server.
  */
 
 const env = readEnv();
@@ -38,12 +40,17 @@ const wallet =
   env.RGS_WALLET_URL === undefined
     ? new MockWallet({ [PLAYER_ID]: env.RGS_BALANCE as Minor })
     : new RemoteWallet({ baseUrl: env.RGS_WALLET_URL });
-const sessions = new SingleSessionHost();
-sessions.issue(env.RGS_DEMO_TOKEN, {
-  playerId: PLAYER_ID,
-  currency: 'EUR',
-  expiresAt: Date.now() + env.RGS_SESSION_HOURS * 3_600_000,
+
+const sessionStore =
+  pool === undefined ? new MemorySessionStore() : await createPostgresSessionStore({ pool });
+const sessions = createSessionService({
+  store: sessionStore,
+  // The same entropy the fairness chain runs on (R4): tokens must be unguessable, not replayable.
+  randomBytes: (byteCount) => randomBytes(byteCount),
+  now: Date.now,
+  defaultTtlMs: env.RGS_SESSION_HOURS * 3_600_000,
 });
+await sessions.issue({ playerId: PLAYER_ID, currency: 'EUR', token: env.RGS_DEMO_TOKEN });
 
 const rounds = createRoundService({
   store,
@@ -56,7 +63,16 @@ const rounds = createRoundService({
   now: Date.now,
 });
 
-const app = buildApp({ logger: { level: env.RGS_LOG_LEVEL }, rounds });
+const app = buildApp({
+  logger: { level: env.RGS_LOG_LEVEL },
+  rounds,
+  operator: { sessions, key: env.RGS_OPERATOR_KEY },
+  rateLimit: {
+    perTokenPerSecond: env.RGS_RATE_LIMIT_PER_TOKEN,
+    perIpPerSecond: env.RGS_RATE_LIMIT_PER_IP,
+    burst: env.RGS_RATE_LIMIT_BURST,
+  },
+});
 
 /*
  * The reconciliation job (R3): true the ledger against the wallet on an interval and say so.

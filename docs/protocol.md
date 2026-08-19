@@ -6,9 +6,11 @@ amended **2026-08-19** (C6) — jurisdiction rules travel on the wire (§2.1, D8
 session mid-round has a recovery story (§5, D9) — again **2026-08-19** (R0) — an endpoint a
 server has not implemented yet answers `NOT_IMPLEMENTED` (§6, §2.7, D10) — again
 **2026-08-19** (R1) — `PendingRound.next` is absent for a round debited and never resolved
-(§2.6, §5), the case that gained its first real producer — and again **2026-08-19** (R4) —
+(§2.6, §5), the case that gained its first real producer — again **2026-08-19** (R4) —
 provable fairness as optional fields and a capability (§9, D11): commit before the bet, reveal at
-the close, refused as a claim by any server that honours `forceOutcome`. This
+the close, refused as a claim by any server that honours `forceOutcome` — and again
+**2026-08-19** (R5) — the session binds to every call: the token in `authenticate`'s body, an
+`Authorization: Bearer` header on the rest (§2.7, §7, D12). This
 document is the contract; the code is downstream of it. When the wire changes, change this file and
 `packages/protocol` **first**, then the simulator, then the engine, then the UI.
 
@@ -273,6 +275,13 @@ reasoning and the rejected alternatives are in
 | Success | `200` with the response shape from §2 |
 | Failure | The `ProtocolError` of §6, as JSON, with the status below |
 | Correlation | `x-correlation-id` in both directions: the client mints one, the server adopts it or mints its own, and every response echoes it |
+| Session | `Authorization: Bearer <token>` on every call except `authenticate` — the same token that call carried in its body (D12, R5). A multi-session server (`apps/rgs`) refuses a call without it as `SESSION_EXPIRED`; the single-session dev simulators accept and ignore it, because their one session is the process's |
+
+`AUTHORIZATION_HEADER`, `bearerOf()` and `tokenOfBearer()` are exported from `@slot/protocol`
+beside the routes, so the client's spelling and the server's parsing are one definition.
+`HttpTransport` binds the header itself: it remembers the token from the last `authenticate` it
+carried successfully, so nothing above the transport — the engine, the retry policy — ever learns
+that HTTP has headers.
 
 `HTTP_ROUTE_PREFIX` and `routeFor()` are exported from `@slot/protocol` beside the `CALLS` table, so
 the client's path and the server's routes come from one definition. The status table below is
@@ -302,9 +311,10 @@ was lost, so the server holds the connection open and says nothing — the clien
 the wait, exactly as it does in-process. Encoding it as a 504 would tell the client something the
 network never did.
 
-Two surfaces outside the game contract, both dev affordances: `POST /demo/session → { token }` (§7),
-and `GET /health` · `GET /ready`. `apps/mock-rgs` adds `/dev/*` — fault injection, session reset, a
-state summary — which `apps/rgs` does not have.
+Surfaces outside the game contract: `POST /demo/session → { token }` (§7, a dev affordance on
+`apps/mock-rgs`), `GET /health` · `GET /ready`, and — since R5 — `POST /operator/sessions` on
+`apps/rgs`, the operator lobby's key-guarded issuing surface (§7). `apps/mock-rgs` adds `/dev/*` —
+fault injection, session reset and expiry, a state summary — which `apps/rgs` does not have.
 
 ---
 
@@ -449,7 +459,15 @@ standard iGaming shape. `authenticate` treats it as an opaque string; the client
 For the demo, `apps/mock-rgs` exposes `POST /demo/session → { token }` and the in-process simulator
 exposes an equivalent helper. **Both are dev affordances standing in for the operator, not part of
 the game contract** — they are documented here so the auth path is honest rather than fictional.
-`apps/rgs` replaces this with real session validation in **R5**.
+
+`apps/rgs` has the validating half for real since **R5**: sessions live in a store (memory or
+Postgres, one contract), tokens are minted server-side from injected entropy, and the lobby's face
+is an **operator surface** — `POST /operator/sessions { playerId, currency?, ttlMs? } → { token,
+session }`, guarded by an operator key header (`x-operator-key`), outside the game contract exactly
+as `/demo/session` is. Issuing for a player who already holds a round **renews** in the only sense
+that matters: the fresh token is a new session for the same player, so it re-attaches to the same
+balance and the same `pendingRound`. The demo composition still self-issues `RGS_DEMO_TOKEN` at
+boot through the same service, because a server nobody can authenticate against is not a server.
 
 Issuing a session **renews** it: asking the demo lobby again extends the running session's
 `expiresAt` rather than wiping the game, exactly as an operator lobby would hand a returning player
@@ -646,3 +664,23 @@ commitment until the session ends, which turns "verify your round" into "trust u
 from the server it is checking.
 *Rejected:* a non-protocol body only the suite understands. The first thing a real client meeting
 the skeleton would see is a body it cannot parse — `SCHEMA_MISMATCH` — blaming the wrong side.
+
+**D12 — The session binds via an `Authorization: Bearer` header, carried by the transport.**
+(2026-08-19)
+The token already travels once, in `authenticate`'s body (§2.1, §7); every other call now carries
+the same token as a standard bearer credential, and a multi-session server refuses its absence as
+`SESSION_EXPIRED` — which is the amendment the Gaps registry promised R5 would make. A *header*
+because that is where every proxy, gateway and access-log policy in the industry already expects a
+credential (and why the token is not in a URL — §2.7's body rule, same reasoning). Carried *by the
+transport* — `HttpTransport` remembers the token from the last successful `authenticate` — because
+the alternative is teaching the engine, the retry policy and every caller of `RgsPort` that HTTP
+exists, which is precisely what the seam was built to prevent. The single-session simulators accept
+and ignore the header: their one session **is** the process's, and enforcing a binding they cannot
+multiplex would be theatre.
+*Rejected:* the token as a field on every request body. It would enter the idempotency
+fingerprint, so the same retry after a mid-round renewal (§5, D9) would read as `ROUND_CONFLICT` —
+the recovery story breaking the recovery story.
+*Rejected:* cookies. A game embedded in an operator's page is exactly where ambient credentials
+misfire (CSRF, third-party-cookie policy); an explicit header is inert until someone sends it.
+*Rejected:* requiring the header of the simulators too. A rule enforced where it cannot matter
+teaches integrators nothing and doubles the dev-affordance surface.

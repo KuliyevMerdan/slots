@@ -5,8 +5,8 @@ import { MemoryRoundStore } from '../persistence/memory.js';
 import type { RoundStore } from '../persistence/store.js';
 import { MockWallet } from '../wallet/mock.js';
 import { committingSeedProvider, seededBytes } from '../rng/seeds.js';
-import { SingleSessionHost } from '../domain/sessions.js';
-import { createRoundService } from '../domain/rounds.js';
+import { MemorySessionStore, createSessionService } from '../domain/sessions.js';
+import { boundTo, createRoundService } from '../domain/rounds.js';
 import { MemoryLedger } from './memory.js';
 import { balancesOf } from './ledger.js';
 import { reconcile } from './reconcile.js';
@@ -38,8 +38,13 @@ const world = () => {
   const store = new MemoryRoundStore({ retention: 10_000 });
   const wallet = new MockWallet({ [PLAYER]: OPENING });
   const ledger = new MemoryLedger();
-  const sessions = new SingleSessionHost();
-  sessions.issue(TOKEN, { playerId: PLAYER, currency: 'EUR', expiresAt: 4_102_444_800_000 });
+  const sessionStore = new MemorySessionStore();
+  void sessionStore.put(TOKEN, { playerId: PLAYER, currency: 'EUR', expiresAt: 4_102_444_800_000 });
+  const sessions = createSessionService({
+    store: sessionStore,
+    randomBytes: seededBytes('ledger-tokens'),
+    now: () => NOW,
+  });
   const chaos = { failNextOpen: false, failNextRollback: false };
 
   const flakyStore: RoundStore = new Proxy(store, {
@@ -67,15 +72,18 @@ const world = () => {
     },
   });
 
-  const service = createRoundService({
-    store: flakyStore,
-    wallet: flakyWallet,
-    ledger,
-    sessions,
-    seeds: committingSeedProvider(seededBytes('rgs-test-seed')),
-    config: createGameConfig(),
-    now: () => NOW,
-  });
+  const service = boundTo(
+    createRoundService({
+      store: flakyStore,
+      wallet: flakyWallet,
+      ledger,
+      sessions,
+      seeds: committingSeedProvider(seededBytes('rgs-test-seed')),
+      config: createGameConfig(),
+      now: () => NOW,
+    }),
+    { token: TOKEN },
+  );
   return { store, wallet, ledger, service, chaos };
 };
 

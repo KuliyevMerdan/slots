@@ -15,10 +15,12 @@ import type {
   SpinRes,
 } from '@slot/protocol';
 import {
+  AUTHORIZATION_HEADER,
   CALLS,
   CORRELATION_HEADER,
   ProtocolErrorSchema,
   SlotError,
+  bearerOf,
   routeFor,
 } from '@slot/protocol';
 import type { CallOptions, RgsTransport } from './transport.js';
@@ -137,6 +139,13 @@ export class HttpTransport implements RgsTransport {
   readonly #fetch: FetchLike;
   readonly #headers: () => Record<string, string>;
   readonly #correlationId: () => string;
+  /**
+   * The session binding (docs/protocol.md §2.7, D12): the token from the last `authenticate` this
+   * transport carried successfully, sent as `Authorization: Bearer` on every other call. Held
+   * here, not above — the engine and the retry policy never learn that HTTP has headers, and a
+   * mid-round renewal (§5, D9) re-binds simply by authenticating again through the same object.
+   */
+  #token: string | undefined;
 
   constructor({ baseUrl, fetch, headers, correlationId }: HttpTransportOptions) {
     this.#baseUrl = baseUrl.replace(/\/+$/, '');
@@ -145,8 +154,12 @@ export class HttpTransport implements RgsTransport {
     this.#correlationId = correlationId ?? resolveCorrelationIds();
   }
 
-  authenticate(request: AuthenticateReq, options?: CallOptions): Promise<AuthenticateRes> {
-    return this.#call('authenticate', request, options);
+  async authenticate(request: AuthenticateReq, options?: CallOptions): Promise<AuthenticateRes> {
+    const response = await this.#call('authenticate', request, options);
+    // Only a token the server accepted becomes the binding — a refused one would turn every
+    // subsequent call's refusal from "session expired" into a mystery about which token was sent.
+    this.#token = request.token;
+    return response;
   }
 
   spin(request: SpinReq, options?: CallOptions): Promise<SpinRes> {
@@ -180,6 +193,12 @@ export class HttpTransport implements RgsTransport {
         headers: {
           'content-type': 'application/json',
           [CORRELATION_HEADER]: correlationId,
+          // The binding rides every call but the one that establishes it (§2.7, D12). The
+          // caller-supplied headers spread last: an operator integration that manages its own
+          // credential wins over the remembered one.
+          ...(call !== 'authenticate' && this.#token !== undefined
+            ? { [AUTHORIZATION_HEADER]: bearerOf(this.#token) }
+            : {}),
           ...this.#headers(),
         },
         body: JSON.stringify(request),

@@ -16,6 +16,7 @@ export * from './errors.js';
 export * from './config.js';
 export * from './domain/rounds.js';
 export * from './domain/sessions.js';
+export * from './domain/sessions-postgres.js';
 export * from './domain/fingerprint.js';
 export * from './wallet/provider.js';
 export * from './wallet/mock.js';

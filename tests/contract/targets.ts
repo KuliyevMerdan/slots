@@ -1,4 +1,4 @@
-import type { ErrorCode, Minor, RoundState } from '@slot/protocol';
+import type { ErrorCode, JurisdictionRules, Minor, RoundState } from '@slot/protocol';
 import { SimServer, createSimConfig, createSimState } from '@slot/rgs-sim';
 import type { FaultConfig } from '@slot/rgs-sim';
 import { buildApp } from '@slot/mock-rgs';
@@ -6,14 +6,15 @@ import { commitmentOf } from '@slot/game-math';
 import {
   MemoryLedger,
   MemoryRoundStore,
+  MemorySessionStore,
   RemoteWallet,
-  SingleSessionHost,
   WalletSim,
   buildApp as buildRgsApp,
   buildWalletSimApp,
   committingSeedProvider,
   createGameConfig,
   createRoundService,
+  createSessionService,
   seededBytes,
   spinFingerprint,
 } from '@slot/rgs';
@@ -71,6 +72,18 @@ export interface TargetHandle {
   faults(config: ContractFaults): Promise<void>;
   state(): Promise<TargetSnapshot>;
   /**
+   * End the session the suite is playing under, now — the on-demand producer of
+   * `SESSION_EXPIRED` mid-round (§5, D9). Every target has one: the sim's `expireSession`, the
+   * dev route over HTTP, and the session service on `apps/rgs`.
+   */
+  expire(): Promise<void>;
+  /**
+   * The lobby's renewal (§7): a token that re-attaches to the same player, the same balance and
+   * the same `pendingRound`. The sims re-validate their single token; `apps/rgs` mints a fresh
+   * one for the same player — both are what an operator's lobby does for a returning player.
+   */
+  renew(): Promise<{ token: string }>;
+  /**
    * Leave a round debited but unresolved, and return its id — docs/protocol.md §5.
    *
    * Required of any target that declares `unresolvedRounds`, and impossible for the ones that do
@@ -108,6 +121,8 @@ export interface StartOptions {
   /** Whether this instance honours `forceOutcome`. The dev gate is tested with `false`. */
   devMode: boolean;
   balance: Minor;
+  /** Override the served regime — how the pacing case gets a nonzero `minSpinIntervalMs`. */
+  jurisdictionRules?: JurisdictionRules;
 }
 
 export interface ContractTarget {
@@ -133,10 +148,13 @@ const SEED = 'contract-suite-seed';
 const EXPIRES_AT = 4_102_444_800_000;
 const NOW = 1_700_000_000_000;
 
-const simulatorFor = ({ devMode, balance }: StartOptions): SimServer =>
+const simulatorFor = ({ devMode, balance, jurisdictionRules }: StartOptions): SimServer =>
   new SimServer({
     initialState: createSimState({ serverSeed: SEED, balance, expiresAt: EXPIRES_AT }),
-    config: createSimConfig({ devMode }),
+    config: createSimConfig({
+      devMode,
+      ...(jurisdictionRules === undefined ? {} : { jurisdictionRules }),
+    }),
     now: () => NOW,
   });
 
@@ -183,6 +201,11 @@ export const inProcessTarget: ContractTarget = {
         return Promise.resolve();
       },
       state: () => Promise.resolve(snapshotOf(sim)),
+      expire: () => {
+        sim.expireSession();
+        return Promise.resolve();
+      },
+      renew: () => Promise.resolve(sim.issueSession()),
       close: () => Promise.resolve(),
     });
   },
@@ -204,10 +227,12 @@ export const httpTarget: ContractTarget = {
     const baseUrl = await app.listen({ port: 0, host: '127.0.0.1' });
 
     const dev = async <T>(path: string, method: string, body?: unknown): Promise<T> => {
+      // No content-type without a body: Fastify refuses an empty JSON body, rightly.
       const response = await fetch(`${baseUrl}${path}`, {
         method,
-        headers: { 'content-type': 'application/json' },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        ...(body === undefined
+          ? {}
+          : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
       });
       if (!response.ok) {
         throw new Error(`${method} ${path} failed: ${response.status} ${await response.text()}`);
@@ -223,6 +248,12 @@ export const httpTarget: ContractTarget = {
         await dev('/dev/faults', 'PUT', config);
       },
       state: () => dev<TargetSnapshot>('/dev/state', 'GET'),
+      expire: async () => {
+        await dev('/dev/expire', 'POST');
+      },
+      // The demo lobby (§7) — deliberately not a `/dev` route, because obtaining a token must
+      // work on the composition a player gets.
+      renew: () => dev<{ token: string }>('/demo/session', 'POST'),
       close: () => app.close(),
     };
   },
@@ -260,7 +291,13 @@ export const realRgsTarget: ContractTarget = {
     const walletApp = buildWalletSimApp(walletSim);
     const walletUrl = await walletApp.listen({ port: 0, host: '127.0.0.1' });
     const wallet = new RemoteWallet({ baseUrl: walletUrl, timeoutMs: 500, backoffMs: 1 });
-    const sessions = new SingleSessionHost();
+    // The real session machinery (R5): a store, a service minting from seeded bytes — the same
+    // parts `main.ts` composes, deterministic here for the same reason the seeds are.
+    const sessions = createSessionService({
+      store: new MemorySessionStore(),
+      randomBytes: seededBytes(`${SEED}-tokens`),
+      now: () => NOW,
+    });
     // `devMode` is deliberately unread: this server has no such flag to set (§8), which is
     // exactly what the suite's dev-gate case asserts from the outside.
     const rounds = createRoundService({
@@ -269,7 +306,11 @@ export const realRgsTarget: ContractTarget = {
       ledger,
       sessions,
       seeds: committingSeedProvider(seededBytes(SEED)),
-      config: createGameConfig(),
+      config: createGameConfig(
+        options.jurisdictionRules === undefined
+          ? {}
+          : { jurisdictionRules: options.jurisdictionRules },
+      ),
       now: () => NOW,
     });
     const app = buildRgsApp({ rounds });
@@ -277,16 +318,19 @@ export const realRgsTarget: ContractTarget = {
 
     let issued = 0;
     let stranded = 0;
+    /** The token the suite currently plays under — what `expire()` must end. */
+    let current = '';
 
     return {
       transport: new HttpTransport({ baseUrl }),
-      reset: ({ balance = options.balance } = {}) => {
+      reset: async ({ balance = options.balance } = {}) => {
         store.clear();
         ledger.clear();
         walletSim.reset({ [playerId]: balance });
         const token = `contract-rgs-${(issued += 1)}`;
-        sessions.issue(token, { playerId, currency: 'EUR', expiresAt: EXPIRES_AT });
-        return Promise.resolve({ token, balance });
+        await sessions.issue({ playerId, currency: 'EUR', token, ttlMs: EXPIRES_AT - NOW });
+        current = token;
+        return { token, balance };
       },
       /**
        * Fault injection, the only way a production-shaped server can honestly offer it: break the
@@ -304,6 +348,20 @@ export const realRgsTarget: ContractTarget = {
         }
         walletSim.setFaults({ refuse: (errorRates.WALLET_UNAVAILABLE ?? 0) > 0 });
         return Promise.resolve();
+      },
+      expire: async () => {
+        await sessions.expire(current);
+      },
+      renew: async () => {
+        // The operator path: a *minted* token for the same player — re-attachment to the balance
+        // and the pending round is the player id's doing, not the token's.
+        const renewed = await sessions.issue({
+          playerId,
+          currency: 'EUR',
+          ttlMs: EXPIRES_AT - NOW,
+        });
+        current = renewed.token;
+        return { token: renewed.token };
       },
       // Read directly from the sim, not over the wire: the account must stay readable while the
       // wallet is deliberately refusing.

@@ -55,9 +55,36 @@ import { featureSpinFingerprint, settleFingerprint, spinFingerprint } from './fi
  * `strand()` in the contract suite finally has a producer — and, since R2, the reason the one
  * confirmed-debit-no-round state rolls its debit back (docs/wallet-api.md §4).
  */
+/**
+ * Who is calling — the wire's session binding, resolved by the HTTP layer from the
+ * `Authorization` header (§2.7, D12) and judged here, where the clock lives. `authenticate`
+ * ignores it: that call carries its token in the body, because it is the one that establishes
+ * the binding.
+ */
+export interface Caller {
+  readonly token?: string;
+}
+
 export type RoundService = {
+  [N in CallName]: (request: CallRequest<N>, caller: Caller) => Promise<CallResponse<N>>;
+};
+
+/** The service as one caller sees it — the transport's own surface, request in, response out. */
+export type BoundRoundService = {
   [N in CallName]: (request: CallRequest<N>) => Promise<CallResponse<N>>;
 };
+
+/**
+ * Pre-bind one caller — how the domain tests and the ledger's scripted sessions hold the service.
+ * The HTTP layer never uses this: it resolves a fresh `Caller` from each request's header.
+ */
+export const boundTo = (service: RoundService, caller: Caller): BoundRoundService => ({
+  authenticate: (request) => service.authenticate(request, caller),
+  spin: (request) => service.spin(request, caller),
+  featureSpin: (request) => service.featureSpin(request, caller),
+  settle: (request) => service.settle(request, caller),
+  history: (request) => service.history(request, caller),
+});
 
 export interface RoundServiceDeps {
   store: RoundStore;
@@ -182,16 +209,46 @@ export function createRoundService({
       })
       .catch(() => undefined);
 
-  /** The session every non-authenticate call runs under — expiry checked on every call (§5, D9). */
-  const activeSession = (): Session => {
-    const session = sessions.active();
+  /**
+   * The session every non-authenticate call runs under — named by the caller's token since R5,
+   * expiry checked on every call (§5, D9). Three refusals, one code: a missing binding, a token
+   * no session answers to, and a session past its time are all `SESSION_EXPIRED`, because the
+   * client's next move is identical — re-authenticate through the lobby seam.
+   */
+  const sessionFor = async (caller: Caller): Promise<Session> => {
+    if (caller.token === undefined) {
+      throw new SlotError('SESSION_EXPIRED', 'no session token presented — authenticate first');
+    }
+    const session = await sessions.verify(caller.token);
     if (session === undefined) {
-      throw new SlotError('SESSION_EXPIRED', 'no session — authenticate first');
+      throw new SlotError('SESSION_EXPIRED', 'the token is not valid for any session');
     }
     if (now() >= session.expiresAt) {
       throw new SlotError('SESSION_EXPIRED', 'the session has expired — re-authenticate');
     }
     return session;
+  };
+
+  /**
+   * The jurisdiction's pacing rule, server half (docs/protocol.md §2.1, R5): a base-game cycle
+   * may not start sooner than `minSpinIntervalMs` after the last accepted one. Measured between
+   * *opened* rounds, so an idempotent replay is exempt (it opens nothing) and a refused call does
+   * not push the window — the same semantics the simulator has enforced since C6. Free spins are
+   * steps inside a round and are not paced (§2.1).
+   */
+  const paceSpin = async (playerId: string, roundId: string): Promise<void> => {
+    const interval = config.jurisdictionRules.minSpinIntervalMs;
+    if (interval <= 0) return;
+    const last = await store.lastOpenedAt(playerId);
+    if (last !== undefined && now() - last < interval) {
+      throw new SlotError(
+        'LIMIT_REACHED',
+        `this jurisdiction requires ${interval}ms between spins`,
+        {
+          roundId,
+        },
+      );
+    }
   };
 
   /**
@@ -217,7 +274,7 @@ export function createRoundService({
   };
 
   const authenticate = async (request: AuthenticateReq): Promise<AuthenticateRes> => {
-    const session = sessions.verify(request.token);
+    const session = await sessions.verify(request.token);
     if (session === undefined) {
       throw new SlotError('SESSION_EXPIRED', 'the token is not valid for this session');
     }
@@ -240,8 +297,8 @@ export function createRoundService({
     };
   };
 
-  const spin = async (request: SpinReq): Promise<SpinRes> => {
-    const session = activeSession();
+  const spin = async (request: SpinReq, caller: Caller): Promise<SpinRes> => {
+    const session = await sessionFor(caller);
     const fingerprint = spinFingerprint(request.stake, request.clientSeed, request.forceOutcome);
 
     // Idempotency before validation: a retry of a round that already happened must replay it, not
@@ -287,6 +344,8 @@ export function createRoundService({
           roundId: request.roundId,
         });
       }
+
+      await paceSpin(session.playerId, request.roundId);
 
       const stakeRejection = validateStake(config, request.stake);
       if (stakeRejection !== null) {
@@ -453,8 +512,8 @@ export function createRoundService({
     return response;
   };
 
-  const featureSpin = async (request: FeatureSpinReq): Promise<FeatureSpinRes> => {
-    const session = activeSession();
+  const featureSpin = async (request: FeatureSpinReq, caller: Caller): Promise<FeatureSpinRes> => {
+    const session = await sessionFor(caller);
 
     const round = await store.find(request.roundId);
     if (round === undefined) {
@@ -578,8 +637,8 @@ export function createRoundService({
     return response;
   };
 
-  const settle = async (request: SettleReq): Promise<SettleRes> => {
-    const session = activeSession();
+  const settle = async (request: SettleReq, caller: Caller): Promise<SettleRes> => {
+    const session = await sessionFor(caller);
     const fingerprint = settleFingerprint();
 
     // Settling twice is a replay, not an error: a client that timed out waiting for the credit
@@ -643,8 +702,8 @@ export function createRoundService({
     return response;
   };
 
-  const history = async (request: HistoryReq): Promise<HistoryRes> => {
-    const session = activeSession();
+  const history = async (request: HistoryReq, caller: Caller): Promise<HistoryRes> => {
+    const session = await sessionFor(caller);
     const limit = request.limit ?? 20;
 
     const settled = await store.settledFor(session.playerId, limit);

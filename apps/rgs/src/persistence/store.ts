@@ -106,6 +106,12 @@ export interface RoundStore {
   pendingFor(playerId: string): Promise<StoredRound | undefined>;
   /** Settled rounds, newest first. */
   settledFor(playerId: string, limit: number): Promise<readonly StoredRound[]>;
+  /**
+   * When this player's newest round opened — the server half of the jurisdiction's pacing rule
+   * (R5): an accepted spin is an opened round, so "measured between accepted spins" is a read of
+   * this, idempotent replays exempt by construction because a replay opens nothing.
+   */
+  lastOpenedAt(playerId: string): Promise<number | undefined>;
   /** How many settled rounds this store keeps at all — the wire's `history.retention`. */
   readonly retention: number;
 }
