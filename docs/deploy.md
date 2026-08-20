@@ -119,3 +119,33 @@ conflicting ones to one winner, concurrent settles to one credit — against bot
 - Traces: set `OTEL_EXPORTER_OTLP_ENDPOINT` and spans flow OTLP/HTTP; unset, the API is a no-op.
 - Metrics: set `RGS_METRICS_PORT` to move `GET /metrics` off the player port (compose does).
 - One `roundId` retrieves a round's story across all three — that is R6's tested gate.
+
+## The demo image (C8, ADR-0010)
+
+The playable demo is its own image — `apps/mock-rgs` serving the game API *and* the built client
+from one origin, so no CORS policy exists anywhere:
+
+```bash
+docker build -f apps/mock-rgs/Dockerfile -t slot-demo .
+docker run --rm -p 8787:8787 slot-demo
+```
+
+That is the whole deployment: `http://localhost:8787/` is a playable slot, `/ready` is the health
+gate, and the client inside is the **demo build** — debug panel and grid assertion on, because
+"force a max win and read why the client can't cheat" is the exhibit. It is deliberately not the
+production bundle `verify:strip` proves clean, and never claims to be.
+
+Three environment variables matter behind a hosting platform's proxy (Fly, Railway, anything that
+terminates TLS in front of the container):
+
+- `MOCK_RGS_TRUST_PROXY` — baked `true` in the image: `request.ip` reads `X-Forwarded-For`, so
+  the per-IP budget refuses one abusive client instead of everyone behind the proxy.
+- `MOCK_RGS_RATE_LIMIT_MAX` — requests per IP per minute (default 600, healthchecks exempt).
+  The refusal is the protocol's own `RATE_LIMITED` with `retryAfterMs`, so an honest client waits
+  it out rather than erroring.
+- `MOCK_RGS_SEED` — set it to make the session's outcome sequence replayable across restarts;
+  leave the default for the demo.
+
+Everything in this image is play money and single-session: one balance, reset on restart, `/dev/*`
+mounted on purpose (the debug panel is part of the demo). Nothing here is the real RGS — that is
+the rest of this document.

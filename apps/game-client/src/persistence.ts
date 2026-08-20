@@ -21,12 +21,44 @@ import { persist, readPersisted } from '@slot/protocol';
 
 export const CLIENT_STATE_KEY = 'slot.client.state';
 
+/**
+ * The player-protection settings (C8) — what the drawer's picker edits and the wiring enforces.
+ *
+ * The autoplay stops that scale with the bet are stored as *stake multiples* and resolved into
+ * money when a run starts, because a limit worth `10×` at every bet level is one setting, while a
+ * fixed amount is a different rule at every stake (the `maxWinMultiplier` argument, applied to
+ * protection). The session-loss limit is stored resolved, in minor units, because a session
+ * crosses stake changes and its limit is an amount of money, not a relationship to the bet.
+ */
+const ProtectionSchema = z.object({
+  autoplaySpins: z.int().min(1),
+  stopOnFeature: z.boolean(),
+  /** Stop the run when one round pays more than this many stakes. Absent = no stop. */
+  winLimitX: z.int().min(1).optional(),
+  /** Stop the run when its own net loss exceeds this many stakes. Absent = no stop. */
+  lossLimitX: z.int().min(1).optional(),
+  /** End play after this much session time. Absent = no limit. */
+  maxSessionMinutes: z.int().min(1).optional(),
+  /** End play when the session's net loss exceeds this, in minor units. Absent = no limit. */
+  maxLossMinor: z.int().min(1).optional(),
+});
+
+export type ProtectionSettings = z.infer<typeof ProtectionSchema>;
+
+/** The plan the demo always had, now as the picker's starting point rather than a constant. */
+export const DEFAULT_PROTECTION: ProtectionSettings = {
+  autoplaySpins: 25,
+  stopOnFeature: true,
+};
+
 const ClientStateSchema = z.object({
   /** Minor units. Validated against `GameConfig.betLevels` before it is used — the server's ladder. */
   stake: z.int().min(1),
   turbo: z.boolean(),
   /** Optional because payloads written before C6 lack it — and absent means "sound on". */
   muted: z.boolean().optional(),
+  /** Optional because payloads written before C8 lack it — and absent means the defaults. */
+  protection: ProtectionSchema.optional(),
 });
 
 export type ClientState = z.infer<typeof ClientStateSchema>;

@@ -108,8 +108,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > §5 stranded-round case runs against the one target that can honestly produce it.
 >
 > **What is deliberately not there yet:** the hosted demo URL, the README, the architecture
-> diagrams, and the client protection surfaces C8 owes (the reality check's second action, the
-> player-facing limits picker, the verify-round affordance). The rest of **C8** landed 2026-08-20:
+> diagrams, and the client-side fairness verification (the dev-build reveal assertion and the
+> player-facing verify-round affordance). The rest of **C8** landed 2026-08-20: the reality
+> check's EXIT action and the player-protection picker (the drawer's third document, enforced at
+> the wiring),
 > same-origin static serving + the per-IP budget on `mock-rgs` (ADR-0010, the demo Dockerfile CI
 > builds), the nightly soak (`nightly.yml`, 5,000 rounds under `--expose-gc` with the heap-trend
 > case armed), and the Playwright E2E suite (`pnpm e2e`, its own CI job) — spin, win, feature,
@@ -765,17 +767,27 @@ onto a button label.
   for the next spin, which is how a win presentation is developed at all rather than waited for.
   Both flags are `define`d to literal booleans, so a production build contains neither the flag nor
   the code behind it, and the server refuses `forceOutcome` outside dev mode regardless.
-- **One drawer, two documents** ([`drawer.ts`](apps/game-client/src/drawer.ts)). The round-history
+- **One drawer, three documents** ([`drawer.ts`](apps/game-client/src/drawer.ts)). The round-history
   panel ([`history.ts`](apps/game-client/src/history.ts)) is every build's: the wire's `history`
   response listed verbatim — stake, win, capped mark, free spins, formatted by `@slot/money` with
   the session's currency — refetched on every open, with `retention` stated honestly ("this demo
-  server keeps only the last N settled rounds"), in both languages. The debug panel is dev builds':
-  the same frame, reached by a DEV button the dev branch itself creates, wired to the panel from
-  `@slot/dev-tools` with the connection's `dev` control plane (in-process `SimServer` methods, or
-  `/dev/*` over HTTP — one port shape, two enactments, chosen in `transport.ts`). A failed history
-  fetch is a sentence in the panel, never an error screen over a working game. The reality-check
-  dialog now also traps focus (`trapFocus`, the WAI-ARIA dialog pattern) — Tab cannot walk out into
-  a page the overlay covers.
+  server keeps only the last N settled rounds"), in both languages. The **protection picker**
+  ([`settings.ts`](apps/game-client/src/settings.ts), C8) is every build's too — player-facing,
+  never dev-gated: the autoplay stop conditions (spins per run, stop-on-feature, single-win and
+  run-loss stops as stake multiples resolved through `@slot/money` when the run starts) and the
+  session limits (time; net loss, offered as a pre-formatted money ladder off the highest bet
+  level and stored resolved in minor units). The wiring enforces what the picker sets: the tally
+  (`startTally`/`recordStake`/`recordCredit`) folds every stake and credit, and a breach on the
+  way into IDLE stops autoplay, holds the spin gate and shows the limit-stop overlay — the
+  reality-check frame with CONTINUE removed, because a breached limit ends play rather than
+  pausing it. Settings persist as an optional `protection` field in the client state envelope.
+  The debug panel is dev builds': the same frame, reached by a DEV button the dev branch itself
+  creates, wired to the panel from `@slot/dev-tools` with the connection's `dev` control plane
+  (in-process `SimServer` methods, or `/dev/*` over HTTP — one port shape, two enactments, chosen
+  in `transport.ts`). A failed history fetch is a sentence in the panel, never an error screen
+  over a working game. The reality-check dialog traps focus (`trapFocus`, the WAI-ARIA dialog
+  pattern) and since C8 offers the honest second action regulated markets require: EXIT reloads
+  to the landing page — the demo's lobby — beside CONTINUE.
 - **The renderer attaches to a machine already in motion.** The stage cannot be built until
   `authenticate` has answered — the strips arrive in that response — so a resumed round is announced
   before anything is listening, and events are not replayed. `GameStage.attach(state)` reads the
@@ -1443,12 +1455,6 @@ D8, D9 — jurisdiction rules on the wire, no renew call, transparent mid-round 
 
 **Client — implied by the domain, built by no block**
 
-- **The reality check offers CONTINUE and nothing else.** Regulated markets require the pause to
-  also offer a way *out* — quit the game, show the session's elapsed time on demand — and the demo's
-  dialog has one button, because "exit" in an operator-embedded game is the lobby's affordance and
-  there is no lobby. When C8 packages the demo behind a real URL, the dialog should gain an honest
-  second action (reload to the landing page, if nothing else). The focus half landed with C7: the
-  dialog traps Tab (`trapFocus`, drawer.ts), so only the missing second action remains.
 - **The client holds the verification toolkit and never opens it.** Since R4 every closing
   response from `apps/rgs` carries a reveal, and `@slot/game-math` — which the client ships —
   can check it; but no client code calls `sha256Hex`/`stopsForStep` yet. The natural first home
@@ -1456,12 +1462,13 @@ D8, D9 — jurisdiction rules on the wire, no renew call, transparent mid-round 
   player-facing "verify this round" affordance belongs beside the history drawer (C8+). Until
   then the ability the R4 bullet promised exists as a shipped library and a documented procedure,
   not as a button.
-- **Autoplay's plan is fixed at the wiring site.** `{ spins: 25, stopOnFeature: true }` — the stop
-  conditions regulators care about (loss limit, single-win limit) are implemented and tested in
-  `@slot/compliance` but nothing lets a player *set* them, and the same is true of the session
-  limits (`limits.ts` has trackers and no settings surface). The drawer frame these settings wanted
-  now exists (C7); the picker itself — honestly labelled as player-protection settings, and
-  player-facing rather than dev-gated — is C8's to add beside the history panel.
+- **The stake cap has no picker.** The protection drawer (C8) sets the autoplay stops and the
+  session time/loss limits, and the wiring enforces them — but `stakeWithinLimit`
+  (`compliance/limits.ts`, `maxSingleStake`) still has no settings surface and no enforcement
+  site. It belongs in the same panel, gating `stepStake` and the Pixi bet selector, when a market
+  that requires it is actually targeted. Free-typed money limits (absolute amounts rather than
+  the offered ladders) wait on a localized money-*parsing* affordance `@slot/money` deliberately
+  does not have yet — formatting is the edge it owns today.
 
 **Assets & content**
 

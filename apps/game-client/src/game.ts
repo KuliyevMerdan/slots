@@ -3,11 +3,17 @@ import type { ForceOutcome, GameConfig, JurisdictionRules, Minor, Win } from '@s
 import {
   acknowledgeRealityCheck,
   canSpin,
+  limitBreached,
   minutesPlayed,
   realityCheckDue,
+  recordCredit,
+  recordStake,
   spinDelay,
   startRealityCheck,
+  startTally,
 } from '@slot/compliance';
+import type { AutoplayPlan, LimitBreach, SessionLimits } from '@slot/compliance';
+import { format, multiply } from '@slot/money';
 import { SlotAudio, detectCapabilities, readSafeAreaInsets, watchVisibility } from '@slot/platform';
 
 /** The named scenarios `@slot/rgs-sim` knows how to produce, for the console's convenience. */
@@ -22,7 +28,9 @@ import { connect } from './transport.js';
 import { newRoundId } from './round-id.js';
 import { AutoplayController } from './autoplay.js';
 import type { AutoplayView } from './autoplay.js';
-import { loadClientState, saveClientState, stakeFor } from './persistence.js';
+import { DEFAULT_PROTECTION, loadClientState, saveClientState, stakeFor } from './persistence.js';
+import type { ProtectionSettings } from './persistence.js';
+import { createSettingsPanel } from './settings.js';
 import { consoleTelemetry, guarded } from './telemetry.js';
 import type { Telemetry } from './telemetry.js';
 import { createAnnouncer } from './announce.js';
@@ -48,11 +56,17 @@ import { createHistoryPanel } from './history.js';
 const MARGIN = 28;
 
 /**
- * The demo's autoplay plan. A player-facing picker is C8's, in the drawer the history panel
- * shares; the stop conditions are the point here, and stop-on-feature is the one every regulator
- * asks about first.
+ * The ladders the protection picker offers (C8). Choices rather than free input on purpose: a
+ * select needs no localized decimal parsing, cannot be mistyped, and every offered value is one
+ * the wiring can resolve exactly — stake multiples through `@slot/money`'s `multiply`, minutes
+ * through the injected clock. The session-loss ladder is stake multiples of the *highest* bet
+ * level, resolved to minor units once at boot, because a session's loss limit is an amount of
+ * money and must not drift when the player changes stake.
  */
-const AUTOPLAY_PLAN = { spins: 25, stopOnFeature: true } as const;
+const SPINS_CHOICES = [10, 25, 50, 100] as const;
+const MULTIPLE_CHOICES = [10, 25, 50, 100] as const;
+const MINUTES_CHOICES = [30, 60, 120] as const;
+const SESSION_LOSS_MULTIPLES = [50, 100, 200] as const;
 
 export interface Game {
   destroy(): void;
@@ -176,6 +190,36 @@ export async function startGame(root: HTMLElement, options: GameOptions = {}): P
    * starts suspended on iOS and under autoplay policies; `attachUnlock` resumes it on the first
    * gesture, which is also the gesture that starts the first spin.
    */
+  /**
+   * The player-protection settings (C8): remembered like any preference, edited by the drawer's
+   * picker, enforced right here at the wiring — the autoplay plan is built from them per run, and
+   * the session tally below stops play when a limit is met. The compliance package holds the
+   * arithmetic; this file only feeds it the clock and the events.
+   */
+  let protection: ProtectionSettings = remembered?.protection ?? DEFAULT_PROTECTION;
+  let tally = startTally(Date.now());
+  let limitStop: LimitBreach | null = null;
+  const sessionLimits = (): SessionLimits => ({
+    ...(protection.maxSessionMinutes === undefined
+      ? {}
+      : { maxSessionMs: protection.maxSessionMinutes * 60_000 }),
+    ...(protection.maxLossMinor === undefined ? {} : { maxLoss: protection.maxLossMinor as Minor }),
+  });
+  const autoplayPlan = (): AutoplayPlan | null => {
+    const current = engine.state;
+    if (!('stake' in current)) return null;
+    return {
+      spins: protection.autoplaySpins,
+      stopOnFeature: protection.stopOnFeature,
+      ...(protection.winLimitX === undefined
+        ? {}
+        : { stopOnSingleWinOver: multiply(current.stake, protection.winLimitX) }),
+      ...(protection.lossLimitX === undefined
+        ? {}
+        : { stopOnLossExceeding: multiply(current.stake, protection.lossLimitX) }),
+    };
+  };
+
   const capabilities = detectCapabilities(window);
   const audio =
     capabilities.webAudio && 'AudioContext' in window
@@ -199,6 +243,7 @@ export async function startGame(root: HTMLElement, options: GameOptions = {}): P
         stake: current.stake,
         turbo: stage.turbo,
         ...(audio === null ? {} : { muted: audio.muted }),
+        protection,
       },
       Date.now(),
     );
@@ -259,7 +304,8 @@ export async function startGame(root: HTMLElement, options: GameOptions = {}): P
       render();
     },
     onToggleAutoplay: (on: boolean) => {
-      if (on) autoplay.start(AUTOPLAY_PLAN);
+      const plan = autoplayPlan();
+      if (on && plan !== null) autoplay.start(plan);
       else autoplay.stop();
       render();
     },
@@ -354,14 +400,39 @@ export async function startGame(root: HTMLElement, options: GameOptions = {}): P
   const realityTitle = document.getElementById('reality-title');
   if (realityTitle !== null) realityTitle.textContent = strings.realityTitle;
   if (realityContinue !== null) realityContinue.textContent = strings.realityContinue;
+  const realityExit = document.getElementById('reality-exit');
+  if (realityExit !== null) realityExit.textContent = strings.realityExit;
+  const realityTitleOf = (text: string): void => {
+    if (realityTitle !== null) realityTitle.textContent = text;
+  };
 
   const showRealityCheck = (): void => {
     if (realityRoot === null) return;
+    realityTitleOf(strings.realityTitle);
     if (realityMessage !== null) {
       realityMessage.textContent = strings.realityMessage(minutesPlayed(reality, Date.now()));
     }
+    if (realityContinue !== null) realityContinue.hidden = false;
     realityRoot.hidden = false;
     if (realityContinue instanceof HTMLButtonElement) realityContinue.focus();
+    render();
+  };
+
+  /**
+   * The session-limit stop reuses the same overlay with the CONTINUE taken away: a reality check
+   * is a pause the player answers, a breached limit is play that has ended — the only offered
+   * action is the way out. It cannot be dismissed, and `canSpinNow` stays false regardless.
+   */
+  const showLimitStop = (breach: LimitBreach): void => {
+    if (realityRoot === null) return;
+    realityTitleOf(strings.limitTitle);
+    if (realityMessage !== null) {
+      realityMessage.textContent =
+        breach === 'SESSION_TIME' ? strings.limitTimeMessage : strings.limitLossMessage;
+    }
+    if (realityContinue !== null) realityContinue.hidden = true;
+    realityRoot.hidden = false;
+    if (realityExit instanceof HTMLButtonElement) realityExit.focus();
     render();
   };
 
@@ -369,6 +440,13 @@ export async function startGame(root: HTMLElement, options: GameOptions = {}): P
     reality = acknowledgeRealityCheck(reality, Date.now());
     if (realityRoot !== null) realityRoot.hidden = true;
     render();
+  });
+
+  // The way out (C8): in an operator embedding this is the lobby's affordance; the demo's lobby
+  // is the landing page, so exit reloads to it — which also ends the session limit's tally the
+  // only honest way, by ending the session.
+  realityExit?.addEventListener('click', () => {
+    window.location.reload();
   });
 
   // The dialog moves focus in when it opens; the trap keeps Tab from walking out into a page the
@@ -444,6 +522,50 @@ export async function startGame(root: HTMLElement, options: GameOptions = {}): P
       historyToggle.hidden = false;
       historyToggle.addEventListener('click', () => {
         frame.toggle(historyView);
+      });
+    }
+
+    // The protection picker (C8) — the third document, player-facing in every build. The
+    // session-loss ladder is resolved to money once, here, off the highest bet level: the panel
+    // shows pre-formatted labels and never computes an amount itself.
+    const highestBet = config.betLevels[config.betLevels.length - 1];
+    const settings = createSettingsPanel({
+      doc: document,
+      host: drawerBody,
+      strings,
+      current: protection,
+      spinsChoices: SPINS_CHOICES,
+      multipleChoices: MULTIPLE_CHOICES,
+      minutesChoices: MINUTES_CHOICES,
+      lossChoices:
+        highestBet === undefined
+          ? []
+          : SESSION_LOSS_MULTIPLES.map((times) => {
+              const minor = multiply(highestBet, times);
+              return { minor, label: format(minor, { currency, locale: strings.locale }) };
+            }),
+      onChange: (next) => {
+        protection = next;
+        remember();
+        // A tightened limit is judged at the next entry into IDLE, like every limit — the picker
+        // changes the rules, never the machine's phase.
+      },
+    });
+    settings.element.hidden = true;
+    destroyPanels.push(() => {
+      settings.destroy();
+    });
+    const settingsView: DrawerView = {
+      title: strings.settingsTitle,
+      element: settings.element,
+    };
+
+    const settingsToggle = document.getElementById('settings-toggle');
+    if (settingsToggle instanceof HTMLButtonElement) {
+      settingsToggle.textContent = strings.settingsOpen;
+      settingsToggle.hidden = false;
+      settingsToggle.addEventListener('click', () => {
+        frame.toggle(settingsView);
       });
     }
 
@@ -529,8 +651,9 @@ export async function startGame(root: HTMLElement, options: GameOptions = {}): P
         render();
       },
       onToggleAutoplay: () => {
+        const plan = autoplayPlan();
         if (autoplay.view.active) autoplay.stop();
-        else autoplay.start(AUTOPLAY_PLAN);
+        else if (plan !== null) autoplay.start(plan);
         render();
       },
     },
@@ -553,9 +676,11 @@ export async function startGame(root: HTMLElement, options: GameOptions = {}): P
       status,
       turbo: stage.turbo,
       rules,
-      // Two gates on one flag: the pacing window, and the reality check the player has not yet
-      // answered. Either one holds the button; the overlay also physically covers it.
-      canSpinNow: canSpin(rules, lastSpinStartedAt, Date.now()) && !realityOpen(),
+      // Three gates on one flag: the pacing window, the reality check the player has not yet
+      // answered, and a session limit that ended play. Any one holds the button; the overlay
+      // also physically covers it.
+      canSpinNow:
+        canSpin(rules, lastSpinStartedAt, Date.now()) && !realityOpen() && limitStop === null,
       autoplay: autoplay.view,
       strings,
     });
@@ -570,6 +695,10 @@ export async function startGame(root: HTMLElement, options: GameOptions = {}): P
         win = undefined;
         status = '';
         audio?.play('PRESS');
+        // The session tally (C8): stakes in, credits out, judged against the player's own limits
+        // on the way into IDLE. The one sanctioned aggregation of money on the client — it exists
+        // to stop play, never to describe or pay it.
+        tally = recordStake(tally, event.stake);
         lastSpinStartedAt = Date.now();
         // Wake the render when the pacing window opens, so the button un-greys by itself.
         if (unlockTimer !== undefined) clearTimeout(unlockTimer);
@@ -607,10 +736,20 @@ export async function startGame(root: HTMLElement, options: GameOptions = {}): P
         audio?.play('FEATURE');
         break;
       case 'PHASE_CHANGED':
-        // The reality check interrupts on the way into IDLE — between rounds, never inside one.
-        if (event.to === 'IDLE' && realityCheckDue(rules, reality, Date.now())) {
-          autoplay.stop();
-          showRealityCheck();
+        // Both interruptions land on the way into IDLE — between rounds, never inside one. The
+        // limit outranks the reality check: a breached limit ends play, a check only pauses it.
+        if (event.to === 'IDLE' && limitStop === null) {
+          const breach = limitBreached(sessionLimits(), tally, Date.now());
+          if (breach !== null) {
+            limitStop = breach;
+            autoplay.stop();
+            showLimitStop(breach);
+            break;
+          }
+          if (realityCheckDue(rules, reality, Date.now())) {
+            autoplay.stop();
+            showRealityCheck();
+          }
         }
         break;
       // The feature's own counter lives on the stage, above the reels, where a player looks for it —
@@ -621,6 +760,7 @@ export async function startGame(root: HTMLElement, options: GameOptions = {}): P
       case 'ROUND_SETTLED':
         win = event.totalWin;
         status = event.capped ? strings.maxWinReached : status;
+        tally = recordCredit(tally, event.totalWin);
         break;
       case 'SESSION_RENEWING':
         // Transparent to the player bar the pause — but telemetry counts it, because sessions that

@@ -57,7 +57,30 @@ export interface Strings {
   realityTitle: string;
   realityMessage(minutes: number): string;
   realityContinue: string;
+  /** The honest second action (C8): the pause offers a way out, not only a way on. */
+  realityExit: string;
+  /** The session-limit stop — the dialog a breached limit shows, with only the exit offered. */
+  limitTitle: string;
+  limitTimeMessage: string;
+  limitLossMessage: string;
   notice: string;
+
+  /* The player-protection picker (C8) — the drawer document beside the history. */
+  settingsOpen: string;
+  settingsTitle: string;
+  /** Says what the panel is out loud: these limits stop play; nothing here changes the game. */
+  settingsIntro: string;
+  settingsAutoplayHeading: string;
+  settingsAutoplaySpins: string;
+  settingsStopOnFeature: string;
+  settingsStopOnWinOver: string;
+  settingsStopOnLossOver: string;
+  settingsSessionHeading: string;
+  settingsSessionTime: string;
+  settingsSessionLoss: string;
+  settingsOff: string;
+  settingsMinutes(minutes: number): string;
+  settingsStakeMultiple(multiple: number): string;
 
   /* The round-history drawer — the player-visible half of the wire's `history` call. */
   historyOpen: string;
@@ -108,7 +131,26 @@ const EN: Strings = {
   realityMessage: (minutes) =>
     `You have been playing for ${String(minutes)} ${minutes === 1 ? 'minute' : 'minutes'}. Do you want to continue?`,
   realityContinue: 'CONTINUE',
+  realityExit: 'EXIT',
+  limitTitle: 'LIMIT REACHED',
+  limitTimeMessage: 'Your session time limit has been reached. Play has stopped.',
+  limitLossMessage: 'Your session loss limit has been reached. Play has stopped.',
   notice: '18+ · Demo · Play money only — no real money and no payments',
+
+  settingsOpen: 'LIMITS',
+  settingsTitle: 'PLAYER PROTECTION',
+  settingsIntro: 'These limits stop play when reached. Nothing here changes the game or its odds.',
+  settingsAutoplayHeading: 'AUTOPLAY',
+  settingsAutoplaySpins: 'Spins per run',
+  settingsStopOnFeature: 'Stop when free spins trigger',
+  settingsStopOnWinOver: 'Stop on a single win over',
+  settingsStopOnLossOver: 'Stop when the run has lost over',
+  settingsSessionHeading: 'SESSION',
+  settingsSessionTime: 'Time limit',
+  settingsSessionLoss: 'Loss limit',
+  settingsOff: 'Off',
+  settingsMinutes: (minutes) => `${String(minutes)} min`,
+  settingsStakeMultiple: (multiple) => `${String(multiple)}× stake`,
 
   historyOpen: 'HISTORY',
   historyTitle: 'ROUND HISTORY',
@@ -177,7 +219,26 @@ const RU: Strings = {
   realityMessage: (minutes) =>
     `Вы играете уже ${String(minutes)} ${ruPlural(minutes, 'минуту', 'минуты', 'минут')}. Продолжить?`,
   realityContinue: 'ПРОДОЛЖИТЬ',
+  realityExit: 'ВЫЙТИ',
+  limitTitle: 'ЛИМИТ ДОСТИГНУТ',
+  limitTimeMessage: 'Достигнут лимит времени сессии. Игра остановлена.',
+  limitLossMessage: 'Достигнут лимит проигрыша за сессию. Игра остановлена.',
   notice: '18+ · Демо · Только игровые деньги — без реальных денег и платежей',
+
+  settingsOpen: 'ЛИМИТЫ',
+  settingsTitle: 'ЗАЩИТА ИГРОКА',
+  settingsIntro: 'Эти лимиты останавливают игру. Ничто здесь не меняет игру и её шансы.',
+  settingsAutoplayHeading: 'АВТОИГРА',
+  settingsAutoplaySpins: 'Спинов за запуск',
+  settingsStopOnFeature: 'Стоп при выпадении фриспинов',
+  settingsStopOnWinOver: 'Стоп при выигрыше свыше',
+  settingsStopOnLossOver: 'Стоп при проигрыше запуска свыше',
+  settingsSessionHeading: 'СЕССИЯ',
+  settingsSessionTime: 'Лимит времени',
+  settingsSessionLoss: 'Лимит проигрыша',
+  settingsOff: 'Выкл',
+  settingsMinutes: (minutes) => `${String(minutes)} мин`,
+  settingsStakeMultiple: (multiple) => `${String(multiple)}× ставка`,
 
   historyOpen: 'ИСТОРИЯ',
   historyTitle: 'ИСТОРИЯ РАУНДОВ',
@@ -250,7 +311,25 @@ export function allStrings(strings: Strings): string[] {
     strings.realityTitle,
     ...samples.map((count) => strings.realityMessage(count)),
     strings.realityContinue,
+    strings.realityExit,
+    strings.limitTitle,
+    strings.limitTimeMessage,
+    strings.limitLossMessage,
     strings.notice,
+    strings.settingsOpen,
+    strings.settingsTitle,
+    strings.settingsIntro,
+    strings.settingsAutoplayHeading,
+    strings.settingsAutoplaySpins,
+    strings.settingsStopOnFeature,
+    strings.settingsStopOnWinOver,
+    strings.settingsStopOnLossOver,
+    strings.settingsSessionHeading,
+    strings.settingsSessionTime,
+    strings.settingsSessionLoss,
+    strings.settingsOff,
+    ...samples.map((count) => strings.settingsMinutes(count)),
+    ...samples.map((count) => strings.settingsStakeMultiple(count)),
     ...Object.values(strings.panel),
     strings.feature.introTitle,
     strings.feature.outroTitle,

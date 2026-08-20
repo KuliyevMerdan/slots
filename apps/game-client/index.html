@@ -177,6 +177,19 @@
         outline-offset: 2px;
       }
 
+      /* The way out is deliberately quieter than the way on — but it exists, which is the rule
+         regulated markets actually state: the pause must offer an exit, not only a CONTINUE. */
+      #reality-check .reality-actions {
+        display: flex;
+        gap: 12px;
+      }
+
+      #reality-check button.reality-secondary {
+        background: transparent;
+        border-color: var(--muted);
+        color: var(--text);
+      }
+
       /* The keyboard's control panel (dom-controls.ts): the same controls as the Pixi panel, as
          real buttons. Transparent — the canvas is the visual — until keyboard focus arrives, when
          the focused control shows itself. Pointer events stay off so mouse players keep using the
@@ -326,6 +339,56 @@
         font-weight: 600;
       }
 
+      /* The protection picker (C8) — the drawer's third document. */
+      .settings-intro {
+        margin: 0 0 12px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.5;
+      }
+
+      .settings-heading {
+        margin: 14px 0 6px;
+        font-size: 11px;
+        letter-spacing: 0.14em;
+        color: var(--muted);
+      }
+
+      .settings-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 8px 0;
+        border-bottom: 1px solid rgba(44, 56, 96, 0.5);
+        font-size: 13px;
+      }
+
+      .settings-label {
+        color: var(--text);
+      }
+
+      .settings-select {
+        padding: 6px 10px;
+        border: 1px solid #2c3860;
+        border-radius: 8px;
+        background: #101830;
+        color: var(--text);
+        font: 600 12px/1 inherit;
+      }
+
+      .settings-select:focus-visible,
+      .settings-check:focus-visible {
+        outline: 2px solid #39d98a;
+        outline-offset: 2px;
+      }
+
+      .settings-check {
+        width: 18px;
+        height: 18px;
+        accent-color: #39d98a;
+      }
+
       .history-feature {
         color: #e8b339;
         font-size: 12px;
@@ -379,6 +442,7 @@
     -->
     <div class="corner-left">
       <button id="history-toggle" type="button" hidden>HISTORY</button>
+      <button id="settings-toggle" type="button" hidden>LIMITS</button>
     </div>
 
     <!--
@@ -403,7 +467,12 @@
     <div id="reality-check" role="dialog" aria-modal="true" aria-labelledby="reality-title" hidden>
       <h2 id="reality-title">REALITY CHECK</h2>
       <p id="reality-message">You have been playing for a while.</p>
-      <button id="reality-continue" type="button">CONTINUE</button>
+      <div class="reality-actions">
+        <button id="reality-continue" type="button">CONTINUE</button>
+        <!-- The honest second action (C8): in an operator embedding, exit is the lobby's
+             affordance; the demo's lobby is the landing page, so exit reloads to it. -->
+        <button id="reality-exit" type="button" class="reality-secondary">EXIT</button>
+      </div>
     </div>
 
     <!-- Play money only. No real money, no payments, no crypto — stated where a player sees it. -->
