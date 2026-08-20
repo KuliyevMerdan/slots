@@ -31,6 +31,7 @@ import type { AutoplayView } from './autoplay.js';
 import { DEFAULT_PROTECTION, loadClientState, saveClientState, stakeFor } from './persistence.js';
 import type { ProtectionSettings } from './persistence.js';
 import { createSettingsPanel } from './settings.js';
+import { withFairnessAudit } from './fairness.js';
 import { consoleTelemetry, guarded } from './telemetry.js';
 import type { Telemetry } from './telemetry.js';
 import { createAnnouncer } from './announce.js';
@@ -108,7 +109,11 @@ export async function startGame(root: HTMLElement, options: GameOptions = {}): P
   };
 
   const engine = new SlotEngine({
-    port: connection.transport,
+    // The fairness auditor (dev builds): the reveal beside the win re-evaluation — a server that
+    // offers the capability is held to it, one that does not is left alone. See fairness.ts.
+    port: __ASSERT_MATH__
+      ? withFairnessAudit(connection.transport, telemetry)
+      : connection.transport,
     newRoundId: () => newRoundId(),
     // The same lobby the boot token comes from: with it, a session that expires under an open round
     // renews transparently and resumes from `pendingRound` instead of abandoning the money.

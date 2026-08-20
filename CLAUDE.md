@@ -1455,13 +1455,13 @@ D8, D9 — jurisdiction rules on the wire, no renew call, transparent mid-round 
 
 **Client — implied by the domain, built by no block**
 
-- **The client holds the verification toolkit and never opens it.** Since R4 every closing
-  response from `apps/rgs` carries a reveal, and `@slot/game-math` — which the client ships —
-  can check it; but no client code calls `sha256Hex`/`stopsForStep` yet. The natural first home
-  is the dev-build assertion (verify the reveal beside the existing win re-evaluation), and the
-  player-facing "verify this round" affordance belongs beside the history drawer (C8+). Until
-  then the ability the R4 bullet promised exists as a shipped library and a documented procedure,
-  not as a button.
+- **The fairness verification is a dev-build auditor, not yet a player's button.** Since C8 the
+  client *opens* the R4 toolkit: `withFairnessAudit` (fairness.ts, behind `__ASSERT_MATH__`)
+  watches the commitment bind and the reveal close, re-hashes and recomputes every step's
+  `stops[]` with `@slot/game-math` alone, and reports `assert_fairness_reveal_invalid` beside the
+  paytable-drift assertion. The player-facing "verify this round" affordance beside the history
+  drawer remains open (C8+): `RoundSummary` carries no fairness fields, so it needs either a
+  protocol amendment or client-side capture of reveals keyed by `roundId`.
 - **The stake cap has no picker.** The protection drawer (C8) sets the autoplay stops and the
   session time/loss limits, and the wiring enforces them — but `stakeWithinLimit`
   (`compliance/limits.ts`, `maxSingleStake`) still has no settings surface and no enforcement
