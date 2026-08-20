@@ -101,7 +101,7 @@ contract suite. `#` maps each block back to the phase numbering of the original 
 | **C5** | Features + resume — free spins, retrigger, mid-feature reload | C4, S0 | 6 | ✅ (landed 2026-08-18) |
 | **C6** | Platform layer — responsive, audio, i18n, compliance | C4 | 7 | ✅ (landed 2026-08-19) |
 | **C7** | Dev tools + performance pass | C5, S1 | 8 | ✅ (landed 2026-08-19) |
-| **C8** | Packaging — deploy, README, Playwright E2E in CI | C6, C7, S4 | 9 | ☐ |
+| **C8** | Packaging — deploy, README, Playwright E2E in CI | C6, C7, S4 | 9 | ◐ (2026-08-20 — all built; the hosted URL and GIF remain) |
 | **S0** | `rgs-sim` pure core — PRNG, round machine, idempotency, persistence | C1 | 2 | ✅ (landed 2026-08-18) |
 | **S1** | Fault injection + force outcome + `MockTransport` | S0 | 2 | ✅ (landed 2026-08-18) |
 | **S2** | `apps/mock-rgs` — Fastify wrapper, the real network path | S0 | 2 | ✅ (landed 2026-08-18) |
@@ -422,8 +422,10 @@ _2–3 days._
       demo composition — a dead spin, a feature paid through the presentation, a reload
       mid-feature that resumes and credits exactly once. Keyboard-driven through the DOM panel;
       the money asserted against both the engine and `/dev/state`.
-- [ ] README to the structure in the appendix below, GIF above the fold.
-- [ ] `docs/architecture.md` + `docs/round-lifecycle.md` diagrams.
+- [x] README to the structure in the appendix below — the GIF slot and live-demo line carry
+      marked placeholders until the deploy; the docker one-liner is the demo meanwhile.
+- [x] `docs/architecture.md` + `docs/round-lifecycle.md`, written at C8 with mermaid diagrams —
+      the system, the seam, the round's life and every failure path.
 
 **Done when:** a stranger can open the live link, force a max win from the debug panel, and read why
 the client can't cheat — in under two minutes.

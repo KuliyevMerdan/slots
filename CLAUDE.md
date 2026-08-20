@@ -86,7 +86,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > RGS is configuration end to end. The contract suite's third target runs the whole suite
 > over the full production chain — client→HTTP→rgs→HTTP→wallet — its fault case enacted by
 > refusing the *real* wallet, and the §5 stranded round runs against the one target that can
-> honestly produce it. 1039 tests locally, 1069 in CI, `pnpm check` green.
+> honestly produce it. 1054 tests locally (877 package + 80 root + 97 contract), ~1084 in CI
+> where the Postgres twins join, plus the 3-test Playwright job. `pnpm check` green.
 >
 > **`pnpm dev:client` opens a playable slot.** It authenticates, spins, lands on the server's
 > `stops[]`, lights the paylines it was told won, counts the win up, runs the feature and settles —
@@ -107,9 +108,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > included since R1: the same suite that gated the simulators now gates the real server, and the
 > §5 stranded-round case runs against the one target that can honestly produce it.
 >
-> **What is deliberately not there yet:** the hosted demo URL, the README, the architecture
-> diagrams, and the client-side fairness verification (the dev-build reveal assertion and the
-> player-facing verify-round affordance). The rest of **C8** landed 2026-08-20: the reality
+> **What is deliberately not there yet:** the hosted demo URL (the README carries its marked
+> slot and the GIF's), and the player-facing verify-round affordance (the dev-build fairness
+> audit landed; the button waits on fairness fields in `RoundSummary`). Everything else in
+> **C8** landed 2026-08-20: the README (`README.md`, to Appendix A's structure, live-link slot
+> pending the deploy), `docs/architecture.md` and `docs/round-lifecycle.md` with their mermaid
+> diagrams, the reality
 > check's EXIT action and the player-protection picker (the drawer's third document, enforced at
 > the wiring),
 > same-origin static serving + the per-IP budget on `mock-rgs` (ADR-0010, the demo Dockerfile CI
@@ -1415,10 +1419,12 @@ D8, D9 — jurisdiction rules on the wire, no renew call, transparent mid-round 
 **Workspace & tooling**
 
 - **The demo image exists; the live URL does not yet.** The same-origin deploy shape landed
-  (ADR-0010: `MOCK_RGS_STATIC_DIR`, the demo Dockerfile, CI building it) — what remains of C8's
-  deploy bullet is the hosting itself: picking the platform (Fly / Railway / anything that runs a
-  container), pointing it at `apps/mock-rgs/Dockerfile`, and putting the URL in the README. The
-  README's GIF and the "done when" criterion both want that link.
+  (ADR-0010: `MOCK_RGS_STATIC_DIR`, the demo Dockerfile, CI building it) and the README now
+  carries marked slots for the link and the GIF (decision 2026-08-20: written without them
+  rather than waiting) — what remains is the hosting itself: picking the platform (Fly /
+  Railway / anything that runs a container), pointing it at `apps/mock-rgs/Dockerfile`, filling
+  both slots, and recording the big-win GIF from the deployed page. The "done when" criterion
+  wants that link.
 
 **Simulator (`packages/rgs-sim`) — behaviour the real RGS will have to earn**
 
