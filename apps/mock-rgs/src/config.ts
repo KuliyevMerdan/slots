@@ -27,6 +27,28 @@ const EnvSchema = z.object({
   MOCK_RGS_LOG_LEVEL: z
     .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
     .default('info'),
+  /**
+   * When set, the built client (`apps/game-client/dist`) is served from `/` — the same origin the
+   * game API lives on, so the deployed demo needs no CORS at all (ADR-0010). Absent in
+   * development, where Vite serves the client and proxies `/rgs` here instead.
+   */
+  MOCK_RGS_STATIC_DIR: z.string().min(1).optional(),
+  /**
+   * Per-IP request budget, per minute — the moment this server faces a network that is not
+   * `127.0.0.1` it needs one. Generous by design: an honest client under the pacing rule makes a
+   * few calls a second at worst, retries included, and the budget exists to stop a loop, not a
+   * player. Tests build the app without one on purpose (the suites hammer); `main.ts` always
+   * passes this.
+   */
+  MOCK_RGS_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(600),
+  /**
+   * Trust `X-Forwarded-For` for `request.ip` — required behind a deploy platform's proxy, or
+   * every player shares the proxy's one rate-limit bucket. Off when the socket faces clients.
+   */
+  MOCK_RGS_TRUST_PROXY: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((value) => value === 'true'),
 });
 
 export type MockRgsEnv = z.infer<typeof EnvSchema>;

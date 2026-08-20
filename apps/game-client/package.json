@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
+    "build:demo": "vite build --mode demo",
     "dev": "vite",
     "preview": "vite preview",
     "typecheck": "tsc -p tsconfig.json",

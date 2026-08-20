@@ -6,6 +6,8 @@ packages:
 # One version per tool, referenced from every package as `"catalog:"`.
 # A single edit here moves the whole workspace — and drift becomes impossible.
 catalog:
+  '@fastify/rate-limit': ^11
+  '@fastify/static': ^10
   '@opentelemetry/api': ^1.9
   '@opentelemetry/context-async-hooks': ^2
   '@opentelemetry/exporter-trace-otlp-http': ^0.221.0

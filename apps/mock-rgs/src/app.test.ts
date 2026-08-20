@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { CORRELATION_HEADER, ProtocolErrorSchema } from '@slot/protocol';
@@ -31,12 +34,21 @@ const simulator = (devMode = false): SimServer =>
     now: () => NOW,
   });
 
-const open = (options: { devMode?: boolean; devRoutes?: boolean } = {}) => {
+const open = (
+  options: {
+    devMode?: boolean;
+    devRoutes?: boolean;
+    staticDir?: string;
+    rateLimit?: { max: number; timeWindowMs: number };
+  } = {},
+) => {
   const sim = simulator(options.devMode ?? false);
   const slept: number[] = [];
   const app = buildApp({
     sim,
     devRoutes: options.devRoutes ?? true,
+    staticDir: options.staticDir,
+    rateLimit: options.rateLimit,
     sleep: async (ms) => {
       slept.push(ms);
     },
@@ -406,6 +418,94 @@ describe('the debug surface', () => {
     const response = await app.inject({ method: 'GET', url: '/dev/faults' });
 
     expect(response.statusCode).toBe(404);
+  });
+});
+
+describe('the static client (ADR-0010)', () => {
+  /** A stand-in for `apps/game-client/dist` — the shape Vite emits, three files deep. */
+  const dist = (): string => {
+    const dir = mkdtempSync(join(tmpdir(), 'mock-rgs-static-'));
+    writeFileSync(join(dir, 'index.html'), '<!doctype html><title>slot demo</title>');
+    mkdirSync(join(dir, 'assets'));
+    writeFileSync(join(dir, 'assets', 'app.js'), 'export {};');
+    dirs.push(dir);
+    return dir;
+  };
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('serves the built client from the origin the game API lives on', async () => {
+    const { app } = open({ staticDir: dist() });
+
+    const page = await app.inject({ method: 'GET', url: '/' });
+    expect(page.statusCode).toBe(200);
+    expect(page.headers['content-type']).toContain('text/html');
+    expect(page.body).toContain('slot demo');
+
+    const asset = await app.inject({ method: 'GET', url: '/assets/app.js' });
+    expect(asset.statusCode).toBe(200);
+  });
+
+  it('keeps the game routes in front of the static mount', async () => {
+    const { sim, app } = open({ staticDir: dist() });
+
+    const response = await post(app, '/rgs/authenticate', { token: sim.state.token });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ balance: START_BALANCE });
+  });
+
+  it('does not exist unless configured — development is Vite territory', async () => {
+    const { app } = open();
+
+    const response = await app.inject({ method: 'GET', url: '/' });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toMatchObject({ code: 'SCHEMA_MISMATCH' });
+  });
+
+  it('answers a missing file like any unknown route', async () => {
+    const { app } = open({ staticDir: dist() });
+
+    const response = await app.inject({ method: 'GET', url: '/no-such-file.js' });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toMatchObject({ code: 'SCHEMA_MISMATCH' });
+  });
+});
+
+describe('the per-IP budget', () => {
+  it('refuses the call over budget as RATE_LIMITED, with the retry advice the client honours', async () => {
+    const { sim, app } = open({ rateLimit: { max: 2, timeWindowMs: 60_000 } });
+
+    const first = await post(app, '/rgs/authenticate', { token: sim.state.token });
+    const second = await post(app, '/rgs/authenticate', { token: sim.state.token });
+    expect(first.statusCode).toBe(200);
+    expect(second.statusCode).toBe(200);
+
+    const refused = await post(app, '/rgs/authenticate', { token: sim.state.token });
+    expect(refused.statusCode).toBe(429);
+    const body = refused.json<{ retryAfterMs: number }>();
+    expect(body).toMatchObject({ class: 'RECOVERABLE', code: 'RATE_LIMITED' });
+    expect(body.retryAfterMs).toBeGreaterThan(0);
+    // The header form, for everything on the wire that is not the client (§2.7).
+    expect(Number(refused.headers['retry-after'])).toBeGreaterThan(0);
+    // A refusal the transport can parse is a refusal the retry policy can wait out.
+    expect(ProtocolErrorSchema.safeParse(refused.json()).success).toBe(true);
+  });
+
+  it('never counts the healthchecks — a poller must not mark a healthy server down', async () => {
+    const { app } = open({ rateLimit: { max: 1, timeWindowMs: 60_000 } });
+
+    for (let poll = 0; poll < 5; poll += 1) {
+      expect((await app.inject({ method: 'GET', url: '/health' })).statusCode).toBe(200);
+      expect((await app.inject({ method: 'GET', url: '/ready' })).statusCode).toBe(200);
+    }
+
+    const spin = await post(app, '/rgs/spin', { roundId: roundId(90), stake: STAKE });
+    expect(spin.statusCode).toBe(200);
   });
 });
 

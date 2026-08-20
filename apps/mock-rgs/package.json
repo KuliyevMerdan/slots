@@ -22,6 +22,8 @@
     "start": "node dist/main.js"
   },
   "dependencies": {
+    "@fastify/rate-limit": "catalog:",
+    "@fastify/static": "catalog:",
     "@slot/protocol": "workspace:*",
     "@slot/rgs-sim": "workspace:*",
     "fastify": "catalog:",

@@ -77,3 +77,6 @@ jobs:
 
       - name: Build the production image
         run: docker build -f apps/rgs/Dockerfile .
+
+      - name: Build the demo image (client + mock-rgs, one origin — ADR-0010)
+        run: docker build -f apps/mock-rgs/Dockerfile .

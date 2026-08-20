@@ -997,11 +997,27 @@ The binding is pinned in [docs/protocol.md §2.7](docs/protocol.md) and argued i
 - **`x-correlation-id` in both directions.** The client mints one and the server echoes it; the
   simulator's own `sim-000042` ids (replayable, not unique across sessions) go to the log line beside
   it.
-- **Two limits of its own** (2026-08-19): a 16 KB body cap — the whole protocol fits in hundreds of
-  bytes — and a 5 s request timeout for a client that never finishes sending. An oversized body is
-  refused as `SCHEMA_MISMATCH`, not a retry invitation, and the test pins that. Rate limiting is
-  deliberately still absent (see the gaps registry): it arrives in C8, when this server first faces
-  a network that is not `127.0.0.1`.
+- **Three limits of its own** (the third since C8): a 16 KB body cap — the whole protocol fits in
+  hundreds of bytes — a 5 s request timeout for a client that never finishes sending, and a per-IP
+  request budget (`@fastify/rate-limit`, `MOCK_RGS_RATE_LIMIT_MAX`, one-minute window) for the
+  network that is not `127.0.0.1`. An oversized body is refused as `SCHEMA_MISMATCH`, not a retry
+  invitation; the budget refuses in the taxonomy's own shape — `RATE_LIMITED`, `retryAfterMs` in
+  the body, `Retry-After` on the wire — because a deploy detail must not invent a second error
+  vocabulary, and the error handler forwards a thrown `SlotError` verbatim rather than
+  reclassifying it. Both refusal shapes are pinned by tests. The healthchecks are exempt (a
+  poller must not mark a healthy server down), the budget is configured only by `main.ts` so the
+  test suites can keep hammering on purpose (the `apps/rgs` arrangement), and `trustProxy` is an
+  option because behind a platform's proxy every player otherwise shares one bucket.
+- **It can serve the client it exists to serve** (C8, ADR-0010): `MOCK_RGS_STATIC_DIR` mounts a
+  built `apps/game-client/dist` at `/` via `@fastify/static`, so the deployed demo is one process
+  on one origin and the CORS question never opens. The game routes win over the wildcard; a
+  missing file gets the protocol-shaped 404 like any unknown route; development is untouched (the
+  flag is off, Vite serves and proxies). `apps/mock-rgs/Dockerfile` is the deployable unit — the
+  server plus the client's *demo* build (`build:demo`: mode ≠ production, so the debug panel and
+  the grid assertion are in, `VITE_RGS_TRANSPORT=http` against the empty base URL — the page
+  talks to the origin that served it), built by CI on every push. The production bundle that
+  `verify:strip` proves clean is a different artifact from a different command; the image never
+  claims to be it.
 
 `/dev/*` — fault injection, session reset and expiry, a state summary — is what the debug panel drives and
 what lets the contract suite *demand* a failure rather than wait for one; it is mounted only
@@ -1388,22 +1404,11 @@ D8, D9 — jurisdiction rules on the wire, no renew call, transparent mid-round 
   **Decision (2026-08-19, build in C8):** a scheduled nightly CI job runs the existing soak with the
   round count from an environment variable (~5,000) plus a heap-trend assertion — the PR gate keeps
   300, because load in a merge gate is flake with a purpose.
-- **The cross-origin question is deferred, not answered.** Development works because Vite proxies
-  `/rgs`, `/demo` and `/dev` to `apps/mock-rgs`, so the browser makes same-origin requests and the
-  server never widens CORS. A *deployed* client (C8) has no proxy: either it is served from the same
-  origin as the RGS, or the RGS grows a real CORS policy.
-  **Decision (2026-08-19, build in C8):** same-origin, CORS never widens. `apps/mock-rgs` gains a
-  flag-gated `@fastify/static` that serves the built client from the same origin the game API lives
-  on — one process, one deploy, zero CORS headers, which is also how operators actually embed games.
-  Record it as an ADR; a genuinely cross-origin operator integration is `apps/rgs`'s problem
-  (post-R5, with the operator that needs it), with an explicit origin allow-list and never `*`.
-- **`apps/mock-rgs` has no rate limiting.** The body-size cap (16 KB) and the request timeout landed
-  2026-08-19 as `Fastify` constructor options, with a test pinning the oversized-body refusal to
-  `SCHEMA_MISMATCH` — a payload no honest client produces is not a retry invitation.
-  **Decision (2026-08-19):** `@fastify/rate-limit` with a per-IP budget arrives in C8, the moment
-  this server first faces a network that is not `127.0.0.1`. `apps/rgs`'s half landed in R5
-  (per-token and per-IP buckets, `RATE_LIMITED` + `Retry-After`), and R7's load tool now measures
-  behaviour under that pacing rather than promising it.
+- **The demo image exists; the live URL does not yet.** The same-origin deploy shape landed
+  (ADR-0010: `MOCK_RGS_STATIC_DIR`, the demo Dockerfile, CI building it) — what remains of C8's
+  deploy bullet is the hosting itself: picking the platform (Fly / Railway / anything that runs a
+  container), pointing it at `apps/mock-rgs/Dockerfile`, and putting the URL in the README. The
+  README's GIF and the "done when" criterion both want that link.
 
 **Simulator (`packages/rgs-sim`) — behaviour the real RGS will have to earn**
 

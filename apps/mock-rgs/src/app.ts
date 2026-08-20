@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { resolve } from 'node:path';
+import fastifyRateLimit from '@fastify/rate-limit';
+import fastifyStatic from '@fastify/static';
 import Fastify from 'fastify';
 import type { FastifyInstance, FastifyReply, FastifyRequest, FastifyServerOptions } from 'fastify';
 import type { CallName } from '@slot/protocol';
@@ -38,6 +41,23 @@ export interface MockRgsOptions {
   devRoutes?: boolean;
   /** Injected so a test can assert an enacted latency without waiting it out. */
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * When set, the built client is served from this directory at `/` — the same origin the game
+   * API lives on, which is the whole deploy shape (ADR-0010): one process, one origin, zero CORS
+   * headers. Off by default; in development Vite serves the client and proxies `/rgs` here.
+   */
+  staticDir?: string;
+  /**
+   * Per-IP budget over every route except the healthchecks. Absent by default because the test
+   * suites hammer on purpose — the same arrangement `apps/rgs` made in R5 — and `main.ts` always
+   * passes the env-configured one.
+   */
+  rateLimit?: { max: number; timeWindowMs: number };
+  /**
+   * Whether `X-Forwarded-For` decides `request.ip`. False by default; a deploy behind a
+   * platform's proxy must say true, or every player shares the proxy's one rate-limit bucket.
+   */
+  trustProxy?: boolean;
 }
 
 export function buildApp({
@@ -45,9 +65,13 @@ export function buildApp({
   logger = false,
   devRoutes = true,
   sleep = wait,
+  staticDir,
+  rateLimit,
+  trustProxy = false,
 }: MockRgsOptions): FastifyInstance {
   const app = Fastify({
     logger,
+    trustProxy,
     // The client mints the id and we adopt it; a request that arrives without one gets a uuid. Either
     // way `request.id` is what the log lines, the echoed header and the error bodies all carry.
     requestIdHeader: CORRELATION_HEADER,
@@ -79,6 +103,32 @@ export function buildApp({
    */
   const hung = new Set<{ destroy?: () => void }>();
 
+  if (rateLimit !== undefined) {
+    void app.register(fastifyRateLimit, {
+      max: rateLimit.max,
+      timeWindow: rateLimit.timeWindowMs,
+      // Healthchecks are the one legitimate high-frequency caller: a platform that polls /ready
+      // into a 429 marks a healthy server down and restarts it for answering honestly.
+      allowList: (request) => request.url === '/health' || request.url === '/ready',
+      // The refusal is the taxonomy's, not the plugin's: RATE_LIMITED is RECOVERABLE, and the
+      // body carries retryAfterMs because the server's arithmetic beats the client's backoff
+      // guess (§6). The plugin *throws* what this returns, so it returns the `SlotError` itself
+      // and the error handler below sends it the way the simulator's own refusals go out; the
+      // plugin has already set the Retry-After header for everything that is not the client.
+      errorResponseBuilder: (_request, context) =>
+        new SlotError('RATE_LIMITED', 'too many requests — slow down', {
+          retryAfterMs: context.ttl,
+        }),
+    });
+  }
+
+  if (staticDir !== undefined) {
+    // The C8 deploy shape (ADR-0010): the built client and the game API share one origin, so the
+    // CORS question never opens. The game routes are registered explicitly and win over the
+    // wildcard; a missing file falls through to the not-found handler like any unknown route.
+    void app.register(fastifyStatic, { root: resolve(staticDir) });
+  }
+
   app.addHook('onSend', (request, reply, _payload, done) => {
     reply.header(CORRELATION_HEADER, request.id);
     done();
@@ -93,6 +143,14 @@ export function buildApp({
   });
 
   app.setErrorHandler((error, request, reply) => {
+    // A SlotError thrown inside the framework — the rate limiter's refusal — is not a framework
+    // failure to classify but a refusal this server meant, and it goes to the wire exactly as the
+    // simulator's own rejections do: status from the taxonomy, the payload's shape unchanged.
+    if (error instanceof SlotError) {
+      request.log.warn({ code: error.code }, error.message);
+      void reply.code(statusOf(error.code)).send(errorBody(error, request.id));
+      return;
+    }
     const failure = classifyFrameworkError(error);
     // The status is for operators (ADR-0004), so the framework's own — a 413, a 415 — survives when
     // it is more specific than the taxonomy's generic mapping. The client never reads it; it
@@ -154,42 +212,49 @@ export function buildApp({
     await reply.code(200).send(delivery.response);
   };
 
-  for (const call of CALL_NAMES) {
-    // The body is `unknown` on purpose: `SimServer` validates it with the same `@slot/protocol`
-    // schema the client validated against, and a second validation here would be a second place for
-    // the contract to live.
-    app.post(routeFor(call), (request, reply) => handle(call, request, reply));
-  }
+  // The routes live in a child plugin so that avvio loads them *after* the rate limiter above —
+  // a Fastify hook applies only to routes registered after it exists, and a route added
+  // synchronously here would be added before the queued plugin boots. The child inherits the
+  // root's error handler, not-found handler and hooks; the encapsulation changes nothing else.
+  void app.register(async (routes) => {
+    for (const call of CALL_NAMES) {
+      // The body is `unknown` on purpose: `SimServer` validates it with the same `@slot/protocol`
+      // schema the client validated against, and a second validation here would be a second place
+      // for the contract to live.
+      routes.post(routeFor(call), (request, reply) => handle(call, request, reply));
+    }
 
-  /** Liveness: the process is up and answering. Deliberately says nothing about the game. */
-  app.get('/health', () => ({ status: 'ok' }));
+    /** Liveness: the process is up and answering. Deliberately says nothing about the game. */
+    routes.get('/health', () => ({ status: 'ok' }));
 
-  /**
-   * Readiness: what game this server is serving.
-   *
-   * `mathVersion` is here because it is the one field a deploy can get wrong in a way nothing else
-   * notices — a client drawing reels the server is not playing.
-   */
-  app.get('/ready', () => ({
-    ready: true,
-    gameId: sim.config.gameId,
-    mathVersion: sim.config.mathVersion,
-    jurisdiction: sim.config.jurisdiction,
-    devMode: sim.config.devMode,
-    currency: sim.state.session.currency,
-  }));
+    /**
+     * Readiness: what game this server is serving.
+     *
+     * `mathVersion` is here because it is the one field a deploy can get wrong in a way nothing
+     * else notices — a client drawing reels the server is not playing.
+     */
+    routes.get('/ready', () => ({
+      ready: true,
+      gameId: sim.config.gameId,
+      mathVersion: sim.config.mathVersion,
+      jurisdiction: sim.config.jurisdiction,
+      devMode: sim.config.devMode,
+      currency: sim.state.session.currency,
+    }));
 
-  /**
-   * The operator's lobby, faked (docs/protocol.md §7).
-   *
-   * Not behind `devRoutes`: without it there is no way to obtain a token at all, and a server you
-   * cannot authenticate against is not a server. Issuing **renews** — the fresh token re-attaches
-   * to the same balance and `pendingRound`, which is what makes the §5 mid-round expiry recovery
-   * playable over HTTP. `apps/rgs` replaces this with real session validation in R5.
-   */
-  app.post('/demo/session', () => sim.issueSession());
+    /**
+     * The operator's lobby, faked (docs/protocol.md §7).
+     *
+     * Not behind `devRoutes`: without it there is no way to obtain a token at all, and a server
+     * you cannot authenticate against is not a server. Issuing **renews** — the fresh token
+     * re-attaches to the same balance and `pendingRound`, which is what makes the §5 mid-round
+     * expiry recovery playable over HTTP. `apps/rgs` replaces this with real session validation
+     * in R5.
+     */
+    routes.post('/demo/session', () => sim.issueSession());
 
-  if (devRoutes) registerDevRoutes(app, sim);
+    if (devRoutes) registerDevRoutes(routes, sim);
+  });
 
   return app;
 }

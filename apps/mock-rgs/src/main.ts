@@ -15,6 +15,11 @@ const sim = createSim(env);
 const app = buildApp({
   sim,
   logger: { level: env.MOCK_RGS_LOG_LEVEL },
+  staticDir: env.MOCK_RGS_STATIC_DIR,
+  // Always on here, never in the test compositions — the apps/rgs arrangement. One minute is the
+  // window; only the budget is configuration.
+  rateLimit: { max: env.MOCK_RGS_RATE_LIMIT_MAX, timeWindowMs: 60_000 },
+  trustProxy: env.MOCK_RGS_TRUST_PROXY,
 });
 
 const shutdown = (signal: string): void => {
@@ -43,6 +48,7 @@ try {
       mathVersion: sim.config.mathVersion,
       devMode: sim.config.devMode,
       serverSeed: env.MOCK_RGS_SEED,
+      staticDir: env.MOCK_RGS_STATIC_DIR ?? null,
       // Printed on purpose: it is the demo lobby's token (docs/protocol.md §7), and the alternative
       // is every developer curling /demo/session before they can do anything.
       token: sim.state.token,

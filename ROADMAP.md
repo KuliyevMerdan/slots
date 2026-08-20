@@ -408,11 +408,13 @@ sitting in the shell's `index.html` on its first run, which is why the styles no
 
 _2–3 days._
 
-- [ ] Deploy the client + `mock-rgs` (Vercel / Fly / Railway), with a health endpoint on the server
-      side — **same-origin** (decided 2026-08-19): a flag-gated `@fastify/static` serves the built
-      client from the game API's origin, CORS never widens, and an ADR records it.
-- [ ] `@fastify/rate-limit` with a per-IP budget — the moment this server first faces a network that
-      is not `127.0.0.1`.
+- [x] **Same-origin, built and recorded (ADR-0010):** `MOCK_RGS_STATIC_DIR` mounts the built
+      client on the game API's origin via flag-gated `@fastify/static`, CORS never widens, and
+      `apps/mock-rgs/Dockerfile` — the server plus the client's demo build, `/ready`-gated — is
+      the deployable unit, built by CI. Still owed: the hosting itself and the live URL.
+- [x] `@fastify/rate-limit` with a per-IP budget (`MOCK_RGS_RATE_LIMIT_MAX`, healthchecks exempt,
+      `trustProxy` for platform proxies) — refusing as `RATE_LIMITED` + `retryAfterMs`, the
+      taxonomy's shape, with tests pinning it.
 - [ ] A **nightly soak** job: the existing `http-soak` with ~5,000 rounds from an environment
       variable plus a heap-trend assertion; the PR gate keeps 300.
 - [ ] Playwright E2E in CI: fixed seed + forced outcomes — spin, win, feature, reload-and-resume.
