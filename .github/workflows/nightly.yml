@@ -1,0 +1,41 @@
+name: Nightly soak
+
+# The duration axis (C8): the same network soak the PR gate runs at 300 rounds, turned up to
+# 5,000 — long enough for a slow leak to become a line — plus the heap-trend assertion that only
+# arms itself when SOAK_ROUNDS is set. Load in a merge gate is flake with a purpose; load on a
+# schedule is a measurement.
+
+on:
+  schedule:
+    # 03:17 UTC — off the top of the hour, where everyone's scheduled jobs queue.
+    - cron: '17 3 * * *'
+  # On demand too: a soak someone suspects something about should not wait for 03:17.
+  workflow_dispatch:
+
+jobs:
+  soak:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # The soak reaches @slot/mock-rgs and friends through their built entry points.
+      - name: Build
+        run: pnpm run build
+
+      - name: Soak — 5,000 rounds over a real socket, heap trend asserted
+        env:
+          SOAK_ROUNDS: '5000'
+          # --expose-gc so every heap sample is taken after a real collection rather than
+          # wherever V8's sawtooth happened to be. Vitest workers inherit it.
+          NODE_OPTIONS: --expose-gc
+        run: npx vitest run tests/http-soak.test.ts

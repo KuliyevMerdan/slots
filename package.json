@@ -9,13 +9,14 @@
   },
   "scripts": {
     "build": "turbo run build",
-    "typecheck": "tsc -p tsconfig.json && turbo run typecheck",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tests/e2e/tsconfig.json && turbo run typecheck",
     "test": "turbo run test",
     "lint": "eslint . && pnpm run lint:boundaries",
     "lint:boundaries": "depcruise packages apps tools --config .dependency-cruiser.cjs",
     "check": "pnpm run lint && pnpm run build && pnpm run verify:strip && pnpm run typecheck && pnpm run test && pnpm run test:root && pnpm run test:contract && pnpm run format:check",
     "verify:strip": "node apps/game-client/scripts/verify-strip.mjs",
     "dev": "turbo run dev --filter=@slot/game-client --filter=@slot/mock-rgs",
+    "e2e": "playwright test --config tests/e2e/playwright.config.ts",
     "dev:client": "pnpm --filter @slot/game-client dev",
     "dev:rgs": "pnpm --filter @slot/mock-rgs dev",
     "math-sim": "pnpm --filter @slot/math-sim start",
@@ -29,6 +30,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9",
+    "@playwright/test": "^1",
     "@slot/engine": "workspace:*",
     "@slot/game-math": "workspace:*",
     "@slot/mock-rgs": "workspace:*",

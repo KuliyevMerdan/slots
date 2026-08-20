@@ -31,8 +31,18 @@ const NOW = 1_700_000_000_000;
  * A feature triggers about once in 110 rounds, so a hundred would be a coin toss on whether the
  * free-spin path is covered at all — and a seeded coin toss is worse than none, because it looks
  * deterministic while depending on a number nobody chose.
+ *
+ * `SOAK_ROUNDS` is the duration axis (C8): the PR gate keeps the default — load in a merge gate is
+ * flake with a purpose — and the nightly job turns it up to ~5,000, where a slow leak has the
+ * rounds it needs to become a line somebody can see.
  */
-const ROUNDS = 300;
+const ROUNDS = (() => {
+  const fromEnv = Number(process.env['SOAK_ROUNDS']);
+  return Number.isInteger(fromEnv) && fromEnv > 0 ? fromEnv : 300;
+})();
+/** Wall-clock budgets, scaled with the round count so the nightly run is not failed by a timer. */
+const CLEAN_TIMEOUT_MS = Math.max(120_000, ROUNDS * 120);
+const FAULTY_TIMEOUT_MS = Math.max(180_000, ROUNDS * 200);
 
 interface Run {
   engine: SlotEngine;
@@ -128,36 +138,44 @@ async function playRound(engine: SlotEngine): Promise<'FINISHED' | 'FROZEN'> {
 }
 
 describe(`${String(ROUNDS)} rounds over a real connection`, () => {
-  it('keeps the client and the server agreeing on the money, round after round', async () => {
-    const run = await start('http-soak-clean');
-    await run.engine.start(run.sim.state.token);
-    run.engine.send({ type: 'SET_STAKE', stake: STAKE });
+  it(
+    'keeps the client and the server agreeing on the money, round after round',
+    async () => {
+      const run = await start('http-soak-clean');
+      await run.engine.start(run.sim.state.token);
+      run.engine.send({ type: 'SET_STAKE', stake: STAKE });
 
-    for (let round = 0; round < ROUNDS; round += 1) {
-      expect(await playRound(run.engine)).toBe('FINISHED');
+      for (let round = 0; round < ROUNDS; round += 1) {
+        expect(await playRound(run.engine)).toBe('FINISHED');
 
-      const state = run.engine.state;
-      // The client never computes a balance, so this is not arithmetic agreeing with arithmetic —
-      // it is the last number the server sent agreeing with the number the server holds.
-      expect('balance' in state ? state.balance : -1).toBe(run.sim.state.balance);
-    }
+        const state = run.engine.state;
+        // The client never computes a balance, so this is not arithmetic agreeing with arithmetic —
+        // it is the last number the server sent agreeing with the number the server holds.
+        expect('balance' in state ? state.balance : -1).toBe(run.sim.state.balance);
+      }
 
-    expect(run.engine.state.phase).toBe('IDLE');
-    // Nothing left open: every round that took money gave an answer and was credited.
-    expect(run.sim.state.rounds.every((round) => round.state === 'SETTLED')).toBe(true);
-  }, 120_000);
+      expect(run.engine.state.phase).toBe('IDLE');
+      // Nothing left open: every round that took money gave an answer and was credited.
+      expect(run.sim.state.rounds.every((round) => round.state === 'SETTLED')).toBe(true);
+    },
+    CLEAN_TIMEOUT_MS,
+  );
 
-  it('exercises features rather than only base rounds', async () => {
-    const run = await start('http-soak-clean');
-    await run.engine.start(run.sim.state.token);
-    run.engine.send({ type: 'SET_STAKE', stake: STAKE });
+  it(
+    'exercises features rather than only base rounds',
+    async () => {
+      const run = await start('http-soak-clean');
+      await run.engine.start(run.sim.state.token);
+      run.engine.send({ type: 'SET_STAKE', stake: STAKE });
 
-    for (let round = 0; round < ROUNDS; round += 1) await playRound(run.engine);
+      for (let round = 0; round < ROUNDS; round += 1) await playRound(run.engine);
 
-    expect(run.events.filter((event) => event.type === 'FEATURE_AWARDED').length).toBeGreaterThan(
-      0,
-    );
-  }, 120_000);
+      expect(run.events.filter((event) => event.type === 'FEATURE_AWARDED').length).toBeGreaterThan(
+        0,
+      );
+    },
+    CLEAN_TIMEOUT_MS,
+  );
 
   /**
    * The one this file exists for.
@@ -167,39 +185,87 @@ describe(`${String(ROUNDS)} rounds over a real connection`, () => {
    * ends the wait. Sustain that for a hundred rounds and a leak has somewhere to show itself — in
    * the balance, in a round left open, or in a `close()` at the end that never returns.
    */
-  it('survives a bad line without losing or duplicating a single round', async () => {
-    const run = await start('http-soak-faulty', {
-      latencyMs: 1,
-      dropRate: 0.05,
-      slowRate: 0.05,
-      slowMs: 30,
-      errorRates: { WALLET_UNAVAILABLE: 0.04, RATE_LIMITED: 0.03 },
-    });
+  it(
+    'survives a bad line without losing or duplicating a single round',
+    async () => {
+      const run = await start('http-soak-faulty', {
+        latencyMs: 1,
+        dropRate: 0.05,
+        slowRate: 0.05,
+        slowMs: 30,
+        errorRates: { WALLET_UNAVAILABLE: 0.04, RATE_LIMITED: 0.03 },
+      });
 
-    await run.engine.start(run.sim.state.token);
-    run.engine.send({ type: 'SET_STAKE', stake: STAKE });
+      await run.engine.start(run.sim.state.token);
+      run.engine.send({ type: 'SET_STAKE', stake: STAKE });
 
-    let played = 0;
-    for (let round = 0; round < ROUNDS; round += 1) {
-      const outcome = await playRound(run.engine);
-      if (outcome === 'FROZEN') throw new Error('a FATAL error on a merely unreliable link');
-      played += 1;
+      let played = 0;
+      for (let round = 0; round < ROUNDS; round += 1) {
+        const outcome = await playRound(run.engine);
+        if (outcome === 'FROZEN') throw new Error('a FATAL error on a merely unreliable link');
+        played += 1;
 
-      const state = run.engine.state;
-      expect('balance' in state ? state.balance : -1).toBe(run.sim.state.balance);
-    }
+        const state = run.engine.state;
+        expect('balance' in state ? state.balance : -1).toBe(run.sim.state.balance);
+      }
 
-    expect(played).toBe(ROUNDS);
-    // One press, one round: a retry replays rather than re-spins, however many times it went out.
-    expect(run.sim.state.rounds.filter((round) => round.state !== 'SETTLED')).toHaveLength(0);
+      expect(played).toBe(ROUNDS);
+      // One press, one round: a retry replays rather than re-spins, however many times it went out.
+      expect(run.sim.state.rounds.filter((round) => round.state !== 'SETTLED')).toHaveLength(0);
 
-    // And the faults really fired — otherwise this is the clean test with extra steps. They are
-    // counted at the *retry*, not at `ERROR_RAISED`: the policy absorbing them before the engine
-    // ever sees one is the correct outcome, not a missing assertion.
-    expect(run.retries.length).toBeGreaterThan(0);
-    // Dropped responses become the client's own timeout, which is the case worth naming.
-    expect(run.retries).toContain('TIMEOUT');
-  }, 180_000);
+      // And the faults really fired — otherwise this is the clean test with extra steps. They are
+      // counted at the *retry*, not at `ERROR_RAISED`: the policy absorbing them before the engine
+      // ever sees one is the correct outcome, not a missing assertion.
+      expect(run.retries.length).toBeGreaterThan(0);
+      // Dropped responses become the client's own timeout, which is the case worth naming.
+      expect(run.retries).toContain('TIMEOUT');
+    },
+    FAULTY_TIMEOUT_MS,
+  );
+
+  /**
+   * The duration axis, asserted (C8): does memory climb with rounds played?
+   *
+   * A leak of a few kilobytes per round is invisible at 300 rounds and a straight line at 5,000,
+   * so this runs only where `SOAK_ROUNDS` says the run is long enough to mean something — the
+   * nightly job, which also passes `--expose-gc` so every sample is taken after a real collection
+   * rather than wherever V8's sawtooth happened to be. The judgment is median-window against
+   * median-window because a single sample proves nothing either way; the slack terms absorb heap
+   * noise, and a genuine per-round leak across thousands of rounds dwarfs both.
+   */
+  it.runIf(process.env['SOAK_ROUNDS'] !== undefined)(
+    'holds the heap flat across the run',
+    async () => {
+      const gc = (globalThis as { gc?: () => void }).gc;
+      const run = await start('http-soak-heap');
+      await run.engine.start(run.sim.state.token);
+      run.engine.send({ type: 'SET_STAKE', stake: STAKE });
+
+      const samples: number[] = [];
+      const block = Math.max(10, Math.ceil(ROUNDS / 24));
+      for (let round = 0; round < ROUNDS; round += 1) {
+        await playRound(run.engine);
+        if ((round + 1) % block === 0) {
+          gc?.();
+          samples.push(process.memoryUsage().heapUsed);
+        }
+      }
+
+      // The head of the run carries warmup — JIT, the connection pool, lazily-built schema
+      // caches — so the trend is judged on what follows it.
+      const settled = samples.slice(4);
+      const median = (values: number[]): number => {
+        const sorted = [...values].sort((a, b) => a - b);
+        return sorted[Math.floor(sorted.length / 2)] ?? 0;
+      };
+      const window = Math.max(3, Math.floor(settled.length / 4));
+      const early = median(settled.slice(0, window));
+      const late = median(settled.slice(-window));
+
+      expect(late).toBeLessThan(early * 1.5 + 8 * 1024 * 1024);
+    },
+    CLEAN_TIMEOUT_MS,
+  );
 
   /**
    * The leak, asserted directly.

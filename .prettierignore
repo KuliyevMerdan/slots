@@ -1,6 +1,9 @@
 dist/
+dist-demo/
 coverage/
 .turbo/
+test-results/
+playwright-report/
 pnpm-lock.yaml
 
 # The docs are hand-wrapped canon (CLAUDE.md, ROADMAP.md, docs/**). Prettier would reflow the

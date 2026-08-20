@@ -5,5 +5,5 @@
     "types": ["node"]
   },
   "include": ["tests/**/*.ts", "vitest.config.ts", "vitest.contract.config.ts"],
-  "exclude": ["config/fixtures/**"]
+  "exclude": ["config/fixtures/**", "tests/e2e/**"]
 }

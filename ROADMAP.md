@@ -415,9 +415,13 @@ _2–3 days._
 - [x] `@fastify/rate-limit` with a per-IP budget (`MOCK_RGS_RATE_LIMIT_MAX`, healthchecks exempt,
       `trustProxy` for platform proxies) — refusing as `RATE_LIMITED` + `retryAfterMs`, the
       taxonomy's shape, with tests pinning it.
-- [ ] A **nightly soak** job: the existing `http-soak` with ~5,000 rounds from an environment
-      variable plus a heap-trend assertion; the PR gate keeps 300.
-- [ ] Playwright E2E in CI: fixed seed + forced outcomes — spin, win, feature, reload-and-resume.
+- [x] A **nightly soak** job (`nightly.yml`, 03:17 UTC + on demand): the existing `http-soak`
+      with `SOAK_ROUNDS=5000` under `--expose-gc`, where the heap-trend case arms itself; the PR
+      gate keeps 300.
+- [x] Playwright E2E in CI (`pnpm e2e`, `tests/e2e/`, its own job): forced outcomes against the
+      demo composition — a dead spin, a feature paid through the presentation, a reload
+      mid-feature that resumes and credits exactly once. Keyboard-driven through the DOM panel;
+      the money asserted against both the engine and `/dev/state`.
 - [ ] README to the structure in the appendix below, GIF above the fold.
 - [ ] `docs/architecture.md` + `docs/round-lifecycle.md` diagrams.
 

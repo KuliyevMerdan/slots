@@ -19,8 +19,10 @@ export default tseslint.config(
   {
     ignores: [
       '**/dist/**',
+      '**/dist-demo/**', // the demo bundle (build:demo) — built output, same as dist
       '**/node_modules/**',
       '**/.turbo/**',
+      '**/test-results/**', // playwright's working artifacts
       'config/fixtures/**', // deliberately illegal — see config/fixtures/README.md
     ],
   },

@@ -167,7 +167,10 @@ module.exports = {
      * declines to cruise what is behind it, which is what we wanted from it in the first place.
      */
     doNotFollow: { path: '(^|/)(node_modules|dist)(/|$)' },
-    exclude: { path: '(^|/)\\.turbo(/|$)' },
+    // `dist-demo` is excluded outright where `dist` is only not-followed: no workspace import
+    // ever resolves *to* the demo bundle, so there is no edge to keep — it is build output the
+    // way `.turbo` is, not a package entry point.
+    exclude: { path: '(^|/)(\\.turbo|dist-demo)(/|$)' },
     tsPreCompilationDeps: true,
     combinedDependencies: true,
     reporterOptions: {

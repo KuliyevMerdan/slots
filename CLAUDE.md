@@ -107,9 +107,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > included since R1: the same suite that gated the simulators now gates the real server, and the
 > §5 stranded-round case runs against the one target that can honestly produce it.
 >
-> **What is deliberately not there yet:** packaging of the demo, the README, rate limiting on
-> `mock-rgs`, the nightly soak and the E2E suite (**C8**). The R-blocks are complete; **C8** is
-> the last block on the map.
+> **What is deliberately not there yet:** the hosted demo URL, the README, the architecture
+> diagrams, and the client protection surfaces C8 owes (the reality check's second action, the
+> player-facing limits picker, the verify-round affordance). The rest of **C8** landed 2026-08-20:
+> same-origin static serving + the per-IP budget on `mock-rgs` (ADR-0010, the demo Dockerfile CI
+> builds), the nightly soak (`nightly.yml`, 5,000 rounds under `--expose-gc` with the heap-trend
+> case armed), and the Playwright E2E suite (`pnpm e2e`, its own CI job) — spin, win, feature,
+> reload-and-resume against the demo composition. The R-blocks are complete; **C8** is the last
+> block on the map.
 >
 > The canon is four documents: `CLAUDE.md` (this file), [`ROADMAP.md`](ROADMAP.md) (the task map),
 > [`RECOMMENDATIONS.md`](RECOMMENDATIONS.md) (the strategic registry) and
@@ -279,7 +284,7 @@ pnpm check
 | `pnpm dev:client`      | Client only, `MockTransport` in-process, zero latency _(C3)_                         |
 | `pnpm dev:rgs`         | `apps/mock-rgs` only (Fastify) — for driving the HTTP path _(S2)_                    |
 | `pnpm test:contract`   | The contract suite against every registered target — the switch-over gate            |
-| `pnpm e2e`             | Playwright, fixed seed + forced outcomes _(C8)_                                      |
+| `pnpm e2e`             | Playwright against the demo composition (ADR-0010's shape): spin, win, feature, reload-and-resume — forced outcomes, keyboard-driven |
 | `pnpm math-sim`        | RTP report — `pnpm math-sim --spins 50000000` _(S4)_                                 |
 | `pnpm perf`            | fps / draw-calls / heap for a scripted session — `pnpm perf --spins 100 --throttle 4` |
 | `pnpm load`            | Multi-client load on a running RGS — `pnpm load --url http://host:8788 --connections 50`. Drift in the closing balance exits non-zero |
@@ -1315,7 +1320,7 @@ not — a remote server's regime is that server's configuration) without either 
 | **Transport parity** | `tests/http.test.ts` | One round through `MockTransport` and through `HttpTransport`, against identically seeded simulators, **equal field for field** |
 | **Contrast** | `tests/contrast.test.ts` | Every text-on-surface pair both palettes can produce holds WCAG 2.1 AA — found two failures the day it was written |
 | **Glyph coverage** | `apps/game-client` (`i18n.test.ts`) | Every character of both string catalogues has a glyph in the shipped Inter woff2, at every shipped weight |
-| **Network soak** | `tests/http-soak.test.ts` | 300 rounds over a real socket, a faulty-line run, and a shutdown with a hundred abandoned responses in flight — the failures that only exist on a connection |
+| **Network soak** | `tests/http-soak.test.ts` | 300 rounds over a real socket (`SOAK_ROUNDS` turns it up), a faulty-line run, and a shutdown with a hundred abandoned responses in flight — the failures that only exist on a connection. The nightly job (`nightly.yml`) runs it at 5,000 rounds under `--expose-gc`, where the heap-trend case arms itself: median-window against median-window, a leak's only honest detector |
 | **Contract** | `tests/contract/`, one suite per target | `rgs-sim` in-process · sim over HTTP · `apps/rgs` (the full suite since R1, incl. the §5 stranded round only it can produce) — the switch-over gate |
 | **Store contract** | `apps/rgs` (`store-contract.ts`) | One suite, two stores: memory always; Postgres whenever `RGS_TEST_DATABASE_URL` is set — always in CI, via a `postgres:16` service container. The session store (R5) has the same twin pair under its own contract |
 | **Ledger** | `apps/rgs` (`ledger/`) | One contract suite, two ledgers (memory always; Postgres in CI, where a trigger proves append-only); the R3 gate — a scripted session's journal sums to zero, reproduces the exact balance history, reconciles clean, and reports then heals the orphaned stake |
@@ -1324,7 +1329,7 @@ not — a remote server's regime is that server's configuration) without either 
 | **Races** | `apps/rgs` (`http/races-contract.ts`) | The R7 concurrency gate: identical concurrent spins collapse to one round, one debit, one byte-identical answer; a conflicting race has exactly one winning fingerprint and every loser is `ROUND_CONFLICT`; concurrent settles credit once; a storm of parallel rounds leaves the balance exact. Memory always; Postgres in CI, on real row locks |
 | **Restore drill** | `apps/rgs` (`postgres.test.ts`) | The R7 backup gate: dump all four tables mid-session (an open round one feature spin deep), truncate, restore — a fresh composition reports the same pending round, replays the same answers, reproduces the ledger to the entry, and finishes the feature credited exactly once |
 | **Wallet seam** | `apps/rgs` (`wallet/`) | `RemoteWallet` against the wallet sim over a real socket: an outage outlived by bounded retries, a lost confirmation healed by the idempotent ref, a refusal surfaced once and never retried (docs/wallet-api.md §4) |
-| **E2E** | Playwright, in CI | Fixed seed + forced outcomes: spin, win, feature, resume after reload |
+| **E2E** | `tests/e2e/`, Playwright, its own CI job | The deployed artifact's exact shape — the demo bundle served by `mock-rgs` from one origin — driven like a player in a real browser: a dead spin settles, a forced feature pays through the whole presentation and credits once, a reload mid-feature resumes and credits once. Pressed by keyboard through the DOM panel; asserted against the engine's state *and* `/dev/state`, so the money agrees at every rest |
 | **Perf** | `tools/perf-harness` | `pnpm perf`: 30 spins against the production bundle, 4× CPU throttle, headless Chrome — ~120 fps avg, p95 9.2 ms, 7 draw calls/frame (max 8: the symbol layer batches), heap sawtooths 9.8 → 14.1 → 9.4 MB. Frames from a rAF probe, draw calls by wrapping the WebGL entry points, heap over CDP; driven through the DOM control layer, so no dev hook is needed and the measured bundle is the shipped one |
 
 The contract suite is the load-bearing one: it is the only reason "swap the transport URL" is a
@@ -1397,13 +1402,6 @@ D8, D9 — jurisdiction rules on the wire, no renew call, transparent mid-round 
 
 **Workspace & tooling**
 
-- **The network soak is a test, not a load test.** `tests/http-soak.test.ts` plays 300 rounds over a
-  real socket, including a faulty-line run and a shutdown with a hundred abandoned responses in
-  flight — which is what found the `preClose` bug. Multi-client load landed with R7 (`pnpm load`
-  and the CI race suite); what remains missing is the *duration* axis: a heap trend over hours.
-  **Decision (2026-08-19, build in C8):** a scheduled nightly CI job runs the existing soak with the
-  round count from an environment variable (~5,000) plus a heap-trend assertion — the PR gate keeps
-  300, because load in a merge gate is flake with a purpose.
 - **The demo image exists; the live URL does not yet.** The same-origin deploy shape landed
   (ADR-0010: `MOCK_RGS_STATIC_DIR`, the demo Dockerfile, CI building it) — what remains of C8's
   deploy bullet is the hosting itself: picking the platform (Fly / Railway / anything that runs a

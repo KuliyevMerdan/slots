@@ -67,6 +67,42 @@ jobs:
       - name: Formatting
         run: pnpm run format:check
 
+  # The E2E suite (C8): the deployed artifact's exact shape — the demo bundle served by mock-rgs
+  # from one origin (ADR-0010) — driven like a player in a real browser: spin, win, feature,
+  # reload-and-resume, with the money agreeing at every rest.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      # The suite reaches @slot/mock-rgs through dist/, and its webServer builds the demo bundle.
+      - name: Build
+        run: pnpm run build
+
+      - name: E2E
+        run: pnpm e2e
+
+      - name: Keep the evidence when it fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: test-results/
+          retention-days: 7
+
   # The containerized build (R7): the image is part of what a push must keep green. Build only —
   # the tests above already prove the code; this proves the Dockerfile still produces it.
   docker:

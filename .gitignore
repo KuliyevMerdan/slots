@@ -1,8 +1,15 @@
 node_modules/
 dist/
+# the demo build (build:demo) — kept out of dist/ so the artifact verify:strip proves clean is
+# never overwritten by the one that deliberately carries the dev surface
+dist-demo/
 coverage/
 .turbo/
 *.tsbuildinfo
+
+# playwright working artifacts (C8 E2E)
+test-results/
+playwright-report/
 
 # perf-harness output — a Chrome trace is a working artifact, not a source
 tools/perf-harness/traces/

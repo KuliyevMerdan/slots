@@ -59,8 +59,11 @@ COPY . .
 RUN pnpm --filter @slot/mock-rgs... --filter "@slot/game-client^..." run build
 RUN VITE_RGS_TRANSPORT=http pnpm --filter @slot/game-client run build:demo
 # A standalone production tree for the server, plus the client's static bundle beside it.
+# `dist-demo`, not `dist`: the demo build lives in its own directory so the artifact
+# `verify:strip` proves clean is never overwritten by the one that deliberately carries the
+# dev surface.
 RUN pnpm --legacy deploy --filter @slot/mock-rgs --prod /out
-RUN cp -r apps/game-client/dist /out/client
+RUN cp -r apps/game-client/dist-demo /out/client
 
 FROM node:22-alpine
 ENV NODE_ENV=production \
