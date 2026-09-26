@@ -275,7 +275,7 @@ reasoning and the rejected alternatives are in
 | Success | `200` with the response shape from §2 |
 | Failure | The `ProtocolError` of §6, as JSON, with the status below |
 | Correlation | `x-correlation-id` in both directions: the client mints one, the server adopts it or mints its own, and every response echoes it |
-| Session | `Authorization: Bearer <token>` on every call except `authenticate` — the same token that call carried in its body (D12, R5). A multi-session server (`apps/rgs`) refuses a call without it as `SESSION_EXPIRED`; the single-session dev simulators accept and ignore it, because their one session is the process's |
+| Session | `Authorization: Bearer <token>` on every call except `authenticate` — the same token that call carried in its body (D12, R5). A multi-session server (`apps/rgs`) refuses a call without it as `SESSION_EXPIRED`; the single-session simulator core accepts and ignores it, because its one session is the process's — and `apps/mock-rgs`, which holds one simulator per visitor since C8 (ADR-0011), uses it to choose the simulator a call reaches |
 
 `AUTHORIZATION_HEADER`, `bearerOf()` and `tokenOfBearer()` are exported from `@slot/protocol`
 beside the routes, so the client's spelling and the server's parsing are one definition.
@@ -472,7 +472,10 @@ boot through the same service, because a server nobody can authenticate against 
 Issuing a session **renews** it: asking the demo lobby again extends the running session's
 `expiresAt` rather than wiping the game, exactly as an operator lobby would hand a returning player
 a fresh token onto the same wallet. This is what makes the §5 mid-round recovery playable — the
-fresh token re-attaches to the same balance and the same `pendingRound`.
+fresh token re-attaches to the same balance and the same `pendingRound`. Since C8 the demo lobby
+serves strangers at once (ADR-0011): `POST /demo/session { token? }` renews the session a held
+token names and begins a new visitor's own session for anything else, so the client remembers its
+token per tab and names it on a reload.
 
 ---
 
@@ -682,9 +685,10 @@ because that is where every proxy, gateway and access-log policy in the industry
 credential (and why the token is not in a URL — §2.7's body rule, same reasoning). Carried *by the
 transport* — `HttpTransport` remembers the token from the last successful `authenticate` — because
 the alternative is teaching the engine, the retry policy and every caller of `RgsPort` that HTTP
-exists, which is precisely what the seam was built to prevent. The single-session simulators accept
-and ignore the header: their one session **is** the process's, and enforcing a binding they cannot
-multiplex would be theatre.
+exists, which is precisely what the seam was built to prevent. The single-session simulator core accepts
+and ignores the header: its one session **is** the process's, and enforcing a binding it cannot
+multiplex would be theatre. (`apps/mock-rgs` multiplexes *simulators* rather than sessions since
+C8 — ADR-0011 — and reads the header only to choose which one a call reaches.)
 *Rejected:* the token as a field on every request body. It would enter the idempotency
 fingerprint, so the same retry after a mid-round renewal (§5, D9) would read as `ROUND_CONFLICT` —
 the recovery story breaking the recovery story.

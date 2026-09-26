@@ -2,7 +2,9 @@ import type { RgsTransport } from '@slot/transport';
 import { HttpTransport, MockTransport, withRetry } from '@slot/transport';
 import { SimServer, WebStorageStore, createSimConfig, createSimState } from '@slot/rgs-sim';
 import type { FaultConfig } from '@slot/rgs-sim';
-import { JURISDICTIONS } from '@slot/protocol';
+import { JURISDICTIONS, bearerOf } from '@slot/protocol';
+import { safeStorage } from '@slot/platform';
+import type { KeyValueStorage } from '@slot/platform';
 import type { JurisdictionId, Minor } from '@slot/protocol';
 import type { FaultView } from '@slot/dev-tools';
 
@@ -170,6 +172,11 @@ function mockDevPlane(sim: SimServer): DevPlane {
  * which no client-side code can do for it.
  */
 function overHttp(baseUrl: string, staticToken: string | undefined): Connection {
+  // The token this tab plays under: what the debug panel's calls carry, so its faults and its
+  // EXPIRE reach this visitor's session and nobody else's.
+  let current = staticToken;
+  const tab = tabStorage();
+
   return {
     kind: 'http',
     transport: withRetry(new HttpTransport({ baseUrl })),
@@ -177,22 +184,60 @@ function overHttp(baseUrl: string, staticToken: string | undefined): Connection 
       staticToken !== undefined
         ? () => Promise.resolve(staticToken)
         : async () => {
-            const response = await fetch(`${baseUrl}/demo/session`, { method: 'POST' });
+            // The demo server gives every visitor their own session, so a reload must *name*
+            // the one it had — or it would begin a new player and the round left open would be
+            // stranded in a session nobody returns to. A token the server no longer holds
+            // (restarted, or idled out) is answered with a fresh one, which is simply a new game.
+            const previous = tab.getItem(DEMO_SESSION_KEY);
+            const response = await fetch(`${baseUrl}/demo/session`, {
+              method: 'POST',
+              ...(previous === null
+                ? {}
+                : {
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({ token: previous }),
+                  }),
+            });
             if (!response.ok) {
               throw new Error(`the demo lobby refused to issue a token: HTTP ${response.status}`);
             }
             const body = (await response.json()) as { token?: string };
             if (typeof body.token !== 'string') throw new Error('the demo lobby sent no token');
+            tab.setItem(DEMO_SESSION_KEY, body.token);
+            current = body.token;
             return body.token;
           },
-    ...(__DEV_TOOLS__ ? { dev: httpDevPlane(baseUrl) } : {}),
+    ...(__DEV_TOOLS__ ? { dev: httpDevPlane(baseUrl, () => current) } : {}),
   };
 }
 
+/**
+ * Where the demo session's token is remembered — per tab, on purpose. `sessionStorage` survives a
+ * reload (the resume path) and dies with the tab, so two tabs are two players rather than one
+ * player racing themselves. A browser that refuses storage still plays; it just cannot resume.
+ */
+export const DEMO_SESSION_KEY = 'slot.demo.session';
+
+const tabStorage = (): KeyValueStorage => {
+  try {
+    return safeStorage(sessionStorage);
+  } catch {
+    // Reading the `sessionStorage` global itself throws where site data is blocked.
+    return safeStorage(null);
+  }
+};
+
 /** The HTTP control plane: `apps/mock-rgs`'s `/dev/*` routes, reached through the Vite proxy. */
-function httpDevPlane(baseUrl: string): DevPlane {
-  const call = async <T>(path: string, init?: RequestInit): Promise<T> => {
-    const response = await fetch(`${baseUrl}${path}`, init);
+function httpDevPlane(baseUrl: string, token: () => string | undefined): DevPlane {
+  const call = async <T>(path: string, init: RequestInit = {}): Promise<T> => {
+    const bearer = token();
+    const response = await fetch(`${baseUrl}${path}`, {
+      ...init,
+      headers: {
+        ...(init.headers as Record<string, string> | undefined),
+        ...(bearer === undefined ? {} : { authorization: bearerOf(bearer) }),
+      },
+    });
     if (!response.ok) {
       throw new Error(`the dev route refused: HTTP ${String(response.status)}`);
     }

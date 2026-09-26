@@ -1,0 +1,26 @@
+# The hosted demo — a Render Blueprint (C8, ADR-0010; docs/deploy.md § "Hosting on Render").
+#
+# One free web service built from the demo image: apps/mock-rgs serving the game API and the
+# client's demo build from one origin. Free because a portfolio demo should cost nothing to keep
+# up, and Render's free tier is the one that needs no card and builds a Dockerfile as-is — the
+# price is a spin-down after 15 idle minutes and a ~1 minute cold start. Nothing is lost when it
+# sleeps that the demo claims to keep: the simulator's state is in memory by design, so a woken
+# demo is simply a fresh session with a fresh play-money balance.
+#
+# No secrets and no env values that are not already the image's own defaults: PORT is injected by
+# Render and read through readEnv's fallback, and MOCK_RGS_TRUST_PROXY is baked true in the image
+# because Render terminates TLS in front of the container.
+
+services:
+  - type: web
+    name: aurora-reels-demo
+    runtime: docker
+    plan: free
+    region: frankfurt
+    branch: main
+    dockerfilePath: ./apps/mock-rgs/Dockerfile
+    dockerContext: .
+    # /ready answers once the simulator is up and names the game and math it serves.
+    healthCheckPath: /ready
+    # Deploy only commits CI has passed — the demo is never a build `pnpm check` rejected.
+    autoDeployTrigger: checksPass

@@ -21,8 +21,9 @@ export default defineConfig({
   // Deterministic by design (forced outcomes, DEFAULT jurisdiction, one worker): a flake here is
   // a bug to fix, never to retry past.
   retries: 0,
-  // One worker because every test drives the same single-session server; `/dev/reset` between
-  // tests is the isolation, and parallel workers would share a balance.
+  // Isolation is the server's now — every page is a new visitor with their own simulator — so
+  // parallel workers would no longer share a balance. One worker stays because the assertions
+  // wait on presentation timelines, and a CI runner's cores are the budget those waits spend.
   workers: 1,
   forbidOnly: !!process.env['CI'],
   use: {

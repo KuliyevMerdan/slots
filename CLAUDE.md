@@ -86,8 +86,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > RGS is configuration end to end. The contract suite's third target runs the whole suite
 > over the full production chain — client→HTTP→rgs→HTTP→wallet — its fault case enacted by
 > refusing the *real* wallet, and the §5 stranded round runs against the one target that can
-> honestly produce it. 1054 tests locally (877 package + 80 root + 97 contract), ~1084 in CI
-> where the Postgres twins join, plus the 3-test Playwright job. `pnpm check` green.
+> honestly produce it. 1074 tests locally (897 package + 80 root + 97 contract), ~1104 in CI
+> where the Postgres twins join, plus the 4-test Playwright job. `pnpm check` green.
 >
 > **`pnpm dev:client` opens a playable slot.** It authenticates, spins, lands on the server's
 > `stops[]`, lights the paylines it was told won, counts the win up, runs the feature and settles —
@@ -263,7 +263,8 @@ Seven design points, all of them load-bearing (six in `rgs-sim`; the seventh is 
   the token travels once in `authenticate`'s body and as a bearer header on every other call.
   `HttpTransport` remembers it from the last successful `authenticate`, so nothing above the
   transport learns HTTP has headers; a multi-session server (`apps/rgs`) refuses its absence as
-  `SESSION_EXPIRED`, and the single-session simulators accept and ignore it.
+  `SESSION_EXPIRED`, the single-session simulator core accepts and ignores it, and `apps/mock-rgs`
+  reads it to route the call to the caller's own simulator (one per visitor since C8, ADR-0011).
 
 ## Commands
 
@@ -898,7 +899,8 @@ than a global, for the same reason the simulator's storage does (ADR-0003). And 
 successful `authenticate` and sends `Authorization: Bearer` on every other call — held in the
 transport so the engine and the retry policy never learn that HTTP has headers, and a mid-round
 renewal re-binds by simply authenticating again through the same object. The single-session
-simulators accept and ignore the header; `apps/rgs` requires it.
+simulator core accepts and ignores the header; `apps/mock-rgs` routes by it (a simulator per
+visitor, ADR-0011); `apps/rgs` requires it.
 
 **The one line that decides which server this is, is the base URL.**
 [`tests/http.test.ts`](tests/http.test.ts) is what makes that a statement rather than a hope: one
@@ -1038,14 +1040,34 @@ The binding is pinned in [docs/protocol.md §2.7](docs/protocol.md) and argued i
   the grid assertion are in, `VITE_RGS_TRANSPORT=http` against the empty base URL — the page
   talks to the origin that served it), built by CI on every push. The production bundle that
   `verify:strip` proves clean is a different artifact from a different command; the image never
-  claims to be it.
+  claims to be it. The hosted home is Render's free tier, declared in the root `render.yaml`
+  Blueprint (health-gated on `/ready`, deploying only commits CI passed); `readEnv` falls back
+  to the platform-injected `PORT` when `MOCK_RGS_PORT` is unset, so the image runs unchanged on
+  any host that assigns the port (`config.test.ts` pins the precedence).
 
 `/dev/*` — fault injection, session reset and expiry, a state summary — is what the debug panel drives and
 what lets the contract suite *demand* a failure rather than wait for one; it is mounted only
 when `devRoutes` is on, and `apps/rgs` does not have it (tested: `/dev/state` is a 404 there). `POST /demo/session` is not gated, because a
-server you cannot obtain a token for is not a server (docs/protocol.md §7) — and issuing **renews**
-the running session rather than wiping it, which is what makes the §5 mid-round expiry recovery
-playable over HTTP. Configuration is
+server you cannot obtain a token for is not a server (docs/protocol.md §7) — and issuing a token
+the server holds **renews** that session rather than wiping it, which is what makes a reload and
+the §5 mid-round expiry recovery work over HTTP.
+
+**A simulator per visitor** (C8, [ADR-0011](docs/adr/ADR-0011-a-simulator-per-visitor.md)). The
+public demo is played by strangers at once, and one `SimServer` made them one player — a shared
+wallet, each other's open rounds resumed, one visitor's `/dev/faults` landing on everyone. So
+[`sessions.ts`](apps/mock-rgs/src/sessions.ts) holds a `SessionPool` and `rgs-sim` stays
+single-session: the lobby (`{ token? }`) renews a session it holds and begins a new visitor's own
+simulator for anything else; `authenticate` reaches the session its body names, every other call
+and every `/dev/*` route the one its bearer header names, and an unknown credential is
+`SESSION_EXPIRED`. Visitors are bounded (`MOCK_RGS_MAX_SESSIONS`, longest-idle evicted at
+capacity; `MOCK_RGS_SESSION_IDLE_MINUTES`), their tokens are random UUIDs while their seeds derive
+from the server's plus an ordinal (a pinned seed still replays the server). The simulator the app
+is built with is the **resident** — pinned, reached by a call with no credential, renewed by the
+lobby when no visitor policy is given — so the tests, the contract suite's HTTP target and a
+developer's `curl` see the single-session server they always did; `main.ts` always passes the
+policy. The client's half is in `transport.ts`: the token is remembered per tab in
+`sessionStorage` (`DEMO_SESSION_KEY`) and named on the next lobby call, so a reload resumes its own
+round and a new tab is a new player; the HTTP debug plane carries the bearer too. Configuration is
 environment, validated with a schema like anything else that crosses a boundary — a mistyped server
 seed silently changes every outcome the session produces.
 
@@ -1345,7 +1367,7 @@ not — a remote server's regime is that server's configuration) without either 
 | **Races** | `apps/rgs` (`http/races-contract.ts`) | The R7 concurrency gate: identical concurrent spins collapse to one round, one debit, one byte-identical answer; a conflicting race has exactly one winning fingerprint and every loser is `ROUND_CONFLICT`; concurrent settles credit once; a storm of parallel rounds leaves the balance exact. Memory always; Postgres in CI, on real row locks |
 | **Restore drill** | `apps/rgs` (`postgres.test.ts`) | The R7 backup gate: dump all four tables mid-session (an open round one feature spin deep), truncate, restore — a fresh composition reports the same pending round, replays the same answers, reproduces the ledger to the entry, and finishes the feature credited exactly once |
 | **Wallet seam** | `apps/rgs` (`wallet/`) | `RemoteWallet` against the wallet sim over a real socket: an outage outlived by bounded retries, a lost confirmation healed by the idempotent ref, a refusal surfaced once and never retried (docs/wallet-api.md §4) |
-| **E2E** | `tests/e2e/`, Playwright, its own CI job | The deployed artifact's exact shape — the demo bundle served by `mock-rgs` from one origin — driven like a player in a real browser: a dead spin settles, a forced feature pays through the whole presentation and credits once, a reload mid-feature resumes and credits once. Pressed by keyboard through the DOM panel; asserted against the engine's state *and* `/dev/state`, so the money agrees at every rest |
+| **E2E** | `tests/e2e/`, Playwright, its own CI job | The deployed artifact's exact shape — the demo bundle served by `mock-rgs` from one origin — driven like a player in a real browser: a dead spin settles, a forced feature pays through the whole presentation and credits once, a reload mid-feature resumes and credits once, and two browser contexts at once are two players (ADR-0011). Pressed by keyboard through the DOM panel; asserted against the engine's state *and* `/dev/state`, so the money agrees at every rest |
 | **Perf** | `tools/perf-harness` | `pnpm perf`: 30 spins against the production bundle, 4× CPU throttle, headless Chrome — ~120 fps avg, p95 9.2 ms, 7 draw calls/frame (max 8: the symbol layer batches), heap sawtooths 9.8 → 14.1 → 9.4 MB. Frames from a rAF probe, draw calls by wrapping the WebGL entry points, heap over CDP; driven through the DOM control layer, so no dev hook is needed and the measured bundle is the shipped one |
 
 The contract suite is the load-bearing one: it is the only reason "swap the transport URL" is a
@@ -1418,13 +1440,15 @@ D8, D9 — jurisdiction rules on the wire, no renew call, transparent mid-round 
 
 **Workspace & tooling**
 
-- **The demo image exists; the live URL does not yet.** The same-origin deploy shape landed
-  (ADR-0010: `MOCK_RGS_STATIC_DIR`, the demo Dockerfile, CI building it) and the README now
-  carries marked slots for the link and the GIF (decision 2026-08-20: written without them
-  rather than waiting) — what remains is the hosting itself: picking the platform (Fly /
-  Railway / anything that runs a container), pointing it at `apps/mock-rgs/Dockerfile`, filling
-  both slots, and recording the big-win GIF from the deployed page. The "done when" criterion
-  wants that link.
+- **The demo is configured for hosting; the live URL does not exist yet.** The same-origin
+  deploy shape landed (ADR-0010: `MOCK_RGS_STATIC_DIR`, the demo Dockerfile, CI building it), the
+  README carries marked slots for the link and the GIF (decision 2026-08-20: written without them
+  rather than waiting), and the platform is chosen (2026-09-26): **Render's free web service** —
+  no card, the Dockerfile built as-is, a 15-minute idle spin-down the in-memory demo loses nothing
+  to — declared in the root `render.yaml` Blueprint, with `readEnv` obeying the platform's `PORT`.
+  What remains needs the account owner: connecting the Blueprint in Render, filling both README
+  slots with the `onrender.com` URL, and recording the big-win GIF from the deployed page. The
+  "done when" criterion wants that link.
 
 **Simulator (`packages/rgs-sim`) — behaviour the real RGS will have to earn**
 

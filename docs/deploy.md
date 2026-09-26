@@ -146,6 +146,34 @@ terminates TLS in front of the container):
 - `MOCK_RGS_SEED` — set it to make the session's outcome sequence replayable across restarts;
   leave the default for the demo.
 
-Everything in this image is play money and single-session: one balance, reset on restart, `/dev/*`
-mounted on purpose (the debug panel is part of the demo). Nothing here is the real RGS — that is
+Everything in this image is play money, with **a simulator per visitor** (ADR-0011): each
+browser tab that opens the page gets its own balance and rounds, a reload resumes the tab's own
+session, and `/dev/*` — mounted on purpose, the debug panel is part of the demo — acts on the
+caller's session alone. All of it lives in memory and resets on restart. Two more variables bound
+it: `MOCK_RGS_MAX_SESSIONS` (default 200; at capacity the longest-idle visitor makes room) and
+`MOCK_RGS_SESSION_IDLE_MINUTES` (default 30). Nothing here is the real RGS — that is
 the rest of this document.
+
+### Hosting on Render
+
+The demo's home is **Render's free web service**, declared in [`render.yaml`](../render.yaml) at
+the repository root. Chosen (2026-09-26) because it is the free tier that asks for no card and
+builds this Dockerfile as-is; Fly.io and Koyeb no longer have free compute, Railway's is a
+one-off credit, and Hugging Face moved Docker Spaces behind PRO.
+
+1. In the Render dashboard: **New → Blueprint**, pick this repository. Render reads `render.yaml`
+   and creates `aurora-reels-demo` — Frankfurt, health-gated on `/ready`, deploying only commits
+   whose CI passed.
+2. The first build runs the whole image build on Render's builder (a few minutes). Render injects
+   `PORT`; `readEnv` uses it because `MOCK_RGS_PORT` is unset, so no variable needs setting.
+3. The URL is `https://aurora-reels-demo.onrender.com` (or what Render assigns if the name is
+   taken) — it fills the README's live-demo slot.
+
+What the free tier costs in behaviour: **the service sleeps after 15 idle minutes** and the next
+visitor waits about a minute while it wakes. The demo loses nothing it claims to keep — the
+simulator is in memory by design, so a woken demo is a fresh session with a fresh balance. 750
+free instance hours a month cover one service around the clock, so an external uptime pinger can
+keep it warm if the cold start ever matters.
+
+Strangers arriving together are fine: each is their own player (ADR-0011). The free instance's
+512 MB holds the default 200 visitors with room to spare.

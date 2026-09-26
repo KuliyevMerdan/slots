@@ -80,8 +80,10 @@ real windows in the domain — plus `pnpm load`, the balance-checking throughput
 drill as a CI test; retention made real on Postgres; the metrics scrape movable to its own
 listener; and the client's out-of-band token (`VITE_RGS_TOKEN`), closing the switch-over
 argument: the real RGS is now a configuration change, end to end. **The R-blocks are complete.**
-**Next is C8** — packaging: the deploy of the demo, the README, rate limiting on `mock-rgs`, the
-nightly soak and the E2E suite — the last block on the map.
+**C8 is built** (2026-08-20) — the demo image on one origin, rate limiting on `mock-rgs`, the
+nightly soak, the E2E suite, the README and the architecture documents. **What remains is the
+hosting**: the platform is chosen (Render's free tier, 2026-09-26, declared in `render.yaml`), and
+connecting it, the live URL and the GIF close the block.
 
 ---
 
@@ -411,10 +413,17 @@ _2–3 days._
 - [x] **Same-origin, built and recorded (ADR-0010):** `MOCK_RGS_STATIC_DIR` mounts the built
       client on the game API's origin via flag-gated `@fastify/static`, CORS never widens, and
       `apps/mock-rgs/Dockerfile` — the server plus the client's demo build, `/ready`-gated — is
-      the deployable unit, built by CI. Still owed: the hosting itself and the live URL.
+      the deployable unit, built by CI. The host is Render's free tier (`render.yaml`, 2026-09-26:
+      no card, the Dockerfile as-is, `PORT` obeyed). Still owed: connecting the Blueprint and the
+      live URL.
 - [x] `@fastify/rate-limit` with a per-IP budget (`MOCK_RGS_RATE_LIMIT_MAX`, healthchecks exempt,
       `trustProxy` for platform proxies) — refusing as `RATE_LIMITED` + `retryAfterMs`, the
       taxonomy's shape, with tests pinning it.
+- [x] **A simulator per visitor** (ADR-0011, 2026-09-26): the public demo's lobby begins each
+      visitor's own `SimServer` and every call reaches the one its token names — bounded, idle
+      visitors forgotten, `/dev/*` scoped to the caller — while `rgs-sim` stays single-session.
+      The client remembers its token per tab, so a reload still resumes; E2E plays two visitors
+      at once on the deployed composition.
 - [x] A **nightly soak** job (`nightly.yml`, 03:17 UTC + on demand): the existing `http-soak`
       with `SOAK_ROUNDS=5000` under `--expose-gc`, where the heap-trend case arms itself; the PR
       gate keeps 300.

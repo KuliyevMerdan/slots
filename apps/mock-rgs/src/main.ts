@@ -1,5 +1,5 @@
 import { buildApp } from './app.js';
-import { createSim, readEnv } from './config.js';
+import { createSim, readEnv, visitorPolicy } from './config.js';
 
 /**
  * The entry point: `pnpm dev:rgs`.
@@ -14,6 +14,9 @@ const sim = createSim(env);
 
 const app = buildApp({
   sim,
+  // Every visitor their own simulator (sessions.ts): the deployed demo is played by strangers at
+  // once, and the resident stays what the printed token and a developer's curl reach.
+  visitors: visitorPolicy(env),
   logger: { level: env.MOCK_RGS_LOG_LEVEL },
   staticDir: env.MOCK_RGS_STATIC_DIR,
   // Always on here, never in the test compositions — the apps/rgs arrangement. One minute is the
@@ -49,8 +52,10 @@ try {
       devMode: sim.config.devMode,
       serverSeed: env.MOCK_RGS_SEED,
       staticDir: env.MOCK_RGS_STATIC_DIR ?? null,
-      // Printed on purpose: it is the demo lobby's token (docs/protocol.md §7), and the alternative
-      // is every developer curling /demo/session before they can do anything.
+      maxSessions: env.MOCK_RGS_MAX_SESSIONS,
+      // Printed on purpose: the resident session's token, what a developer's curl authenticates
+      // with — the alternative is every developer curling /demo/session before anything else.
+      // Visitors get their own, minted at random by the lobby.
       token: sim.state.token,
     },
     'mock-rgs listening',

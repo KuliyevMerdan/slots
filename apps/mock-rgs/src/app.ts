@@ -5,10 +5,13 @@ import fastifyStatic from '@fastify/static';
 import Fastify from 'fastify';
 import type { FastifyInstance, FastifyReply, FastifyRequest, FastifyServerOptions } from 'fastify';
 import type { CallName } from '@slot/protocol';
-import { CALL_NAMES, CORRELATION_HEADER, SlotError, routeFor } from '@slot/protocol';
+import { CALL_NAMES, CORRELATION_HEADER, SlotError, routeFor, tokenOfBearer } from '@slot/protocol';
 import type { SimServer } from '@slot/rgs-sim';
+import { z } from 'zod';
 import { classifyFrameworkError, errorBody, statusOf } from './errors.js';
 import { registerDevRoutes } from './dev.js';
+import { SessionPool } from './sessions.js';
+import type { Session, VisitorPolicy } from './sessions.js';
 
 /**
  * `apps/mock-rgs` — the simulator, over a real socket.
@@ -27,12 +30,28 @@ import { registerDevRoutes } from './dev.js';
  * would be routed, validated and typed the moment it is added to the contract.
  */
 
+const tokenInBody = (body: unknown): string | undefined => {
+  if (typeof body !== 'object' || body === null) return undefined;
+  const { token } = body as { token?: unknown };
+  return typeof token === 'string' ? token : undefined;
+};
+
 const wait = (ms: number): Promise<void> =>
   ms <= 0 ? Promise.resolve() : new Promise((resolve) => setTimeout(resolve, ms));
 
 export interface MockRgsOptions {
-  /** The simulator this server is a socket in front of. Injected — the app owns no game state. */
+  /**
+   * The resident simulator — the session a call without a credential reaches, and the only one
+   * there is unless `visitors` says otherwise. Injected — the app owns no game state.
+   */
   sim: SimServer;
+  /**
+   * When set, the demo lobby begins a separate simulator for each visitor (`sessions.ts`), and
+   * every call reaches the one its token names. Absent, the server is the single-session
+   * development server it always was: the lobby renews the resident. `main.ts` always sets it;
+   * the suites that test a protocol rather than a deployment leave it off.
+   */
+  visitors?: VisitorPolicy;
   logger?: FastifyServerOptions['logger'];
   /**
    * Whether `/dev/*` (fault injection, reset, state) is mounted. On by default because this is a
@@ -60,8 +79,16 @@ export interface MockRgsOptions {
   trustProxy?: boolean;
 }
 
+/**
+ * What the lobby may be asked: nothing, or to renew the session a token names. Lenient on purpose
+ * about *absence* (a bare `POST` is how every client before this one asked) and strict about
+ * shape, like the rest of the control plane.
+ */
+const LobbyRequestSchema = z.object({ token: z.string().min(1).optional() }).strict();
+
 export function buildApp({
   sim,
+  visitors,
   logger = false,
   devRoutes = true,
   sleep = wait,
@@ -102,6 +129,28 @@ export function buildApp({
    * abandoned responses in flight.
    */
   const hung = new Set<{ destroy?: () => void }>();
+
+  const sessions = new SessionPool(sim, visitors);
+
+  /**
+   * Which simulator a request is for. `authenticate` names its session in the body; every other
+   * call names it in the bearer header `HttpTransport` carries (§2.7) — and so does the debug
+   * panel, so a visitor's fault injection reaches that visitor alone. A request with no credential
+   * reaches the resident: the development server's single session, which is what the tests and a
+   * developer's `curl` have always talked to. A credential this server does not hold is
+   * `SESSION_EXPIRED` — the one answer a client already knows how to recover from.
+   */
+  const sessionOf = (request: FastifyRequest, call?: CallName): Session | SlotError => {
+    const token =
+      call === 'authenticate'
+        ? tokenInBody(request.body)
+        : tokenOfBearer(request.headers.authorization);
+    if (token === undefined) return sessions.resident;
+    return (
+      sessions.find(token) ??
+      new SlotError('SESSION_EXPIRED', 'this server holds no session for that token')
+    );
+  };
 
   if (rateLimit !== undefined) {
     void app.register(fastifyRateLimit, {
@@ -180,7 +229,13 @@ export function buildApp({
     request: FastifyRequest,
     reply: FastifyReply,
   ): Promise<void> => {
-    const delivery = sim.deliver(call, request.body);
+    const session = sessionOf(request, call);
+    if (session instanceof SlotError) {
+      request.log.warn({ call, code: session.code }, session.message);
+      await reply.code(statusOf(session.code)).send(errorBody(session, request.id));
+      return;
+    }
+    const delivery = session.sim.deliver(call, request.body);
 
     if (delivery.kind === 'DROP') {
       request.log.warn(
@@ -246,14 +301,22 @@ export function buildApp({
      * The operator's lobby, faked (docs/protocol.md §7).
      *
      * Not behind `devRoutes`: without it there is no way to obtain a token at all, and a server
-     * you cannot authenticate against is not a server. Issuing **renews** — the fresh token
-     * re-attaches to the same balance and `pendingRound`, which is what makes the §5 mid-round
-     * expiry recovery playable over HTTP. `apps/rgs` replaces this with real session validation
-     * in R5.
+     * you cannot authenticate against is not a server. A request naming a session it holds
+     * **renews** it — the token re-attaches to the same balance and `pendingRound`, which is what
+     * makes a reload and the §5 mid-round expiry recovery work over HTTP. Anything else begins a
+     * visitor's own session when the pool may create them, and renews the resident when it may
+     * not. `apps/rgs` has no lobby at all: its tokens come from `/operator/sessions` (R5).
      */
-    routes.post('/demo/session', () => sim.issueSession());
+    routes.post('/demo/session', (request, reply) => {
+      const parsed = LobbyRequestSchema.safeParse(request.body ?? {});
+      if (!parsed.success) {
+        const failure = new SlotError('SCHEMA_MISMATCH', 'the lobby takes at most a token');
+        return reply.code(400).send(errorBody(failure, request.id));
+      }
+      return sessions.issue(parsed.data.token);
+    });
 
-    if (devRoutes) registerDevRoutes(routes, sim);
+    if (devRoutes) registerDevRoutes(routes, (request) => sessionOf(request));
   });
 
   return app;

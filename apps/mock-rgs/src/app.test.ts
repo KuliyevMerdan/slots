@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
-import { CORRELATION_HEADER, ProtocolErrorSchema } from '@slot/protocol';
+import { CORRELATION_HEADER, ProtocolErrorSchema, bearerOf } from '@slot/protocol';
 import type { Minor } from '@slot/protocol';
 import { SimServer, createSimConfig, createSimState } from '@slot/rgs-sim';
 import { buildApp } from './app.js';
@@ -418,6 +418,178 @@ describe('the debug surface', () => {
     const response = await app.inject({ method: 'GET', url: '/dev/faults' });
 
     expect(response.statusCode).toBe(404);
+  });
+});
+
+describe('visitors — one simulator each', () => {
+  /** The deployed shape: the lobby begins a separate simulator for every visitor. */
+  const openForVisitors = () => {
+    let minted = 0;
+    const app = buildApp({
+      sim: simulator(true),
+      visitors: {
+        create: ({ token, ordinal }) =>
+          new SimServer({
+            initialState: createSimState({
+              serverSeed: `visitor-seed-${ordinal}`,
+              balance: START_BALANCE,
+              expiresAt: 4_102_444_800_000,
+              token,
+            }),
+            config: createSimConfig({ devMode: true }),
+            now: () => NOW,
+          }),
+        maxSessions: 10,
+        idleMs: 60_000,
+        now: () => NOW,
+        mintToken: () => `visitor-${(minted += 1)}`,
+      },
+    });
+    apps.push(app);
+    return app;
+  };
+
+  const lobby = async (app: FastifyInstance, token?: string): Promise<string> => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/demo/session',
+      ...(token === undefined ? {} : { payload: { token } }),
+    });
+    expect(response.statusCode).toBe(200);
+    return response.json<{ token: string }>().token;
+  };
+
+  const as = (token: string) => ({ authorization: bearerOf(token) });
+
+  it('gives two visitors two wallets: one playing leaves the other untouched', async () => {
+    const app = openForVisitors();
+    const alice = await lobby(app);
+    const bob = await lobby(app);
+    expect(alice).not.toBe(bob);
+
+    await post(app, '/rgs/authenticate', { token: alice });
+    const spun = await post(app, '/rgs/spin', { roundId: roundId(40), stake: STAKE }, as(alice));
+    expect(spun.json()).toMatchObject({ balance: START_BALANCE - STAKE });
+
+    const bobs = await post(app, '/rgs/authenticate', { token: bob });
+    expect(bobs.statusCode).toBe(200);
+    expect(bobs.json()).toMatchObject({ balance: START_BALANCE });
+    expect(bobs.json()).not.toHaveProperty('pendingRound');
+  });
+
+  it("does not hand one visitor's open round to another", async () => {
+    const app = openForVisitors();
+    const alice = await lobby(app);
+    const bob = await lobby(app);
+    const id = roundId(41);
+
+    // Alice spins until a round stays open (a win waiting to settle, or a feature).
+    let open = false;
+    for (let index = 0; index < 50 && !open; index += 1) {
+      const spun = await post(
+        app,
+        '/rgs/spin',
+        { roundId: roundId(100 + index), stake: STAKE },
+        as(alice),
+      );
+      open = spun.json<{ next: string }>().next !== 'IDLE';
+    }
+    expect(open).toBe(true);
+
+    const alices = await post(app, '/rgs/authenticate', { token: alice });
+    expect(alices.json()).toHaveProperty('pendingRound');
+    const bobs = await post(app, '/rgs/authenticate', { token: bob });
+    expect(bobs.json()).not.toHaveProperty('pendingRound');
+
+    // And Bob's spin of a round id Alice never used is his own round, not a conflict with hers.
+    const bobsSpin = await post(app, '/rgs/spin', { roundId: id, stake: STAKE }, as(bob));
+    expect(bobsSpin.statusCode).toBe(200);
+  });
+
+  it('renews the session a returning visitor names — a reload finds the same wallet', async () => {
+    const app = openForVisitors();
+    const alice = await lobby(app);
+    await post(app, '/rgs/spin', { roundId: roundId(42), stake: STAKE }, as(alice));
+
+    expect(await lobby(app, alice)).toBe(alice);
+    const again = await post(app, '/rgs/authenticate', { token: alice });
+    expect(again.json()).toMatchObject({ balance: START_BALANCE - STAKE });
+  });
+
+  it('starts a visitor whose token the server no longer holds afresh', async () => {
+    const app = openForVisitors();
+
+    const token = await lobby(app, 'a-token-from-before-the-restart');
+
+    expect(token).toBe('visitor-1');
+  });
+
+  it('refuses a credential it does not hold as SESSION_EXPIRED, on the game and debug routes', async () => {
+    const app = openForVisitors();
+
+    const spun = await post(app, '/rgs/spin', { roundId: roundId(43), stake: STAKE }, as('nope'));
+    expect(spun.statusCode).toBe(401);
+    expect(spun.json()).toMatchObject({ code: 'SESSION_EXPIRED', class: 'PLAYER' });
+
+    const authenticated = await post(app, '/rgs/authenticate', { token: 'nope' });
+    expect(authenticated.json()).toMatchObject({ code: 'SESSION_EXPIRED' });
+
+    const state = await app.inject({ method: 'GET', url: '/dev/state', headers: as('nope') });
+    expect(state.statusCode).toBe(401);
+  });
+
+  it("scopes the debug surface to the caller: one visitor's faults are nobody else's", async () => {
+    const app = openForVisitors();
+    const alice = await lobby(app);
+    const bob = await lobby(app);
+
+    await app.inject({
+      method: 'PUT',
+      url: '/dev/faults',
+      headers: as(alice),
+      payload: { errorRates: { UPSTREAM_UNAVAILABLE: 1 } },
+    });
+
+    const alicesSpin = await post(
+      app,
+      '/rgs/spin',
+      { roundId: roundId(44), stake: STAKE },
+      as(alice),
+    );
+    expect(alicesSpin.json()).toMatchObject({ code: 'UPSTREAM_UNAVAILABLE' });
+    const bobsSpin = await post(app, '/rgs/spin', { roundId: roundId(45), stake: STAKE }, as(bob));
+    expect(bobsSpin.statusCode).toBe(200);
+
+    const bobsState = await app.inject({ method: 'GET', url: '/dev/state', headers: as(bob) });
+    expect(bobsState.json()).toMatchObject({ token: bob, balance: START_BALANCE - STAKE });
+  });
+
+  it('resets a visitor to their own start and keeps their token, whatever the seed', async () => {
+    const app = openForVisitors();
+    const alice = await lobby(app);
+    await post(app, '/rgs/spin', { roundId: roundId(46), stake: STAKE }, as(alice));
+
+    const reset = await app.inject({
+      method: 'POST',
+      url: '/dev/reset',
+      headers: as(alice),
+      payload: { serverSeed: 'another-game' },
+    });
+
+    expect(reset.json()).toEqual({ token: alice, balance: START_BALANCE });
+  });
+
+  it('refuses a lobby request carrying anything but a token', async () => {
+    const app = openForVisitors();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/demo/session',
+      payload: { token: 'x', playerId: 'someone-else' },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ code: 'SCHEMA_MISMATCH' });
   });
 });
 

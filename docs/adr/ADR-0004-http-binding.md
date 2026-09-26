@@ -60,7 +60,8 @@ sessions, so it is a log field rather than the value in the error body.
 The debug panel (C7) and the contract suite (S3) both need to *demand* a specific failure rather than
 wait for one. `/demo/session` stands in for the operator's lobby (docs/protocol.md §7) and stays
 mounted regardless, because a server you cannot obtain a token for is not a server. `apps/rgs` will
-have neither.
+have neither. (Since C8 both are scoped to the caller's session — one simulator per visitor,
+ADR-0011.)
 
 ## Consequences
 

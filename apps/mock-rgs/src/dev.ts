@@ -3,8 +3,9 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { ErrorCodeSchema, SlotError } from '@slot/protocol';
 import type { Minor } from '@slot/protocol';
 import { NO_FAULTS, createSimState } from '@slot/rgs-sim';
-import type { FaultConfig, SimServer } from '@slot/rgs-sim';
-import { errorBody } from './errors.js';
+import type { FaultConfig } from '@slot/rgs-sim';
+import { errorBody, statusOf } from './errors.js';
+import type { Session } from './sessions.js';
 
 /**
  * The debug surface: fault injection, reset, and a look at the session.
@@ -67,58 +68,85 @@ const rejectInvalid = (
       ),
     );
 
-export function registerDevRoutes(app: FastifyInstance, sim: SimServer): void {
-  // Captured before the first request: this is the session the server booted with, and what `reset`
-  // returns to.
-  const boot = sim.state;
+/**
+ * The session a debug call reaches, or the refusal for a token this server does not hold. The app
+ * resolves it exactly as it resolves a game call — the bearer header, the resident without one —
+ * so the panel a visitor opens acts on that visitor's simulator and nobody else's.
+ */
+export type DevSessionOf = (request: FastifyRequest) => Session | SlotError;
 
-  app.get('/dev/faults', () => sim.faults);
+export function registerDevRoutes(app: FastifyInstance, sessionOf: DevSessionOf): void {
+  /** Runs `act` against the caller's session, or answers the refusal in the game's own shape. */
+  const withSession =
+    <T>(act: (session: Session, request: FastifyRequest, reply: FastifyReply) => T) =>
+    (request: FastifyRequest, reply: FastifyReply): T | FastifyReply => {
+      const session = sessionOf(request);
+      if (session instanceof SlotError) {
+        return reply.code(statusOf(session.code)).send(errorBody(session, request.id));
+      }
+      return act(session, request, reply);
+    };
 
-  app.put('/dev/faults', (request, reply) => {
-    const parsed = FaultConfigSchema.safeParse(request.body);
-    if (!parsed.success) return rejectInvalid(reply, request, parsed.error.issues);
+  app.get(
+    '/dev/faults',
+    withSession(({ sim }) => sim.faults),
+  );
 
-    sim.setFaults(parsed.data as FaultConfig);
-    request.log.info({ faults: parsed.data }, 'fault injection updated');
-    return reply.code(200).send(sim.faults);
-  });
+  app.put(
+    '/dev/faults',
+    withSession(({ sim }, request, reply) => {
+      const parsed = FaultConfigSchema.safeParse(request.body);
+      if (!parsed.success) return rejectInvalid(reply, request, parsed.error.issues);
 
-  app.delete('/dev/faults', (request, reply) => {
-    sim.setFaults(NO_FAULTS);
-    request.log.info('fault injection cleared');
-    return reply.code(200).send(sim.faults);
-  });
+      sim.setFaults(parsed.data as FaultConfig);
+      request.log.info({ faults: parsed.data }, 'fault injection updated');
+      return reply.code(200).send(sim.faults);
+    }),
+  );
+
+  app.delete(
+    '/dev/faults',
+    withSession(({ sim }, request, reply) => {
+      sim.setFaults(NO_FAULTS);
+      request.log.info('fault injection cleared');
+      return reply.code(200).send(sim.faults);
+    }),
+  );
 
   /**
-   * A fresh session on the same server.
+   * A fresh session on the same server — back to the state this session began with.
    *
    * The E2E suite (C8) and the contract suite (S3) both need a known starting point without
    * restarting a process, and the alternative — tests that depend on the order they run in — is the
    * kind of thing that goes unnoticed until it goes wrong in CI only.
    */
-  app.post('/dev/reset', (request, reply) => {
-    const parsed = ResetSchema.safeParse(request.body ?? {});
-    if (!parsed.success) return rejectInvalid(reply, request, parsed.error.issues);
+  app.post(
+    '/dev/reset',
+    withSession(({ sim, boot, resident }, request, reply) => {
+      const parsed = ResetSchema.safeParse(request.body ?? {});
+      if (!parsed.success) return rejectInvalid(reply, request, parsed.error.issues);
 
-    const serverSeed = parsed.data.serverSeed ?? boot.serverSeed;
-    const balance = (parsed.data.balance ?? boot.balance) as Minor;
+      const serverSeed = parsed.data.serverSeed ?? boot.serverSeed;
+      const balance = (parsed.data.balance ?? boot.balance) as Minor;
 
-    sim.reset(
-      createSimState({
-        serverSeed,
-        balance,
-        expiresAt: boot.session.expiresAt,
-        playerId: boot.session.playerId,
-        currency: boot.session.currency,
-        // The token is derived from the seed, so an unchanged seed keeps the token a running client
-        // already holds.
-        ...(serverSeed === boot.serverSeed ? { token: boot.token } : {}),
-      }),
-    );
+      sim.reset(
+        createSimState({
+          serverSeed,
+          balance,
+          expiresAt: boot.session.expiresAt,
+          playerId: boot.session.playerId,
+          currency: boot.session.currency,
+          // The resident's token is derived from its seed, so an unchanged seed keeps the token a
+          // running client already holds. A visitor's token is who they are — minted at random,
+          // never derived — so a visitor keeps it whatever the seed becomes.
+          ...(serverSeed === boot.serverSeed || !resident ? { token: boot.token } : {}),
+        }),
+      );
 
-    request.log.info({ serverSeed, balance }, 'session reset');
-    return reply.code(200).send({ token: sim.state.token, balance: sim.state.balance });
-  });
+      request.log.info({ serverSeed, balance }, 'session reset');
+      return reply.code(200).send({ token: sim.state.token, balance: sim.state.balance });
+    }),
+  );
 
   /**
    * End the session now — the HTTP face of `SimServer.expireSession()`.
@@ -126,11 +154,14 @@ export function registerDevRoutes(app: FastifyInstance, sim: SimServer): void {
    * The debug panel's EXPIRE button over HTTP, and the on-demand producer of `SESSION_EXPIRED`
    * mid-round (docs/protocol.md §5) — otherwise a twelve-hour wait.
    */
-  app.post('/dev/expire', (request) => {
-    sim.expireSession();
-    request.log.info('session expired on demand');
-    return { expiresAt: sim.state.session.expiresAt };
-  });
+  app.post(
+    '/dev/expire',
+    withSession(({ sim }, request) => {
+      sim.expireSession();
+      request.log.info('session expired on demand');
+      return { expiresAt: sim.state.session.expiresAt };
+    }),
+  );
 
   /**
    * What the simulator thinks is true — the server-side half of the debug panel's state inspector.
@@ -139,18 +170,21 @@ export function registerDevRoutes(app: FastifyInstance, sim: SimServer): void {
    * idempotent replay possible) and dumping fifty of them over HTTP would be megabytes to look at
    * four fields.
    */
-  app.get('/dev/state', () => ({
-    serverSeed: sim.state.serverSeed,
-    token: sim.state.token,
-    balance: sim.state.balance,
-    seq: sim.state.seq,
-    session: sim.state.session,
-    rounds: sim.state.rounds.map((round) => ({
-      roundId: round.roundId,
-      state: round.state,
-      stake: round.stake,
-      cumulativeWin: round.cumulativeWin,
-      steps: round.steps.length,
+  app.get(
+    '/dev/state',
+    withSession(({ sim }) => ({
+      serverSeed: sim.state.serverSeed,
+      token: sim.state.token,
+      balance: sim.state.balance,
+      seq: sim.state.seq,
+      session: sim.state.session,
+      rounds: sim.state.rounds.map((round) => ({
+        roundId: round.roundId,
+        state: round.state,
+        stake: round.stake,
+        cumulativeWin: round.cumulativeWin,
+        steps: round.steps.length,
+      })),
     })),
-  }));
+  );
 }

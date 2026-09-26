@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { Minor } from '@slot/protocol';
 import { SimServer, createSimConfig, createSimState } from '@slot/rgs-sim';
+import type { VisitorIdentity, VisitorPolicy } from './sessions.js';
 
 /**
  * The environment, validated like anything else that crosses a boundary.
@@ -24,6 +25,14 @@ const EnvSchema = z.object({
     .default('true')
     .transform((value) => value === 'true'),
   MOCK_RGS_SESSION_HOURS: z.coerce.number().min(0.1).default(12),
+  /**
+   * Most visitors held at once (`sessions.ts`) — each a simulator with up to fifty settled rounds
+   * of stored responses, on the order of a hundred kilobytes at worst, so the default stays well
+   * inside a free-tier container's memory. At capacity the longest-idle visitor makes room.
+   */
+  MOCK_RGS_MAX_SESSIONS: z.coerce.number().int().min(1).default(200),
+  /** How long a visitor may go without a call before the server forgets them. */
+  MOCK_RGS_SESSION_IDLE_MINUTES: z.coerce.number().min(1).default(30),
   MOCK_RGS_LOG_LEVEL: z
     .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
     .default('info'),
@@ -53,8 +62,13 @@ const EnvSchema = z.object({
 
 export type MockRgsEnv = z.infer<typeof EnvSchema>;
 
+/**
+ * `PORT` is the hosting platforms' convention (Render, Cloud Run, Heroku all inject it) and the
+ * container cannot know which port it will be given. An explicit `MOCK_RGS_PORT` still wins, so a
+ * developer's `.env` is never overridden by an ambient variable from somewhere else.
+ */
 export const readEnv = (env: NodeJS.ProcessEnv = process.env): MockRgsEnv => {
-  const parsed = EnvSchema.safeParse(env);
+  const parsed = EnvSchema.safeParse({ ...env, MOCK_RGS_PORT: env.MOCK_RGS_PORT ?? env.PORT });
   if (!parsed.success) {
     const detail = parsed.error.issues
       .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
@@ -72,13 +86,33 @@ export const readEnv = (env: NodeJS.ProcessEnv = process.env): MockRgsEnv => {
  * store is left at its default — in-memory — because a server that resurrected yesterday's session
  * from disk on boot would make every test's starting point a question.
  */
-export const createSim = (env: MockRgsEnv, now: () => number = Date.now): SimServer =>
+export const createSim = (
+  env: MockRgsEnv,
+  now: () => number = Date.now,
+  visitor?: VisitorIdentity,
+): SimServer =>
   new SimServer({
     initialState: createSimState({
-      serverSeed: env.MOCK_RGS_SEED,
+      // A visitor's seed is the server's seed plus their ordinal: every visitor plays a different
+      // sequence, and a pinned MOCK_RGS_SEED still replays the whole server — visitor 3 of one
+      // run is visitor 3 of the next. Their token is minted at random instead, because a token
+      // derived from a seed anyone can read would let a stranger play someone else's session.
+      serverSeed:
+        visitor === undefined
+          ? env.MOCK_RGS_SEED
+          : `${env.MOCK_RGS_SEED}/visitor-${visitor.ordinal}`,
       balance: env.MOCK_RGS_BALANCE as Minor,
       expiresAt: now() + env.MOCK_RGS_SESSION_HOURS * 3_600_000,
+      ...(visitor === undefined ? {} : { token: visitor.token }),
     }),
     config: createSimConfig({ devMode: env.MOCK_RGS_DEV_MODE }),
     now,
   });
+
+/** The visitor pool's policy, from the environment — what `main.ts` hands `buildApp`. */
+export const visitorPolicy = (env: MockRgsEnv, now: () => number = Date.now): VisitorPolicy => ({
+  create: (identity) => createSim(env, now, identity),
+  maxSessions: env.MOCK_RGS_MAX_SESSIONS,
+  idleMs: env.MOCK_RGS_SESSION_IDLE_MINUTES * 60_000,
+  now,
+});

@@ -44,8 +44,23 @@ interface DevState {
 
 const START_BALANCE = 1_000_000;
 
-const serverState = async (request: APIRequestContext): Promise<DevState> =>
-  (await (await request.get('/dev/state')).json()) as DevState;
+/**
+ * The page's own demo session — the token the client remembered in `sessionStorage` (the key is
+ * `DEMO_SESSION_KEY` in the client's `transport.ts`). The server gives every visitor their own
+ * simulator, so reading `/dev/state` without naming the session would read somebody else's.
+ */
+const sessionTokenOf = async (page: Page): Promise<string> => {
+  const token = await page.evaluate(() => sessionStorage.getItem('slot.demo.session'));
+  if (token === null) throw new Error('the page holds no demo session');
+  return token;
+};
+
+const serverState = async (request: APIRequestContext, page: Page): Promise<DevState> =>
+  (await (
+    await request.get('/dev/state', {
+      headers: { authorization: `Bearer ${await sessionTokenOf(page)}` },
+    })
+  ).json()) as DevState;
 
 const phaseIs = (page: Page, wanted: string, timeout: number) =>
   page.waitForFunction((p) => window.__slot?.engine.state.phase === p, wanted, { timeout });
@@ -85,13 +100,6 @@ const openIdle = async (page: Page): Promise<void> => {
 const pressSpin = (page: Page): Promise<void> =>
   page.getByRole('button', { name: 'SPIN' }).press('Enter');
 
-test.beforeEach(async ({ request }) => {
-  // The isolation between tests: back to the boot balance, no rounds, same token — so every
-  // test's arithmetic starts from a number it knows.
-  const reset = await request.post('/dev/reset', { data: {} });
-  expect(reset.ok()).toBe(true);
-});
-
 test('a spin debits the stake, lands, and settles with the server and client agreeing', async ({
   page,
   request,
@@ -109,7 +117,7 @@ test('a spin debits the stake, lands, and settles with the server and client agr
   const balance = await readNumber(page, 'balance');
   expect(balance).toBe(START_BALANCE - stake);
 
-  const server = await serverState(request);
+  const server = await serverState(request, page);
   expect(server.balance).toBe(balance);
   expect(server.rounds).toHaveLength(1);
   expect(server.rounds[0]).toMatchObject({ state: 'SETTLED', stake, cumulativeWin: 0, steps: 0 });
@@ -131,7 +139,7 @@ test('a forced feature pays through the win presentation and is credited exactly
   await phaseIs(page, 'IDLE', 170_000);
 
   const balance = await readNumber(page, 'balance');
-  const server = await serverState(request);
+  const server = await serverState(request, page);
   expect(server.balance).toBe(balance);
   expect(server.rounds).toHaveLength(1);
 
@@ -164,7 +172,7 @@ test('a reload mid-feature resumes the round and finishes it, credited exactly o
     { timeout: 60_000 },
   );
   await expect
-    .poll(async () => (await serverState(request)).rounds[0]?.steps ?? 0, { timeout: 60_000 })
+    .poll(async () => (await serverState(request, page)).rounds[0]?.steps ?? 0, { timeout: 60_000 })
     .toBeGreaterThan(0);
 
   // The throwaway: no goodbye, no persistence handshake — the page is simply gone, and the next
@@ -174,7 +182,7 @@ test('a reload mid-feature resumes the round and finishes it, credited exactly o
   await phaseIs(page, 'IDLE', 170_000);
 
   const balance = await readNumber(page, 'balance');
-  const server = await serverState(request);
+  const server = await serverState(request, page);
   expect(server.balance).toBe(balance);
   expect(server.rounds).toHaveLength(1);
 
@@ -185,4 +193,32 @@ test('a reload mid-feature resumes the round and finishes it, credited exactly o
   // Credited exactly once: the opening balance minus one stake plus one payable win — a resume
   // that double-credited, or a reload that re-spun, cannot produce this number.
   expect(server.balance).toBe(START_BALANCE - stake + round.cumulativeWin);
+});
+
+test('two visitors at once are two players: one spinning leaves the other untouched', async ({
+  browser,
+  request,
+}) => {
+  // The deployed demo's whole claim about strangers: separate contexts are separate visitors,
+  // each with their own wallet, round and debug surface on the one server.
+  const alice = await (await browser.newContext()).newPage();
+  const bob = await (await browser.newContext()).newPage();
+  await openIdle(alice);
+  await openIdle(bob);
+  expect(await sessionTokenOf(alice)).not.toBe(await sessionTokenOf(bob));
+
+  const stake = await readNumber(alice, 'stake');
+  await force(alice, 'DEAD_SPIN');
+  await pressSpin(alice);
+  await phaseIsNot(alice, 'IDLE', 10_000);
+  await phaseIs(alice, 'IDLE', 60_000);
+
+  expect((await serverState(request, alice)).balance).toBe(START_BALANCE - stake);
+  const bobs = await serverState(request, bob);
+  expect(bobs.balance).toBe(START_BALANCE);
+  expect(bobs.rounds).toHaveLength(0);
+  expect(await readNumber(bob, 'balance')).toBe(START_BALANCE);
+
+  await alice.context().close();
+  await bob.context().close();
 });

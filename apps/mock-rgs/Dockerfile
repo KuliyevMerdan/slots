@@ -73,9 +73,11 @@ ENV NODE_ENV=production \
 WORKDIR /app
 COPY --from=build /out .
 USER node
+# 8787 unless the platform says otherwise: a host that injects PORT (Render, Cloud Run) is obeyed —
+# readEnv falls back to it when MOCK_RGS_PORT is unset, and the healthcheck follows the same chain.
 EXPOSE 8787
 # /ready reports which game and math this server is serving; a container that answers it can
 # authenticate a session and play a round.
 HEALTHCHECK --interval=10s --timeout=4s --start-period=10s --retries=5 \
-  CMD wget -qO- "http://127.0.0.1:${MOCK_RGS_PORT:-8787}/ready" || exit 1
+  CMD wget -qO- "http://127.0.0.1:${MOCK_RGS_PORT:-${PORT:-8787}}/ready" || exit 1
 CMD ["node", "dist/main.js"]
