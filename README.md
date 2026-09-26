@@ -5,6 +5,7 @@
 **A server-authoritative slot game client — PixiJS + TypeScript — with the simulator, the contract
 and a real Node.js RGS it plays against.**
 
+[![CI](https://github.com/KuliyevMerdan/slots/actions/workflows/ci.yml/badge.svg)](https://github.com/KuliyevMerdan/slots/actions/workflows/ci.yml)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6?logo=typescript&logoColor=white)
 ![PixiJS](https://img.shields.io/badge/PixiJS-v8-e72264)
 ![Node](https://img.shields.io/badge/Node-%E2%89%A520.19-5fa04e?logo=nodedotjs&logoColor=white)
@@ -12,21 +13,25 @@ and a real Node.js RGS it plays against.**
 ![Postgres](https://img.shields.io/badge/Postgres-16-4169e1?logo=postgresql&logoColor=white)
 ![RTP](https://img.shields.io/badge/RTP-96.107%25%20measured-d4a017)
 
-<!-- C8: the GIF of a big-win sequence lands here the day the demo is hosted.
-     Record it from the deployed page: force MAX_WIN from the DEV panel, capture the count-up. -->
+<!-- The big-win GIF lands here. Record it from the live page: DEV → FORCE OUTCOME → MAX_WIN,
+     capture the reels landing and the MEGA WIN count-up. -->
+
+### [▶ Play the live demo](https://aurora-reels-demo.onrender.com/)
 
 **18+ · Demo · Play money only — no real money, no payments, no crypto.**
 
 </div>
 
-> **Live demo: coming with the C8 deploy.** Until the URL exists, the demo is one command away:
+> **[aurora-reels-demo.onrender.com](https://aurora-reels-demo.onrender.com/)** — press **DEV**
+> in the corner, force a **MAX_WIN**, and watch the client *present* an outcome it had no part in deciding. The demo runs
+> on a free tier that sleeps when idle: the first visit after a quiet spell takes about a minute
+> to wake it.
+>
+> Or run the same image locally:
 >
 > ```bash
 > docker build -f apps/mock-rgs/Dockerfile -t slot-demo . && docker run --rm -p 8787:8787 slot-demo
 > ```
->
-> Open <http://localhost:8787/>, press **DEV** in the corner, force a **MAX_WIN** — and watch the
-> client *present* an outcome it had no part in deciding.
 
 ---
 

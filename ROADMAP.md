@@ -80,10 +80,11 @@ real windows in the domain — plus `pnpm load`, the balance-checking throughput
 drill as a CI test; retention made real on Postgres; the metrics scrape movable to its own
 listener; and the client's out-of-band token (`VITE_RGS_TOKEN`), closing the switch-over
 argument: the real RGS is now a configuration change, end to end. **The R-blocks are complete.**
-**C8 is built** (2026-08-20) — the demo image on one origin, rate limiting on `mock-rgs`, the
-nightly soak, the E2E suite, the README and the architecture documents. **What remains is the
-hosting**: the platform is chosen (Render's free tier, 2026-09-26, declared in `render.yaml`), and
-connecting it, the live URL and the GIF close the block.
+**C8 landed 2026-09-26** — the demo image on one origin, rate limiting on `mock-rgs`, the
+nightly soak, the E2E suite, the README and the architecture documents (2026-08-20), then a
+simulator per visitor (ADR-0011) and the hosting: **the demo is live at
+<https://aurora-reels-demo.onrender.com/>** on Render's free tier (`render.yaml`). The README's
+big-win GIF is the one piece of polish still owed. **Every block on the map has landed.**
 
 ---
 
@@ -103,7 +104,7 @@ contract suite. `#` maps each block back to the phase numbering of the original 
 | **C5** | Features + resume — free spins, retrigger, mid-feature reload | C4, S0 | 6 | ✅ (landed 2026-08-18) |
 | **C6** | Platform layer — responsive, audio, i18n, compliance | C4 | 7 | ✅ (landed 2026-08-19) |
 | **C7** | Dev tools + performance pass | C5, S1 | 8 | ✅ (landed 2026-08-19) |
-| **C8** | Packaging — deploy, README, Playwright E2E in CI | C6, C7, S4 | 9 | ◐ (2026-08-20 — all built; the hosted URL and GIF remain) |
+| **C8** | Packaging — deploy, README, Playwright E2E in CI | C6, C7, S4 | 9 | ✅ (landed 2026-09-26 — live; the README GIF remains) |
 | **S0** | `rgs-sim` pure core — PRNG, round machine, idempotency, persistence | C1 | 2 | ✅ (landed 2026-08-18) |
 | **S1** | Fault injection + force outcome + `MockTransport` | S0 | 2 | ✅ (landed 2026-08-18) |
 | **S2** | `apps/mock-rgs` — Fastify wrapper, the real network path | S0 | 2 | ✅ (landed 2026-08-18) |
@@ -414,8 +415,8 @@ _2–3 days._
       client on the game API's origin via flag-gated `@fastify/static`, CORS never widens, and
       `apps/mock-rgs/Dockerfile` — the server plus the client's demo build, `/ready`-gated — is
       the deployable unit, built by CI. The host is Render's free tier (`render.yaml`, 2026-09-26:
-      no card, the Dockerfile as-is, `PORT` obeyed). Still owed: connecting the Blueprint and the
-      live URL.
+      no card, the Dockerfile as-is, `PORT` obeyed) — live at
+      <https://aurora-reels-demo.onrender.com/> since 2026-09-26.
 - [x] `@fastify/rate-limit` with a per-IP budget (`MOCK_RGS_RATE_LIMIT_MAX`, healthchecks exempt,
       `trustProxy` for platform proxies) — refusing as `RATE_LIMITED` + `retryAfterMs`, the
       taxonomy's shape, with tests pinning it.
@@ -437,7 +438,8 @@ _2–3 days._
       the system, the seam, the round's life and every failure path.
 
 **Done when:** a stranger can open the live link, force a max win from the debug panel, and read why
-the client can't cheat — in under two minutes.
+the client can't cheat — in under two minutes. ✅ 2026-09-26: a forced MAX_WIN played on
+<https://aurora-reels-demo.onrender.com/> — five scatters, MEGA WIN, the balance the server's.
 
 ## Client build order
 

@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project status
 
 > ⚠️ **The game is a game, its math is a designed 96%, and the real RGS plays it against a real wallet seam.**
-> As of **2026-08-20**, **C0, C1, S0, S1, C2, S2, C3, C4, C5, S4, S3, C6, C7, R0, R1, R2, R3, R4, R5, R6 and R7 have landed** — the
+> As of **2026-09-26**, **C0, C1, S0, S1, C2, S2, C3, C4, C5, S4, S3, C6, C7, R0, R1, R2, R3, R4, R5, R6, R7 and C8 have landed** — the
 > workspace, the contracts (`protocol`, `money`, `game-math`), `rgs-sim`, the `RgsTransport` seam
 > with `MockTransport`, `HttpTransport` and the retry policy, `engine`, `apps/mock-rgs`, `renderer`,
 > `ui` and `apps/game-client`, `tools/math-sim` — the RTP report that tuned the strips —
@@ -108,19 +108,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > included since R1: the same suite that gated the simulators now gates the real server, and the
 > §5 stranded-round case runs against the one target that can honestly produce it.
 >
-> **What is deliberately not there yet:** the hosted demo URL (the README carries its marked
-> slot and the GIF's), and the player-facing verify-round affordance (the dev-build fairness
-> audit landed; the button waits on fairness fields in `RoundSummary`). Everything else in
-> **C8** landed 2026-08-20: the README (`README.md`, to Appendix A's structure, live-link slot
-> pending the deploy), `docs/architecture.md` and `docs/round-lifecycle.md` with their mermaid
+> **The demo is live** at <https://aurora-reels-demo.onrender.com/> since 2026-09-26 — Render's
+> free tier (`render.yaml`), one simulator per visitor (ADR-0011), deploying only commits CI
+> passed. **What is deliberately not there yet:** the README's big-win GIF (its marked slot
+> waits on a recording from the live page), and the player-facing verify-round affordance (the
+> dev-build fairness audit landed; the button waits on fairness fields in `RoundSummary`).
+> Everything else in **C8** landed 2026-08-20: the README (`README.md`, to Appendix A's
+> structure, rewritten as the showcase 2026-09-26), `docs/architecture.md` and `docs/round-lifecycle.md` with their mermaid
 > diagrams, the reality
 > check's EXIT action and the player-protection picker (the drawer's third document, enforced at
 > the wiring),
 > same-origin static serving + the per-IP budget on `mock-rgs` (ADR-0010, the demo Dockerfile CI
 > builds), the nightly soak (`nightly.yml`, 5,000 rounds under `--expose-gc` with the heap-trend
 > case armed), and the Playwright E2E suite (`pnpm e2e`, its own CI job) — spin, win, feature,
-> reload-and-resume against the demo composition. The R-blocks are complete; **C8** is the last
-> block on the map.
+> reload-and-resume against the demo composition. **Every block on the map has landed.**
 >
 > The canon is four documents: `CLAUDE.md` (this file), [`ROADMAP.md`](ROADMAP.md) (the task map),
 > [`RECOMMENDATIONS.md`](RECOMMENDATIONS.md) (the strategic registry) and
@@ -1440,15 +1441,11 @@ D8, D9 — jurisdiction rules on the wire, no renew call, transparent mid-round 
 
 **Workspace & tooling**
 
-- **The demo is configured for hosting; the live URL does not exist yet.** The same-origin
-  deploy shape landed (ADR-0010: `MOCK_RGS_STATIC_DIR`, the demo Dockerfile, CI building it), the
-  README carries marked slots for the link and the GIF (decision 2026-08-20: written without them
-  rather than waiting), and the platform is chosen (2026-09-26): **Render's free web service** —
-  no card, the Dockerfile built as-is, a 15-minute idle spin-down the in-memory demo loses nothing
-  to — declared in the root `render.yaml` Blueprint, with `readEnv` obeying the platform's `PORT`.
-  What remains needs the account owner: connecting the Blueprint in Render, filling both README
-  slots with the `onrender.com` URL, and recording the big-win GIF from the deployed page. The
-  "done when" criterion wants that link.
+- **The README has no big-win GIF.** The demo is live (<https://aurora-reels-demo.onrender.com/>,
+  Render's free tier via `render.yaml`, 2026-09-26) and the README links it above the fold; the
+  GIF slot Appendix A puts first is still a marked comment. Record it from the live page — DEV →
+  FORCE OUTCOME → MAX_WIN, capture the reels landing and the MEGA WIN count-up — and replace the
+  comment in `README.md`.
 
 **Simulator (`packages/rgs-sim`) — behaviour the real RGS will have to earn**
 

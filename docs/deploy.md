@@ -166,8 +166,8 @@ one-off credit, and Hugging Face moved Docker Spaces behind PRO.
    whose CI passed.
 2. The first build runs the whole image build on Render's builder (a few minutes). Render injects
    `PORT`; `readEnv` uses it because `MOCK_RGS_PORT` is unset, so no variable needs setting.
-3. The URL is `https://aurora-reels-demo.onrender.com` (or what Render assigns if the name is
-   taken) — it fills the README's live-demo slot.
+3. The URL is <https://aurora-reels-demo.onrender.com/> — live since 2026-09-26, and linked
+   from the README.
 
 What the free tier costs in behaviour: **the service sleeps after 15 idle minutes** and the next
 visitor waits about a minute while it wakes. The demo loses nothing it claims to keep — the
