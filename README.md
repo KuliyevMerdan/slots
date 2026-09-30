@@ -2,6 +2,8 @@
 
 # Aurora Reels
 
+**English** · [Русский](README.ru.md)
+
 **A server-authoritative slot game client — PixiJS + TypeScript — with the simulator, the contract
 and a real Node.js RGS it plays against.**
 

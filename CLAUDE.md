@@ -114,7 +114,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > waits on a recording from the live page), and the player-facing verify-round affordance (the
 > dev-build fairness audit landed; the button waits on fairness fields in `RoundSummary`).
 > Everything else in **C8** landed 2026-08-20: the README (`README.md`, to Appendix A's
-> structure, rewritten as the showcase 2026-09-26), `docs/architecture.md` and `docs/round-lifecycle.md` with their mermaid
+> structure, rewritten as the showcase 2026-09-26, with a Russian twin in `README.ru.md` — edit
+> both together), `docs/architecture.md` and `docs/round-lifecycle.md` with their mermaid
 > diagrams, the reality
 > check's EXIT action and the player-protection picker (the drawer's third document, enforced at
 > the wiring),
@@ -1445,7 +1446,7 @@ D8, D9 — jurisdiction rules on the wire, no renew call, transparent mid-round 
   Render's free tier via `render.yaml`, 2026-09-26) and the README links it above the fold; the
   GIF slot Appendix A puts first is still a marked comment. Record it from the live page — DEV →
   FORCE OUTCOME → MAX_WIN, capture the reels landing and the MEGA WIN count-up — and replace the
-  comment in `README.md`.
+  comment in both `README.md` and `README.ru.md`.
 
 **Simulator (`packages/rgs-sim`) — behaviour the real RGS will have to earn**
 
